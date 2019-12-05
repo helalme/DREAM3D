@@ -33,16 +33,38 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindSlipTransmissionMetrics.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/LaueOps.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -57,7 +79,6 @@ FindSlipTransmissionMetrics::FindSlipTransmissionMetrics()
 , m_FeaturePhasesArrayPath("", "", "")
 , m_CrystalStructuresArrayPath("", "", "")
 {
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
 
   m_F1List = NeighborList<float>::NullPointer();
   m_F1sptList = NeighborList<float>::NullPointer();
@@ -77,7 +98,7 @@ FindSlipTransmissionMetrics::~FindSlipTransmissionMetrics() = default;
 // -----------------------------------------------------------------------------
 void FindSlipTransmissionMetrics::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateCategoryRequirement(SIMPL::TypeNames::NeighborList, 1, AttributeMatrix::Category::Feature);
@@ -97,10 +118,10 @@ void FindSlipTransmissionMetrics::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Crystal Structures", CrystalStructuresArrayPath, FilterParameter::RequiredArray, FindSlipTransmissionMetrics, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("F1 List", F1ListArrayName, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("F1spt List", F1sptListArrayName, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("F7 List", F7ListArrayName, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("mPrime List", mPrimeListArrayName, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("F1 List", F1ListArrayName, NeighborListArrayPath, NeighborListArrayPath, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("F1spt List", F1sptListArrayName, NeighborListArrayPath, NeighborListArrayPath, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("F7 List", F7ListArrayName, NeighborListArrayPath, NeighborListArrayPath, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("mPrime List", mPrimeListArrayName, NeighborListArrayPath, NeighborListArrayPath, FilterParameter::CreatedArray, FindSlipTransmissionMetrics));
   setFilterParameters(parameters);
 }
 
@@ -138,22 +159,22 @@ void FindSlipTransmissionMetrics::initialize()
 // -----------------------------------------------------------------------------
 void FindSlipTransmissionMetrics::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   DataArrayPath tempPath;
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 4);
+  std::vector<size_t> cDims(1, 4);
   m_AvgQuatsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getAvgQuatsArrayPath(),
                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_AvgQuatsPtr.lock())                                                                       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getAvgQuatsArrayPath());
   }
@@ -165,7 +186,7 @@ void FindSlipTransmissionMetrics::dataCheck()
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeaturePhasesArrayPath());
   }
@@ -179,26 +200,22 @@ void FindSlipTransmissionMetrics::dataCheck()
 
   // Now we are going to get a "Pointer" to the NeighborList object out of the DataContainer
   m_NeighborList = getDataContainerArray()->getPrereqArrayFromPath<NeighborList<int32_t>, AbstractFilter>(this, getNeighborListArrayPath(), cDims);
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getNeighborListArrayPath());
   }
 
   tempPath.update(m_NeighborListArrayPath.getDataContainerName(), m_NeighborListArrayPath.getAttributeMatrixName(), getF1ListArrayName());
-  m_F1List = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                               cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_F1List = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID31);
 
   tempPath.update(m_NeighborListArrayPath.getDataContainerName(), m_NeighborListArrayPath.getAttributeMatrixName(), getF1sptListArrayName());
-  m_F1sptList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                  cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_F1sptList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID32);
 
   tempPath.update(m_NeighborListArrayPath.getDataContainerName(), m_NeighborListArrayPath.getAttributeMatrixName(), getF7ListArrayName());
-  m_F7List = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                               cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_F7List = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID33);
 
   tempPath.update(m_NeighborListArrayPath.getDataContainerName(), m_NeighborListArrayPath.getAttributeMatrixName(), getmPrimeListArrayName());
-  m_mPrimeList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                   cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_mPrimeList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID34);
 
   getDataContainerArray()->validateNumberOfTuples<AbstractFilter>(this, dataArrayPaths);
 }
@@ -221,13 +238,14 @@ void FindSlipTransmissionMetrics::preflight()
 // -----------------------------------------------------------------------------
 void FindSlipTransmissionMetrics::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
+  QVector<LaueOps::Pointer> m_OrientationOps = LaueOps::getOrientationOpsQVector();
 
   size_t totalFeatures = m_FeaturePhasesPtr.lock()->getNumberOfTuples();
 
@@ -241,13 +259,13 @@ void FindSlipTransmissionMetrics::execute()
   std::vector<std::vector<float>> F7lists;
   std::vector<std::vector<float>> mPrimelists;
 
-  float mprime = 0.0f, F1 = 0.0f, F1spt = 0.0f, F7 = 0.0f;
+  double mprime = 0.0f, F1 = 0.0f, F1spt = 0.0f, F7 = 0.0f;
   int32_t nname;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
-  float LD[3] = {0.0f, 0.0f, 1.0f};
+  // QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  FloatArrayType::Pointer avgQuatPtr = m_AvgQuatsPtr.lock();
+
+  double LD[3] = {0.0f, 0.0f, 1.0f};
 
   F1lists.resize(totalFeatures);
   F1sptlists.resize(totalFeatures);
@@ -263,14 +281,17 @@ void FindSlipTransmissionMetrics::execute()
     for(size_t j = 0; j < neighborlist[i].size(); j++)
     {
       nname = neighborlist[i][j];
-      QuaternionMathF::Copy(avgQuats[i], q1);
-      QuaternionMathF::Copy(avgQuats[nname], q1);
+      float* avgQuat = m_AvgQuats + i * 4;
+      QuatType q1(avgQuat[0], avgQuat[1], avgQuat[2], avgQuat[3]);
+      avgQuat = m_AvgQuats + nname * 4;
+      QuatType q2(avgQuat[0], avgQuat[1], avgQuat[2], avgQuat[3]);
+
       if(m_CrystalStructures[m_FeaturePhases[i]] == m_CrystalStructures[m_FeaturePhases[nname]] && m_FeaturePhases[i] > 0)
       {
-        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getmPrime(q1, q2, LD, mprime);
-        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getF1(q1, q2, LD, true, F1);
-        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getF1spt(q1, q2, LD, true, F1spt);
-        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getF7(q1, q2, LD, true, F7);
+        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getmPrime(q1, q2, LD);
+        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getF1(q1, q2, LD, true);
+        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getF1spt(q1, q2, LD, true);
+        m_OrientationOps[m_CrystalStructures[m_FeaturePhases[i]]]->getF7(q1, q2, LD, true);
       }
       else
       {
@@ -327,7 +348,7 @@ AbstractFilter::Pointer FindSlipTransmissionMetrics::newFilterInstance(bool copy
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSlipTransmissionMetrics::getCompiledLibraryName() const
+QString FindSlipTransmissionMetrics::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -335,7 +356,7 @@ const QString FindSlipTransmissionMetrics::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSlipTransmissionMetrics::getBrandingString() const
+QString FindSlipTransmissionMetrics::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -343,7 +364,7 @@ const QString FindSlipTransmissionMetrics::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSlipTransmissionMetrics::getFilterVersion() const
+QString FindSlipTransmissionMetrics::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -353,7 +374,7 @@ const QString FindSlipTransmissionMetrics::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSlipTransmissionMetrics::getGroupName() const
+QString FindSlipTransmissionMetrics::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -361,7 +382,7 @@ const QString FindSlipTransmissionMetrics::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindSlipTransmissionMetrics::getUuid()
+QUuid FindSlipTransmissionMetrics::getUuid() const
 {
   return QUuid("{97523038-5fb2-5e82-9177-ed3e8b24b4bd}");
 }
@@ -369,7 +390,7 @@ const QUuid FindSlipTransmissionMetrics::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSlipTransmissionMetrics::getSubGroupName() const
+QString FindSlipTransmissionMetrics::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -377,7 +398,132 @@ const QString FindSlipTransmissionMetrics::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSlipTransmissionMetrics::getHumanLabel() const
+QString FindSlipTransmissionMetrics::getHumanLabel() const
 {
   return "Find Neighbor Slip Transmission Metrics";
+}
+
+// -----------------------------------------------------------------------------
+FindSlipTransmissionMetrics::Pointer FindSlipTransmissionMetrics::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindSlipTransmissionMetrics> FindSlipTransmissionMetrics::New()
+{
+  struct make_shared_enabler : public FindSlipTransmissionMetrics
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSlipTransmissionMetrics::getNameOfClass() const
+{
+  return QString("FindSlipTransmissionMetrics");
+}
+
+// -----------------------------------------------------------------------------
+QString FindSlipTransmissionMetrics::ClassName()
+{
+  return QString("FindSlipTransmissionMetrics");
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setNeighborListArrayPath(const DataArrayPath& value)
+{
+  m_NeighborListArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSlipTransmissionMetrics::getNeighborListArrayPath() const
+{
+  return m_NeighborListArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setF1ListArrayName(const QString& value)
+{
+  m_F1ListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSlipTransmissionMetrics::getF1ListArrayName() const
+{
+  return m_F1ListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setF1sptListArrayName(const QString& value)
+{
+  m_F1sptListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSlipTransmissionMetrics::getF1sptListArrayName() const
+{
+  return m_F1sptListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setF7ListArrayName(const QString& value)
+{
+  m_F7ListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSlipTransmissionMetrics::getF7ListArrayName() const
+{
+  return m_F7ListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setmPrimeListArrayName(const QString& value)
+{
+  m_mPrimeListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSlipTransmissionMetrics::getmPrimeListArrayName() const
+{
+  return m_mPrimeListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSlipTransmissionMetrics::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSlipTransmissionMetrics::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSlipTransmissionMetrics::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSlipTransmissionMetrics::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
 }

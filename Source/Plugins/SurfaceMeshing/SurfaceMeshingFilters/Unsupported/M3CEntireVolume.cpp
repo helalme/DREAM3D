@@ -1,4 +1,6 @@
 
+#include <memory>
+
 #include "SIMPLib/Geometry/ImageGeom.h"
 //
 //  This code was written under United States Air Force Contract number
@@ -41,14 +43,6 @@
 
 #include "M3CEntireVolume.h"
 
-#include "MXA/Common/MXAMath.h"
-#include "MXA/Utilities/MXADir.h"
-#include "MXA/Utilities/MXAFileInfo.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265
-#endif
-
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
@@ -73,7 +67,7 @@ M3CEntireVolume::~M3CEntireVolume() = default;
 // -----------------------------------------------------------------------------
 void M3CEntireVolume::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     FilterParameter::Pointer option = FilterParameter::New();
     option->setHumanLabel("Add Surface Layer");
@@ -107,8 +101,8 @@ void M3CEntireVolume::initialize()
 // -----------------------------------------------------------------------------
 void M3CEntireVolume::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   VoxelDataContainer* m = getVoxelDataContainer();
 
@@ -121,15 +115,14 @@ void M3CEntireVolume::dataCheck()
   SurfaceMeshDataContainer* sm = getSurfaceMeshDataContainer();
   if(nullptr == sm)
   {
-    setErrorCondition(-384);
-    notifyErrorMessage(getHumanLabel(), "SurfaceMeshDataContainer is missing", getErrorCondition());
+    setErrorCondition(-384, "SurfaceMeshDataContainer is missing");
   }
   else
   {
-    StructArray<SurfaceMesh::DataStructures::Vert_t>::Pointer vertices = StructArray<SurfaceMesh::DataStructures::Vert_t>::CreateArray(1, SIMPL::CellData::SurfaceMeshNodes);
-    StructArray<SurfaceMesh::DataStructures::Face_t>::Pointer triangles = StructArray<SurfaceMesh::DataStructures::Face_t>::CreateArray(1, SIMPL::CellData::SurfaceMeshTriangles);
-    StructArray<Segment>::Pointer faceEdges = StructArray<Segment>::CreateArray(1, SIMPL::CellData::SurfaceMeshEdges);
-    StructArray<ISegment>::Pointer internalEdges = StructArray<ISegment>::CreateArray(1, SIMPL::CellData::SurfaceMeshInternalEdges);
+    StructArray<SurfaceMesh::DataStructures::Vert_t>::Pointer vertices = StructArray<SurfaceMesh::DataStructures::Vert_t>::CreateArray(1, SIMPL::CellData::SurfaceMeshNodes, true);
+    StructArray<SurfaceMesh::DataStructures::Face_t>::Pointer triangles = StructArray<SurfaceMesh::DataStructures::Face_t>::CreateArray(1, SIMPL::CellData::SurfaceMeshTriangles, true);
+    StructArray<Segment>::Pointer faceEdges = StructArray<Segment>::CreateArray(1, SIMPL::CellData::SurfaceMeshEdges, true);
+    StructArray<ISegment>::Pointer internalEdges = StructArray<ISegment>::CreateArray(1, SIMPL::CellData::SurfaceMeshInternalEdges, true);
 
     m_SurfaceMeshNodeTypePtr = sattrMat->createNonPrereqArray<DataArray<int8_t>, AbstractFilter, int8_t>(this, m_CellAttributeMatrixName, m_SurfaceMeshNodeTypeArrayName, 0, 1,
                                                                                                          1); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -140,8 +133,8 @@ void M3CEntireVolume::dataCheck()
 
     sm->setNodes(vertices);
     sm->setTriangles(triangles);
-    sm->getAttributeMatrix(getCellAttributeMatrixName())->addAttributeArray(SIMPL::CellData::SurfaceMeshEdges, faceEdges);
-    sm->getAttributeMatrix(getCellAttributeMatrixName())->addAttributeArray(SIMPL::CellData::SurfaceMeshInternalEdges, internalEdges);
+    sm->getAttributeMatrix(getCellAttributeMatrixName())->insertOrAssign(faceEdges);
+    sm->getAttributeMatrix(getCellAttributeMatrixName())->insertOrAssign(internalEdges);
 
     addCreatedCellData(SIMPL::CellData::SurfaceMeshEdges);
     addCreatedCellData(SIMPL::CellData::SurfaceMeshInternalEdges);
@@ -164,30 +157,28 @@ void M3CEntireVolume::preflight() void M3CEntireVolume::preflight()
 // -----------------------------------------------------------------------------
 void M3CEntireVolume::execute()
 {
-  int err = 0;
+  clearErrorCode();
+  clearWarningCode();
 
-  setErrorCondition(err);
   VoxelDataContainer* m = getVoxelDataContainer();
   if(nullptr == m)
   {
-    setErrorCondition(-1);
     ss << " VoxelDataContainer was nullptr";
-    notifyErrorMessage(getNameOfClass(), ss.str(), -1);
+    setErrorCondition(-1, ss.str());
     return;
   }
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(getSurfaceMeshDataContainer() == nullptr)
   {
-    setErrorCondition(-1);
     ss << " SurfaceMeshDataContainer was nullptr";
-    notifyErrorMessage(getNameOfClass(), ss.str(), -1);
+    setErrorCondition(-1, ss.str());
     return;
   }
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   int64_t totalPoints = /* FIXME: ImageGeom */ m->getGeometryAs<ImageGeom>()->getNumberOfTuples();
   size_t totalFeatures = m->getNumFeatureTuples();
   size_t totalEnsembles = m->getNumEnsembleTuples();
@@ -200,10 +191,9 @@ void M3CEntireVolume::execute()
   err = createMesh();
   if(err < 0)
   {
-    setErrorCondition(-1);
 
     ss << "Error Creating the Surface Mesh";
-    notifyErrorMessage(getNameOfClass(), ss.str(), -1);
+    setErrorCondition(-1, ss.str());
     return;
   }
 
@@ -296,12 +286,12 @@ int M3CEntireVolume::createMesh()
 
   StructArray<Neighbor>::Pointer neighbors = StructArray<Neighbor>::CreateArray(NS + 1, SIMPL::CellData::SurfaceMeshNeighbors);
   neighbors->initializeWithZeros();
-  StructArray<Face>::Pointer squares = StructArray<Face>::CreateArray(3 * NS, SIMPL::CellData::SurfaceMeshFaces);
+  StructArray<Face>::Pointer squares = StructArray<Face>::CreateArray(3 * NS, SIMPL::CellData::SurfaceMeshFaces, true);
   squares->initializeWithZeros();
-  StructArray<SurfaceMesh::DataStructures::Vert_t>::Pointer nodesPtr = StructArray<SurfaceMesh::DataStructures::Vert_t>::CreateArray(7 * NS, SIMPL::CellData::SurfaceMeshNodes);
+  StructArray<SurfaceMesh::DataStructures::Vert_t>::Pointer nodesPtr = StructArray<SurfaceMesh::DataStructures::Vert_t>::CreateArray(7 * NS, SIMPL::CellData::SurfaceMeshNodes, true);
   nodesPtr->initializeWithZeros();
 
-  DataArray<int8_t>::Pointer nodeKindPtr = DataArray<int8_t>::CreateArray(7 * NS, SIMPL::CellData::SurfaceMeshNodeType);
+  DataArray<int8_t>::Pointer nodeKindPtr = DataArray<int8_t>::CreateArray(7 * NS, SIMPL::CellData::SurfaceMeshNodeType, true);
   nodeKindPtr->initializeWithValues(0);
   m_SurfaceMeshNodeType = nodeKindPtr->GetPointer(0);
 
@@ -309,97 +299,97 @@ int M3CEntireVolume::createMesh()
   Face* square = squares.get()->GetPointer(0);
   Node* vertex = nodesPtr.get()->GetPointer(0);
 
-  notifyStatusMessage(getHumanLabel(), "Finding neighbors for each site...");
+  notifyStatusMessage("Finding neighbors for each site...");
   get_neighbor_list(neigh, NS, NSP, fileDim[0], fileDim[1], fileDim[2]);
 
   // printf("\nReading edge and neighbor spin tables...\n");
   // read_edge_neighspin_table(edgeTable_2d, nsTable_2d);
 
-  notifyStatusMessage(getHumanLabel(), "\nInitializing all possible nodes...");
+  notifyStatusMessage("\nInitializing all possible nodes...");
   initialize_nodes(voxCoords, vertex, NS, res[0], res[1], res[2]);
 
-  notifyStatusMessage(getHumanLabel(), "\nInitializing all possible squares...");
+  notifyStatusMessage("\nInitializing all possible squares...");
   initialize_squares(neigh, square, NS, NSP);
 
-  notifyStatusMessage(getHumanLabel(), "\nCounting number of total edges turned on...\n");
+  notifyStatusMessage("\nCounting number of total edges turned on...\n");
   nFEdge = get_number_fEdges(square, point, neigh, edgeTable_2d, NS);
   ss.str("");
   ss << "total number of face edges = " << nFEdge;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
 
   // memory allocation for face edges...
   //  fedge = (segment *)malloc(nFEdge * sizeof(segment));
-  StructArray<Segment>::Pointer faceEdges = StructArray<Segment>::CreateArray(nFEdge, SIMPL::CellData::SurfaceMeshEdges);
+  StructArray<Segment>::Pointer faceEdges = StructArray<Segment>::CreateArray(nFEdge, SIMPL::CellData::SurfaceMeshEdges, true);
   faceEdges->initializeWithZeros();
   Segment* fedge = faceEdges.get()->GetPointer(0);
 
-  notifyStatusMessage(getHumanLabel(), "Finding nodes and edges on each square...");
+  notifyStatusMessage("Finding nodes and edges on each square...");
   get_nodes_fEdges(square, point, neigh, vertex, fedge, edgeTable_2d, nsTable_2d, NS, NSP, fileDim[0]);
 
-  notifyStatusMessage(getHumanLabel(), "\nCounting number of triangles...");
+  notifyStatusMessage("\nCounting number of triangles...");
   nTriangle = get_number_triangles(point, square, vertex, fedge, NS, NSP, fileDim[0]);
   ss.str("");
   ss << "\ttotal number of triangles = " << nTriangle;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
 
   // memory allocation for triangle...
   //  triangle = (patch *)malloc(nTriangle * sizeof(patch));
-  StructArray<SurfaceMesh::DataStructures::Face_t>::Pointer triangles = StructArray<SurfaceMesh::DataStructures::Face_t>::CreateArray(nTriangle, SIMPL::CellData::SurfaceMeshTriangles);
+  StructArray<SurfaceMesh::DataStructures::Face_t>::Pointer triangles = StructArray<SurfaceMesh::DataStructures::Face_t>::CreateArray(nTriangle, SIMPL::CellData::SurfaceMeshTriangles, true);
   triangles->initializeWithZeros();
   sm->setTriangles(triangles);
   Triangle* triangle = triangles.get()->GetPointer(0);
-  Int32ArrayType::Pointer mCubeIDPtr = Int32ArrayType::CreateArray(nTriangle, "Cube Id");
+  Int32ArrayType::Pointer mCubeIDPtr = Int32ArrayType::CreateArray(nTriangle, "Cube Id", true);
   mCubeIDPtr->initializeWithZeros();
   int32_t* mCubeID = mCubeIDPtr->GetPointer(0);
 
-  notifyStatusMessage(getHumanLabel(), "\nFinding triangles...");
+  notifyStatusMessage("\nFinding triangles...");
   get_triangles(voxCoords, triangle, mCubeID, square, vertex, fedge, neigh, NS, NSP, fileDim[0]);
 
-  notifyStatusMessage(getHumanLabel(), "\nupdating triagle sides as face edges...\n");
+  notifyStatusMessage("\nupdating triagle sides as face edges...\n");
   update_triangle_sides_with_fedge(triangle, mCubeID, fedge, square, nTriangle, fileDim[0], NSP);
 
-  notifyStatusMessage(getHumanLabel(), "\nCounting the number of inner edges including duplicates...\n");
+  notifyStatusMessage("\nCounting the number of inner edges including duplicates...\n");
   tnIEdge = get_number_unique_inner_edges(triangle, mCubeID, nTriangle);
   // printf("\ttotal number of unique inner edges = %d\n", tnIEdge);
   // memory allocation for inner edges...
   //  iedge = (isegment *)malloc(tnIEdge * sizeof(isegment));
-  StructArray<ISegment>::Pointer internalEdges = StructArray<ISegment>::CreateArray(tnIEdge, SIMPL::CellData::SurfaceMeshInternalEdges);
+  StructArray<ISegment>::Pointer internalEdges = StructArray<ISegment>::CreateArray(tnIEdge, SIMPL::CellData::SurfaceMeshInternalEdges, true);
   internalEdges->initializeWithZeros();
   ISegment* iedge = internalEdges.get()->GetPointer(0);
 
-  notifyStatusMessage(getHumanLabel(), "\nFinidng unique inner edges and updating triagle sides as inner edges...\n");
+  notifyStatusMessage("\nFinidng unique inner edges and updating triagle sides as inner edges...\n");
   get_unique_inner_edges(triangle, mCubeID, iedge, nTriangle, nFEdge);
 
-  notifyStatusMessage(getHumanLabel(), "\nupdating node and edge kinds...\n");
+  notifyStatusMessage("\nupdating node and edge kinds...\n");
   update_node_edge_kind(vertex, fedge, iedge, triangle, nTriangle, nFEdge);
 
-  notifyStatusMessage(getHumanLabel(), "\nArranging neighboring spins across the triangle patches...\n");
+  notifyStatusMessage("\nArranging neighboring spins across the triangle patches...\n");
   arrange_spins(point, voxCoords, triangle, vertex, nTriangle, fileDim[0], NSP);
 
-  notifyStatusMessage(getHumanLabel(), "\nAssigning new node IDs...\n");
+  notifyStatusMessage("\nAssigning new node IDs...\n");
   DataArray<int32_t>::Pointer new_ids_for_nodes = DataArray<int32_t>::CreateArray(7 * NS, 1, "NewIds_For_Nodes");
   new_ids_for_nodes->initializeWithValues(-1);
 
   nNodes = assign_new_nodeID(vertex, new_ids_for_nodes, NS);
   ss.str("");
   ss << "number of nodes used = " << nNodes;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
 
   // Create new shortend arrays for the Triangles and the Nodes and NodeKind
-  StructArray<SurfaceMesh::DataStructures::Vert_t>::Pointer nodes = StructArray<SurfaceMesh::DataStructures::Vert_t>::CreateArray(nNodes, SIMPL::CellData::SurfaceMeshNodes);
+  StructArray<SurfaceMesh::DataStructures::Vert_t>::Pointer nodes = StructArray<SurfaceMesh::DataStructures::Vert_t>::CreateArray(nNodes, SIMPL::CellData::SurfaceMeshNodes, true);
   nodes->initializeWithZeros();
-  DataArray<int8_t>::Pointer shortNodeKindPtr = DataArray<int8_t>::CreateArray(nNodes, SIMPL::CellData::SurfaceMeshNodeType);
+  DataArray<int8_t>::Pointer shortNodeKindPtr = DataArray<int8_t>::CreateArray(nNodes, SIMPL::CellData::SurfaceMeshNodeType, true);
 
   generate_update_nodes_edges_array(new_ids_for_nodes, shortNodeKindPtr, nodes, nodesPtr, triangles, faceEdges, internalEdges, maxGrainId);
 
   // Set the updated Nodes & Triangles into the SurfaceMeshDataContainer
   sm->setTriangles(triangles);
   sm->setNodes(nodes);
-  sm->getAttributeMatrix(getCellAttributeMatrixName())->addAttributeArray(SIMPL::CellData::SurfaceMeshEdges, faceEdges);
-  sm->getAttributeMatrix(getCellAttributeMatrixName())->addAttributeArray(SIMPL::CellData::SurfaceMeshInternalEdges, internalEdges);
-  sm->getAttributeMatrix(getCellAttributeMatrixName())->addAttributeArray(SIMPL::CellData::SurfaceMeshNodeType, shortNodeKindPtr);
+  sm->getAttributeMatrix(getCellAttributeMatrixName())->insertOrAssign(faceEdges);
+  sm->getAttributeMatrix(getCellAttributeMatrixName())->insertOrAssign(internalEdges);
+  sm->getAttributeMatrix(getCellAttributeMatrixName())->insertOrAssign(shortNodeKindPtr);
 
-  //  notifyStatusMessage(getHumanLabel(), "\nOutputting nodes and triangles...\n");
+  //  notifyStatusMessage("\nOutputting nodes and triangles...\n");
   //  get_output(vertex, fedge, iedge, triangle, NS, nNodes, nFEdge, tnIEdge, nTriangle, mp);
 
   return 0;
@@ -992,7 +982,7 @@ int M3CEntireVolume::get_number_fEdges(Face* sq, DataArray<int32_t>::Pointer poi
         }
         else if(atBulk == 1)
         {
-          notifyErrorMessage(getHumanLabel(), "one negative spin case is not supposed to happen! Wrong!", -1001);
+          setErrorCondition(-1001, "one negative spin case is not supposed to happen! Wrong!");
         }
         else
         {
@@ -1126,7 +1116,7 @@ void M3CEntireVolume::get_nodes_fEdges(Face* sq, DataArray<int32_t>::Pointer poi
 
                   if(atBulk == 1)
                   {
-                    notifyErrorMessage(getHumanLabel(), "one negative spin case is not supposed to happen! Wrong!", -1001);
+                    setErrorCondition(-1001, "one negative spin case is not supposed to happen! Wrong!");
                   }
                 }
                 else if(sqIndex == 19)
@@ -1162,7 +1152,7 @@ void M3CEntireVolume::get_nodes_fEdges(Face* sq, DataArray<int32_t>::Pointer poi
   }
 
   ss << "total number of identified face edges = " << eid;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
 }
 
 // -----------------------------------------------------------------------------
@@ -1322,7 +1312,7 @@ int M3CEntireVolume::treat_anomaly(int tnst[4], DataArray<int32_t>::Pointer poin
 
   if(minid == -1)
   {
-    notifyErrorMessage(getHumanLabel(), "Something wrong with counting same-spin neighbors for each corner of the square!", -1001);
+    setErrorCondition(-1001, "Something wrong with counting same-spin neighbors for each corner of the square!");
     tempFlag = 0;
   }
   else if(minid == 1 || minid == 3)
@@ -1653,7 +1643,7 @@ int M3CEntireVolume::get_number_triangles(DataArray<int32_t>::Pointer points, Fa
       {
         ss.str("");
         ss << "corners are wrongfully burnt in this marching cube: cube id =" << i << " number burnt = " << nburnt;
-        notifyErrorMessage(getHumanLabel(), ss.str(), -1001);
+        setErrorCondition(-1001, ss.str());
       }
       // update nodeKind of body center node in the current marching cube...
       if(nkFlag > 0)
@@ -1683,7 +1673,7 @@ int M3CEntireVolume::get_number_triangles(DataArray<int32_t>::Pointer points, Fa
     }
     else
     {
-      notifyErrorMessage(getHumanLabel(), "get_number_triangles - what?", -10666);
+      setErrorCondition(-10666, "get_number_triangles - what?");
     }
 
     // if the current marching cube is a collection of 6 effective squares...and
@@ -1713,7 +1703,7 @@ int M3CEntireVolume::get_number_triangles(DataArray<int32_t>::Pointer points, Fa
 
       if(tindex != nFE)
       {
-        notifyErrorMessage(getHumanLabel(), "something wrong with counting number of edges for marching cube...", -10667);
+        setErrorCondition(-10667, "something wrong with counting number of edges for marching cube...");
       }
 
       // Consider each case as Z. Wu's paper...
@@ -1748,7 +1738,7 @@ int M3CEntireVolume::get_number_triangles(DataArray<int32_t>::Pointer points, Fa
 
   ss.str("");
   ss << "number of triangles for case 0, case 1 and case 2 = " << nTri0 << " " << nTri2 << " " << nTriM;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
   // sum up triangle numbers...
   nTri = nTri0 + nTri2 + nTriM;
 
@@ -1934,7 +1924,7 @@ int M3CEntireVolume::get_number_case0_triangles(int* afe, Node* v, Segment* e1, 
       // do nothing...
       ss.str("");
       ss << "something wrong in counting # case 0 triangles... " << numN << " " << nfedge;
-      notifyErrorMessage(getHumanLabel(), ss.str(), -1000);
+      setErrorCondition(-1000, ss.str());
     }
   }
 
@@ -2722,7 +2712,7 @@ int M3CEntireVolume::get_triangles(VoxelCoord* p, Triangle* t, int* mCubeID, Fac
     }
     else
     {
-      notifyErrorMessage(getHumanLabel(), "get_triangles - what?", -1001);
+      setErrorCondition(-1001, "get_triangles - what?");
     }
 
     // if the current marching cube is a collection of 6 effective squares...and
@@ -2760,7 +2750,7 @@ int M3CEntireVolume::get_triangles(VoxelCoord* p, Triangle* t, int* mCubeID, Fac
 
       if(tindex != nFE)
       {
-        notifyErrorMessage(getHumanLabel(), "Something wrong with counting number of edges for marching cube...", -1001);
+        setErrorCondition(-1001, "Something wrong with counting number of edges for marching cube...");
       }
 
       // Consider each case as Z. Wu's paper...
@@ -2788,7 +2778,7 @@ int M3CEntireVolume::get_triangles(VoxelCoord* p, Triangle* t, int* mCubeID, Fac
       {
         ss.str("");
         ss << "Somthing's wrong in counting face centers turned on..." << nFC << "  " << i;
-        notifyErrorMessage(getHumanLabel(), ss.str(), -1001);
+        setErrorCondition(-1001, ss.str());
       }
 
       free(arrayFE);
@@ -2797,7 +2787,7 @@ int M3CEntireVolume::get_triangles(VoxelCoord* p, Triangle* t, int* mCubeID, Fac
 
   ss.str("");
   ss << "number of triangles found = " << tidIn;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
   return 0;
 }
 
@@ -4594,10 +4584,10 @@ int M3CEntireVolume::get_number_unique_inner_edges(Triangle* t, int* mCubeID, in
   } while(i < numT);
   ss.str("");
   ss << "total number of inner edges including duplicates = " << nIED;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
   ss.str("");
   ss << "total number of unique inner edges = " << nIE;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
 
   return nIE;
 }
@@ -4803,7 +4793,7 @@ void M3CEntireVolume::get_unique_inner_edges(Triangle* t, int* mCubeID, ISegment
           {
             ss.str("");
             ss << "something's wrong in counting inner edge kind!!! " << tedgeKind;
-            notifyErrorMessage(getHumanLabel(), ss.str(), -1001);
+            setErrorCondition(-1001, ss.str());
           }
           IEindex++;
         }
@@ -4818,7 +4808,7 @@ void M3CEntireVolume::get_unique_inner_edges(Triangle* t, int* mCubeID, ISegment
 
   ss.str("");
   ss << "total number of unique inner edges updated = " << IEindex;
-  notifyStatusMessage(getHumanLabel(), ss.str());
+  notifyStatusMessage(ss.str());
 }
 
 // -----------------------------------------------------------------------------
@@ -5226,3 +5216,68 @@ void M3CEntireVolume::get_output(node* v, segment* fe, isegment* ie, patch* t, i
 }
 
 #endif
+
+// -----------------------------------------------------------------------------
+M3CEntireVolume::Pointer M3CEntireVolume::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<M3CEntireVolume> M3CEntireVolume::New()
+{
+  struct make_shared_enabler : public M3CEntireVolume
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CEntireVolume::getNameOfClass() const
+{
+  return QString("M3CEntireVolume");
+}
+
+// -----------------------------------------------------------------------------
+QString M3CEntireVolume::ClassName()
+{
+  return QString("M3CEntireVolume");
+}
+
+// -----------------------------------------------------------------------------
+void M3CEntireVolume::setSurfaceMeshEdgesArrayName(const QString& value)
+{
+  m_SurfaceMeshEdgesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CEntireVolume::getSurfaceMeshEdgesArrayName() const
+{
+  return m_SurfaceMeshEdgesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CEntireVolume::setSurfaceMeshInternalEdgesArrayName(const QString& value)
+{
+  m_SurfaceMeshInternalEdgesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CEntireVolume::getSurfaceMeshInternalEdgesArrayName() const
+{
+  return m_SurfaceMeshInternalEdgesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CEntireVolume::setAddSurfaceLayer(bool value)
+{
+  m_AddSurfaceLayer = value;
+}
+
+// -----------------------------------------------------------------------------
+bool M3CEntireVolume::getAddSurfaceLayer() const
+{
+  return m_AddSurfaceLayer;
+}

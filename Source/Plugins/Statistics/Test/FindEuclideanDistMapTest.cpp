@@ -33,11 +33,9 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/CoreFilters/DataContainerWriter.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
@@ -48,6 +46,9 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "StatisticsTestFileLocations.h"
@@ -63,7 +64,24 @@ public:
   virtual ~FindEuclideanDistMapTest()
   {
   }
-  SIMPL_TYPE_MACRO(FindEuclideanDistMapTest)
+  /**
+   * @brief Returns the name of the class for FindEuclideanDistMapTest
+   */
+  /**
+   * @brief Returns the name of the class for FindEuclideanDistMapTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("FindEuclideanDistMapTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for FindEuclideanDistMapTest
+   */
+  QString ClassName()
+  {
+    return QString("FindEuclideanDistMapTest");
+  }
 
   // -----------------------------------------------------------------------------
   //
@@ -98,7 +116,7 @@ public:
   // -----------------------------------------------------------------------------
   //
   // -----------------------------------------------------------------------------
-  DataContainerArray::Pointer initializeDataContainerArray(QVector<size_t> tDims)
+  DataContainerArray::Pointer initializeDataContainerArray(std::vector<size_t> tDims)
   {
     DataContainerArray::Pointer dca = DataContainerArray::New();
 
@@ -106,20 +124,20 @@ public:
     ImageGeom::Pointer geom = ImageGeom::CreateGeometry("ImageGeometry");
     m->setGeometry(geom);
     geom->setDimensions(tDims.data());
-    float res[3] = {1.0f, 2.0f, 1.0f};
-    geom->setResolution(res);
+    FloatVec3Type res = {1.0f, 2.0f, 1.0f};
+    geom->setSpacing(res);
 
     // Create Attribute Matrices with different tDims to test validation of tuple compatibility
 
     AttributeMatrix::Pointer attrMat1 = AttributeMatrix::New(tDims, k_FeatureIdsArrayPath.getAttributeMatrixName(), AttributeMatrix::Type::Cell);
 
-    m->addAttributeMatrix(k_FeatureIdsArrayPath.getAttributeMatrixName(), attrMat1);
-    dca->addDataContainer(m);
+    m->addOrReplaceAttributeMatrix(attrMat1);
+    dca->addOrReplaceDataContainer(m);
 
-    QVector<size_t> cDims(1, 1);
+    std::vector<size_t> cDims(1, 1);
 
-    Int32ArrayType::Pointer featureIds = Int32ArrayType::CreateArray(tDims, cDims, k_FeatureIdsArrayPath.getDataArrayName());
-    int err = attrMat1->addAttributeArray(k_FeatureIdsArrayPath.getDataArrayName(), featureIds);
+    Int32ArrayType::Pointer featureIds = Int32ArrayType::CreateArray(tDims, cDims, k_FeatureIdsArrayPath.getDataArrayName(), true);
+    int err = attrMat1->insertOrAssign(featureIds);
     DREAM3D_REQUIRE(err >= 0);
     featureIds->initializeWithValue(1);
 
@@ -221,7 +239,7 @@ public:
   // -----------------------------------------------------------------------------
   int RunTest()
   {
-    QVector<size_t> tDims = {10, 6, 1};
+    std::vector<size_t> tDims = {10, 6, 1};
     DataContainerArray::Pointer dca = initializeDataContainerArray(tDims);
 
     QString filtName = "FindEuclideanDistMap";
@@ -264,7 +282,7 @@ public:
     DREAM3D_REQUIRE(err >= 0);
 
     filter->execute();
-    DREAM3D_REQUIRE(filter->getErrorCondition() >= 0);
+    DREAM3D_REQUIRE(filter->getErrorCode() >= 0);
 
     //-------------------------------------------
     boundaryArrayName = "GBManhattanDistance";
@@ -291,14 +309,14 @@ public:
     DREAM3D_REQUIRE(err >= 0);
 
     filter->execute();
-    DREAM3D_REQUIRE(filter->getErrorCondition() >= 0);
+    DREAM3D_REQUIRE(filter->getErrorCode() >= 0);
 
     DataContainerWriter::Pointer writer = DataContainerWriter::New();
     writer->setOutputFile(UnitTest::StatisticsTempDir + QDir::separator() + "FindEuclideanDistMap.dream3d");
     writer->setDataContainerArray(dca);
 
     writer->execute();
-    DREAM3D_REQUIRE(writer->getErrorCondition() >= 0);
+    DREAM3D_REQUIRE(writer->getErrorCode() >= 0);
 
     err = validateResults(dca);
 

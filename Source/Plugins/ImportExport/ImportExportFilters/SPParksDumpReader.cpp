@@ -33,15 +33,24 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SPParksDumpReader.h"
 
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatVec3FilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
@@ -49,6 +58,15 @@
 
 #include "ImportExport/ImportExportConstants.h"
 #include "ImportExport/ImportExportVersion.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataArrayID31 = 31,
+
+  DataContainerID = 1
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -60,13 +78,13 @@ SPParksDumpReader::SPParksDumpReader()
 , m_OneBasedArrays(false)
 , m_FeatureIdsArrayName(SIMPL::CellData::FeatureIds)
 {
-  m_Origin.x = 0.0f;
-  m_Origin.y = 0.0f;
-  m_Origin.z = 0.0f;
+  m_Origin[0] = 0.0f;
+  m_Origin[1] = 0.0f;
+  m_Origin[2] = 0.0f;
 
-  m_Resolution.x = 1.0f;
-  m_Resolution.y = 1.0f;
-  m_Resolution.z = 1.0f;
+  m_Spacing[0] = 1.0f;
+  m_Spacing[1] = 1.0f;
+  m_Spacing[2] = 1.0f;
 }
 
 // -----------------------------------------------------------------------------
@@ -80,17 +98,17 @@ SPParksDumpReader::~SPParksDumpReader() = default;
 void SPParksDumpReader::setupFilterParameters()
 {
   FileReader::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input File", InputFile, FilterParameter::Parameter, SPParksDumpReader, "*.dump", "SPParks Dump File"));
   parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Origin", Origin, FilterParameter::Parameter, SPParksDumpReader));
 
-  parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Resolution", Resolution, FilterParameter::Parameter, SPParksDumpReader));
+  parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Spacing", Spacing, FilterParameter::Parameter, SPParksDumpReader));
 
   parameters.push_back(SIMPL_NEW_BOOL_FP("One Based Arrays", OneBasedArrays, FilterParameter::Parameter, SPParksDumpReader));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", VolumeDataContainerName, FilterParameter::CreatedArray, SPParksDumpReader));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", VolumeDataContainerName, FilterParameter::CreatedArray, SPParksDumpReader));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Attribute Matrix", CellAttributeMatrixName, FilterParameter::CreatedArray, SPParksDumpReader));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Feature Ids", FeatureIdsArrayName, FilterParameter::CreatedArray, SPParksDumpReader));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Attribute Matrix", CellAttributeMatrixName, VolumeDataContainerName, FilterParameter::CreatedArray, SPParksDumpReader));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Feature Ids", FeatureIdsArrayName, VolumeDataContainerName, CellAttributeMatrixName, FilterParameter::CreatedArray, SPParksDumpReader));
   setFilterParameters(parameters);
 }
 
@@ -100,12 +118,12 @@ void SPParksDumpReader::setupFilterParameters()
 void SPParksDumpReader::readFilterParameters(AbstractFilterParametersReader* reader, int index)
 {
   reader->openFilterGroup(this, index);
-  setVolumeDataContainerName(reader->readString("VolumeDataContainerName", getVolumeDataContainerName()));
+  setVolumeDataContainerName(reader->readDataArrayPath("VolumeDataContainerName", getVolumeDataContainerName()));
   setCellAttributeMatrixName(reader->readString("CellAttributeMatrixName", getCellAttributeMatrixName()));
   setFeatureIdsArrayName(reader->readString("FeatureIdsArrayName", getFeatureIdsArrayName()));
   setInputFile(reader->readString("InputFile", getInputFile()));
   setOrigin(reader->readFloatVec3("Origin", getOrigin()));
-  setResolution(reader->readFloatVec3("Resolution", getResolution()));
+  setSpacing(reader->readFloatVec3("Spacing", getSpacing()));
   setOneBasedArrays(reader->readValue("OneBasedArrays", getOneBasedArrays()));
   reader->closeFilterGroup();
 }
@@ -115,8 +133,8 @@ void SPParksDumpReader::readFilterParameters(AbstractFilterParametersReader* rea
 // -----------------------------------------------------------------------------
 void SPParksDumpReader::updateCellInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // if(nullptr != m_FeatureIdsPtr.lock() ) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   //{ m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0); } /* Now assign the raw pointer to data from the DataArray<T> object */
@@ -139,41 +157,26 @@ void SPParksDumpReader::initialize()
 // -----------------------------------------------------------------------------
 void SPParksDumpReader::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
-  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getVolumeDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getVolumeDataContainerName(), DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
-
-  QVector<size_t> tDims(3, 0);
-  m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell);
-  if(getErrorCondition() < 0)
-  {
-    return;
-  }
-
-  // Creating a Feature Ids array here in preflight so that it appears in the current data structure
-  // This is a temporary array that will be overwritten by the correct array at the end of reading the file
-  QVector<size_t> cDims(1, 1);
-  DataArrayPath fIdsPath(getVolumeDataContainerName(), getCellAttributeMatrixName(), getFeatureIdsArrayName());
-  getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, fIdsPath, 0, cDims);
 
   QFileInfo fi(getInputFile());
   if(getInputFile().isEmpty())
   {
     QString ss = QObject::tr("The input file must be set");
-    setErrorCondition(-387);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-387, ss);
   }
   else if(!fi.exists())
   {
     QString ss = QObject::tr("The input file does not exist");
-    setErrorCondition(-388);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-388, ss);
   }
 
   ImageGeom::Pointer image = ImageGeom::CreateGeometry(SIMPL::Geometry::ImageGeometry);
@@ -187,18 +190,17 @@ void SPParksDumpReader::dataCheck()
     if(!m_InStream.open(QIODevice::ReadOnly | QIODevice::Text))
     {
       QString msg = QObject::tr("Input SPParks file could not be opened: %1").arg(getInputFile());
-      setErrorCondition(-102);
-      notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+      setErrorCondition(-102, msg);
     }
     else
     {
       int32_t error = readHeader();
       m_InStream.close();
+
       if(error < 0)
       {
-        setErrorCondition(error);
         QString ss = QObject::tr("Error occurred trying to parse the dimensions from the input file");
-        notifyErrorMessage(getHumanLabel(), ss, -48010);
+        setErrorCondition(error, ss);
       }
     }
   }
@@ -224,10 +226,10 @@ void SPParksDumpReader::preflight()
 void SPParksDumpReader::execute()
 {
   int32_t err = 0;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -235,12 +237,16 @@ void SPParksDumpReader::execute()
   m_InStream.setFileName(getInputFile());
   m_InStream.open(QFile::ReadOnly);
 
-  err = readHeader();
-  if(err < 0)
-  {
-    m_InStream.close();
-    return;
-  }
+  // We need to skip the header since it is already read
+  QByteArray buf = m_InStream.readLine(); // ITEM: TIMESTEP
+  buf = m_InStream.readLine();            // 210    21000.6
+  buf = m_InStream.readLine();            // ITEM: NUMBER OF ATOMS
+  buf = m_InStream.readLine();            // 106480
+  buf = m_InStream.readLine();            // ITEM: BOX BOUNDS
+  buf = m_InStream.readLine();            // 0.5 44.5
+  buf = m_InStream.readLine();            // 0.5 44.5
+  buf = m_InStream.readLine();            // 0.5 55.5
+
   err = readFile();
   m_InStream.close();
   if(err < 0)
@@ -274,7 +280,7 @@ int32_t SPParksDumpReader::readHeader()
     oneBase = 1;
   }
 
-  bool ok = false; // Use this to verify that the comversions from string to numbers actually works.
+  bool ok = false; // Use this to verify that the conversions from string to numbers actually works.
   int64_t nx = 0;
   int64_t ny = 0;
   int64_t nz = 0;
@@ -366,17 +372,28 @@ int32_t SPParksDumpReader::readHeader()
   if(numAtoms != nx * ny * nz)
   {
     QString msg = QObject::tr("Number of sites does not match the calculated number of sites %1 != %2 * %3 * %4").arg(numAtoms).arg(nx).arg(ny).arg(nz);
-    setErrorCondition(-101);
-    notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+    setErrorCondition(-101, msg);
     return -100;
   }
 
   m_CachedGeometry = m->getGeometryAs<ImageGeom>().get();
-  m_CachedGeometry->setDimensions(std::make_tuple(nx, ny, nz));
-  FloatVec3_t res = getResolution();
-  m_CachedGeometry->setResolution(std::make_tuple(res.x, res.y, res.z));
-  FloatVec3_t origin = getOrigin();
-  m_CachedGeometry->setOrigin(std::make_tuple(origin.x, origin.y, origin.z));
+  m_CachedGeometry->setDimensions(nx, ny, nz);
+  FloatVec3Type res = getSpacing();
+  m_CachedGeometry->setSpacing(res);
+  FloatVec3Type origin = getOrigin();
+  m_CachedGeometry->setOrigin(origin);
+
+  // Creating a Feature Ids array here in preflight so that it appears in the current data structure
+  // This is a temporary array that will be overwritten by the correct array at the end of reading the file
+
+  DataArrayPath fIdsPath = getVolumeDataContainerName();
+  fIdsPath.setAttributeMatrixName(getCellAttributeMatrixName());
+  fIdsPath.setDataArrayName(getFeatureIdsArrayName());
+  std::vector<size_t> tDims = {static_cast<size_t>(nx), static_cast<size_t>(ny), static_cast<size_t>(nz)};
+  m->createNonPrereqAttributeMatrix(this, fIdsPath, tDims, AttributeMatrix::Type::Cell);
+
+  std::vector<size_t> cDims = {1};
+  getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, fIdsPath, 0, cDims);
 
   return 0;
 }
@@ -390,7 +407,7 @@ int32_t SPParksDumpReader::readFile()
   // The readHeader() function should have set the dimensions correctly
   size_t totalPoints = m->getGeometryAs<ImageGeom>()->getNumberOfElements();
 
-  QVector<size_t> tDims(3, 0);
+  std::vector<size_t> tDims(3, 0);
   tDims[0] = m->getGeometryAs<ImageGeom>()->getXPoints();
   tDims[1] = m->getGeometryAs<ImageGeom>()->getYPoints();
   tDims[2] = m->getGeometryAs<ImageGeom>()->getZPoints();
@@ -455,17 +472,15 @@ int32_t SPParksDumpReader::readFile()
     else
     {
       QString msg = QObject::tr("Column header %1 is not a recognized column for SPParks files. Please recheck your file and report this error to the DREAM.3D developers").arg(QString(tokens[i]));
-      setErrorCondition(-107);
-      notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
-      return getErrorCondition();
+      setErrorCondition(-107, msg);
+      return getErrorCode();
     }
 
     if(!didAllocate)
     {
       QString msg = QObject::tr("Unable to allocate memory for the data");
-      setErrorCondition(-106);
-      notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
-      return getErrorCondition();
+      setErrorCondition(-106, msg);
+      return getErrorCode();
     }
   }
 
@@ -482,20 +497,20 @@ int32_t SPParksDumpReader::readFile()
       break;
     }
     parseDataLine(buf, tDims, xCol, yCol, zCol, n + 9);
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       break;
     }
   }
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
-    return getErrorCondition();
+    return getErrorCode();
   }
 
   DataParser::Pointer parser = m_NamePointerMap["type"];
   if(nullptr != parser.get())
   {
-    QVector<size_t> cDims(1, 1);
+    std::vector<size_t> cDims(1, 1);
     // Create a new DataArray that wraps the already allocated memory
     Int32ArrayType::Pointer typePtr = Int32ArrayType::WrapPointer(static_cast<int*>(parser->getVoidPointer()), totalPoints, cDims, getFeatureIdsArrayName(), true);
     // Release the DataParser from having to delete the memory
@@ -504,13 +519,13 @@ int32_t SPParksDumpReader::readFile()
     AttributeMatrix::Pointer attrMat = m->getAttributeMatrix(getCellAttributeMatrixName());
     if(nullptr != attrMat.get())
     {
-      attrMat->addAttributeArray(typePtr->getName(), typePtr);
+      attrMat->insertOrAssign(typePtr);
     }
   }
 
-  // Now set the Resolution and Origin that the user provided on the GUI or as parameters
-  m->getGeometryAs<ImageGeom>()->setResolution(std::make_tuple(m_Resolution.x, m_Resolution.y, m_Resolution.z));
-  m->getGeometryAs<ImageGeom>()->setOrigin(std::make_tuple(m_Origin.x, m_Origin.y, m_Origin.z));
+  // Now set the Spacing and Origin that the user provided on the GUI or as parameters
+  m->getGeometryAs<ImageGeom>()->setSpacing(std::make_tuple(m_Spacing[0], m_Spacing[1], m_Spacing[2]));
+  m->getGeometryAs<ImageGeom>()->setOrigin(std::make_tuple(m_Origin[0], m_Origin[1], m_Origin[2]));
 
   return 0;
 }
@@ -518,7 +533,7 @@ int32_t SPParksDumpReader::readFile()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void SPParksDumpReader::parseDataLine(QByteArray& line, QVector<size_t> dims, int64_t xCol, int64_t yCol, int64_t zCol, size_t lineNum)
+void SPParksDumpReader::parseDataLine(QByteArray& line, std::vector<size_t> dims, int64_t xCol, int64_t yCol, int64_t zCol, size_t lineNum)
 {
   // Filter the line to convert European command style decimals to US/UK style points
   for(qint32 c = 0; c < line.size(); ++c)
@@ -555,8 +570,7 @@ void SPParksDumpReader::parseDataLine(QByteArray& line, QVector<size_t> dims, in
     ss << "The calculated offset into the data array " << offset << " is larger "
        << " than the total number of elements " << m_CachedGeometry->getNumberOfElements() << " in the array."
        << "Line Number: " << lineNum << " Content\"" << line << "\"\n";
-    setErrorCondition(-48100);
-    notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+    setErrorCondition(-48100, msg);
     return;
   }
 
@@ -584,8 +598,7 @@ void SPParksDumpReader::parseDataLine(QByteArray& line, QVector<size_t> dims, in
          << " than the total number of elements " << dparser->getSize() << " in the array."
          << "The content of the current line is\"\n"
          << line << "\"\n";
-      setErrorCondition(-48100);
-      notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+      setErrorCondition(-48100, msg);
       return;
     }
   }
@@ -700,7 +713,7 @@ AbstractFilter::Pointer SPParksDumpReader::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksDumpReader::getCompiledLibraryName() const
+QString SPParksDumpReader::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -708,7 +721,7 @@ const QString SPParksDumpReader::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksDumpReader::getBrandingString() const
+QString SPParksDumpReader::getBrandingString() const
 {
   return "IO";
 }
@@ -716,7 +729,7 @@ const QString SPParksDumpReader::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksDumpReader::getFilterVersion() const
+QString SPParksDumpReader::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -726,7 +739,7 @@ const QString SPParksDumpReader::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksDumpReader::getGroupName() const
+QString SPParksDumpReader::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -734,7 +747,7 @@ const QString SPParksDumpReader::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SPParksDumpReader::getUuid()
+QUuid SPParksDumpReader::getUuid() const
 {
   return QUuid("{48db4da6-19c3-52a4-894f-776f3a57362e}");
 }
@@ -742,7 +755,7 @@ const QUuid SPParksDumpReader::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksDumpReader::getSubGroupName() const
+QString SPParksDumpReader::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -750,7 +763,120 @@ const QString SPParksDumpReader::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksDumpReader::getHumanLabel() const
+QString SPParksDumpReader::getHumanLabel() const
 {
   return "Import SPParks Dump File";
+}
+
+// -----------------------------------------------------------------------------
+SPParksDumpReader::Pointer SPParksDumpReader::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SPParksDumpReader> SPParksDumpReader::New()
+{
+  struct make_shared_enabler : public SPParksDumpReader
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksDumpReader::getNameOfClass() const
+{
+  return QString("SPParksDumpReader");
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksDumpReader::ClassName()
+{
+  return QString("SPParksDumpReader");
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setVolumeDataContainerName(const DataArrayPath& value)
+{
+  m_VolumeDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath SPParksDumpReader::getVolumeDataContainerName() const
+{
+  return m_VolumeDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setCellAttributeMatrixName(const QString& value)
+{
+  m_CellAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksDumpReader::getCellAttributeMatrixName() const
+{
+  return m_CellAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksDumpReader::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setOrigin(const FloatVec3Type& value)
+{
+  m_Origin = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type SPParksDumpReader::getOrigin() const
+{
+  return m_Origin;
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setSpacing(const FloatVec3Type& value)
+{
+  m_Spacing = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type SPParksDumpReader::getSpacing() const
+{
+  return m_Spacing;
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setOneBasedArrays(bool value)
+{
+  m_OneBasedArrays = value;
+}
+
+// -----------------------------------------------------------------------------
+bool SPParksDumpReader::getOneBasedArrays() const
+{
+  return m_OneBasedArrays;
+}
+
+// -----------------------------------------------------------------------------
+void SPParksDumpReader::setFeatureIdsArrayName(const QString& value)
+{
+  m_FeatureIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksDumpReader::getFeatureIdsArrayName() const
+{
+  return m_FeatureIdsArrayName;
 }

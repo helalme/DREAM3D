@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "VerifyTriangleWinding.h"
 
 #include <QtCore/QString>
@@ -51,8 +53,14 @@
 #define STDEXT __gnu_cxx
 #endif
 
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Geometry/TriangleGeom.h"
+
 #include "SIMPLib/Math/MatrixMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "SurfaceMeshing/SurfaceMeshingFilters/ReverseTriangleWinding.h"
 #include "SurfaceMeshing/SurfaceMeshingFilters/util/Plane.h"
 #include "SurfaceMeshing/SurfaceMeshingFilters/util/TriangleOps.h"
@@ -64,8 +72,19 @@
 class Mesh
 {
 public:
-  SIMPL_SHARED_POINTERS(Mesh)
-  SIMPL_STATIC_NEW_MACRO(Mesh)
+  using Self = Mesh;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer();
+  Pointer NullPointer()
+  {
+    return Pointer(static_cast<Self*>(nullptr));
+  }
+
+    static Pointer New();
+
   virtual ~Mesh()
   {
   }
@@ -113,7 +132,17 @@ public:
   typedef FaceArray::Face_t FaceType;
   typedef QVector<int32_t> FaceListType;
 
-  SIMPL_SHARED_POINTERS(LabelVisitorInfo)
+  using Self = LabelVisitorInfo;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer();
+  Pointer NullPointer()
+  {
+    return Pointer(static_cast<Self*>(nullptr));
+  }
+
   static Pointer New(int32_t label, size_t tIndex)
   {
     Pointer sharedPtr(new LabelVisitorInfo(label, tIndex));
@@ -137,10 +166,53 @@ public:
     return m_Label;
   }
 
-  SIMPL_INSTANCE_PROPERTY(size_t, StartIndex)
-  SIMPL_INSTANCE_PROPERTY(bool, Primed)
-  SIMPL_INSTANCE_PROPERTY(int32_t, NewLabel)
-  SIMPL_INSTANCE_PROPERTY(bool, Relabeled)
+  // -----------------------------------------------------------------------------
+  void setStartIndex(const size_t& value)
+  {
+    m_StartIndex = value;
+  }
+
+  // -----------------------------------------------------------------------------
+  size_t getStartIndex() const
+  {
+    return m_StartIndex;
+  }
+
+  // -----------------------------------------------------------------------------
+  void setPrimed(bool value)
+  {
+    m_Primed = value;
+  }
+
+  // -----------------------------------------------------------------------------
+  bool getPrimed() const
+  {
+    return m_Primed;
+  }
+
+  // -----------------------------------------------------------------------------
+  void setNewLabel(int32_t value)
+  {
+    m_NewLabel = value;
+  }
+
+  // -----------------------------------------------------------------------------
+  int32_t getNewLabel() const
+  {
+    return m_NewLabel;
+  }
+
+  // -----------------------------------------------------------------------------
+  void setRelabeled(bool value)
+  {
+    m_Relabeled = value;
+  }
+
+  // -----------------------------------------------------------------------------
+  bool getRelabeled() const
+  {
+    return m_Relabeled;
+  }
 
   QSet<int32_t> m_Faces;
   QSet<int32_t> m_OriginalFaceList;
@@ -228,6 +300,12 @@ protected:
   }
 
 private:
+
+  size_t m_StartIndex = {};
+  bool m_Primed = {};
+  int32_t m_NewLabel = {};
+  bool m_Relabeled = {};
+
   LabelVisitorInfo(const LabelVisitorInfo&); // Copy Constructor Not Implemented
   void operator=(const LabelVisitorInfo&);   // Operator '=' Not Implemented
 };
@@ -255,7 +333,7 @@ VerifyTriangleWinding::~VerifyTriangleWinding() = default;
 void VerifyTriangleWinding::setupFilterParameters()
 {
   SurfaceMeshFilter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SeparatorFilterParameter::New("Required Information", FilterParameter::Uncategorized));
   parameters.push_back(DataArraySelectionFilterParameter::New("SurfaceMeshFaceLabels", "SurfaceMeshFaceLabelsArrayPath", getSurfaceMeshFaceLabelsArrayPath(), FilterParameter::Uncategorized,
@@ -295,36 +373,32 @@ void VerifyTriangleWinding::dataCheck()
   IGeometry::Pointer geom = sm->getGeometry();
   if(nullptr == geom.get())
   {
-    setErrorCondition(-385);
     QString ss = QObject::tr("DataContainer Geometry is missing.");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-385, ss);
     return;
   }
 
   TriangleGeom::Pointer triangles = sm->getGeometryAs<TriangleGeom>();
   if(nullptr == triangles.get())
   {
-    setErrorCondition(-384);
     QString ss = QObject::tr("DataContainer Geometry is not compatible. The Geometry type is %1").arg(geom->getGeometryTypeAsString());
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-384, ss);
     return;
   }
 
   // We MUST have Nodes
   if(nullptr == triangles->getVertices().get())
   {
-    setErrorCondition(-386);
-    notifyErrorMessage(getHumanLabel(), "DataContainer Geometry missing Vertices", getErrorCondition());
+    setErrorCondition(-386, "DataContainer Geometry missing Vertices");
   }
   // We MUST have Triangles defined also.
   if(nullptr == triangles->getTriangles().get())
   {
-    setErrorCondition(-387);
-    notifyErrorMessage(getHumanLabel(), "DataContainer Geometry missing Triangles", getErrorCondition());
+    setErrorCondition(-387, "DataContainer Geometry missing Triangles");
   }
   else
   {
-    QVector<size_t> dims(1, 2);
+    std::vector<size_t> dims(1, 2);
     m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                      dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
     if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -347,9 +421,8 @@ void VerifyTriangleWinding::preflight()
   setInPreflight(false);
 
   /* *** THIS FILTER NEEDS TO BE CHECKED *** */
-  setErrorCondition(0xABABABAB);
   QString ss = QObject::tr("Filter is NOT updated for IGeometry Redesign. A Programmer needs to check this filter. Please report this to the DREAM3D developers.");
-  notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+  setErrorCondition(0xABABABAB, ss);
   /* *** THIS FILTER NEEDS TO BE CHECKED *** */
 }
 
@@ -358,8 +431,8 @@ void VerifyTriangleWinding::preflight()
 // -----------------------------------------------------------------------------
 void VerifyTriangleWinding::execute()
 {
-  int err = 0;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
   if(getErrorCondition() < 0)
   {
@@ -370,7 +443,7 @@ void VerifyTriangleWinding::execute()
 
   FaceArray::Pointer facesPtr = sm->getFaces();
 
-  notifyStatusMessage(getHumanLabel(), "Generating Face List for each Node");
+  notifyStatusMessage("Generating Face List for each Node");
   // Make sure the Face Connectivity is created because the FindNRing algorithm needs this and will
   // assert if the data is NOT in the SurfaceMesh Data Container
   if(nullptr == facesPtr->getFacesContainingVert())
@@ -395,7 +468,7 @@ void VerifyTriangleWinding::execute()
   }
 
   // Execute the actual verification step.
-  notifyStatusMessage(getHumanLabel(), "Generating Connectivity Complete. Starting Analysis");
+  notifyStatusMessage("Generating Connectivity Complete. Starting Analysis");
   verifyTriangleWinding();
 
 
@@ -410,8 +483,7 @@ void VerifyTriangleWinding::getLabelTriangelMap(LabelFaceMap_t& trianglesToLabel
   FaceArray::Pointer masterFaceList = sm->getFaces();
   if(nullptr == masterFaceList.get())
   {
-    setErrorCondition(-556);
-    notifyErrorMessage(getHumanLabel(), "The SurfaceMesh DataContainer Does NOT contain Faces", -556);
+    setErrorCondition(-556, "The SurfaceMesh DataContainer Does NOT contain Faces");
     return;
   }
 
@@ -474,8 +546,7 @@ int32_t VerifyTriangleWinding::getSeedTriangle(int32_t label, QSet<int32_t>& tri
     reverse->execute();
     if(reverse->getErrorCondition() < 0)
     {
-      setErrorCondition(reverse->getErrorCondition());
-      notifyErrorMessage(getHumanLabel(), "Error Reversing the Face Winding", -801);
+      setErrorCondition(reverse->getErrorCondition(), "Error Reversing the Face Winding");
       return -1;
     }
     if(faceLabel[0] == label)
@@ -488,7 +559,7 @@ int32_t VerifyTriangleWinding::getSeedTriangle(int32_t label, QSet<int32_t>& tri
     }
     if(normal.x < 0.0f)
     {
-      notifyErrorMessage(getHumanLabel(), "Error After attempted triangle winding reversal. Face normal is still oriented in wrong direction.", -802);
+      setErrorCondition(-802, "Error After attempted triangle winding reversal. Face normal is still oriented in wrong direction.");
       seedFaceIdx = -1;
     }
   }
@@ -525,8 +596,7 @@ int VerifyTriangleWinding::verifyTriangleWinding()
   FaceArray::Pointer masterFaceList = sm->getFaces();
   if(nullptr == masterFaceList.get())
   {
-    setErrorCondition(-556);
-    notifyErrorMessage(getHumanLabel(), "The SurfaceMesh DataContainer Does NOT contain Faces", -556);
+    setErrorCondition(-556, "The SurfaceMesh DataContainer Does NOT contain Faces");
     return getErrorCondition();
   }
   FaceArray::Face_t* triangles = masterFaceList->getPointer(0);
@@ -536,8 +606,7 @@ int VerifyTriangleWinding::verifyTriangleWinding()
   VertexArray::Pointer masterNodeListPtr = sm->getVertices();
   if(nullptr == masterNodeListPtr.get())
   {
-    setErrorCondition(-555);
-    notifyErrorMessage(getHumanLabel(), "The SurfaceMesh DataContainer Does NOT contain Nodes", -555);
+    setErrorCondition(-555, "The SurfaceMesh DataContainer Does NOT contain Nodes");
     return getErrorCondition();
   }
 
@@ -630,7 +699,7 @@ int VerifyTriangleWinding::verifyTriangleWinding()
     if((progressIndex / total * 100.0f) > (curPercent))
     {
       QString ss = QObject::tr("%1% Complete").arg(static_cast<int>(progressIndex / total * 100.0f));
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       curPercent += 5.0f;
     }
     ++progressIndex;
@@ -814,7 +883,7 @@ int VerifyTriangleWinding::verifyTriangleWinding()
 AbstractFilter::Pointer VerifyTriangleWinding::newFilterInstance(bool copyFilterParameters) const
 {
   VerifyTriangleWinding::Pointer filter = VerifyTriangleWinding::New();
-  if(true == copyFilterParameters)
+  if(copyFilterParameters)
   {
     copyFilterParameterInstanceVariables(filter.get());
   }
@@ -824,7 +893,7 @@ AbstractFilter::Pointer VerifyTriangleWinding::newFilterInstance(bool copyFilter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VerifyTriangleWinding::getCompiledLibraryName() const
+QString VerifyTriangleWinding::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -832,7 +901,7 @@ const QString VerifyTriangleWinding::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VerifyTriangleWinding::getGroupName() const
+QString VerifyTriangleWinding::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -840,7 +909,7 @@ const QString VerifyTriangleWinding::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid VerifyTriangleWinding::getUuid()
+QUuid VerifyTriangleWinding::getUuid() const
 {
   return QUuid("{3524c2dc-df60-5f90-b54b-e04946628a38}");
 }
@@ -848,7 +917,7 @@ const QUuid VerifyTriangleWinding::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VerifyTriangleWinding::getSubGroupName() const
+QString VerifyTriangleWinding::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ConnectivityArrangementFilters;
 }
@@ -856,7 +925,72 @@ const QString VerifyTriangleWinding::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VerifyTriangleWinding::getHumanLabel() const
+QString VerifyTriangleWinding::getHumanLabel() const
 {
   return "Verify Triangle Winding";
+}
+
+// -----------------------------------------------------------------------------
+VerifyTriangleWinding::Pointer VerifyTriangleWinding::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<VerifyTriangleWinding> VerifyTriangleWinding::New()
+{
+  struct make_shared_enabler : public VerifyTriangleWinding
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString VerifyTriangleWinding::getNameOfClass() const
+{
+  return QString("VerifyTriangleWinding");
+}
+
+// -----------------------------------------------------------------------------
+QString VerifyTriangleWinding::ClassName()
+{
+  return QString("VerifyTriangleWinding");
+}
+
+// -----------------------------------------------------------------------------
+void VerifyTriangleWinding::setSurfaceDataContainerName(const QString& value)
+{
+  m_SurfaceDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString VerifyTriangleWinding::getSurfaceDataContainerName() const
+{
+  return m_SurfaceDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void VerifyTriangleWinding::setSurfaceMeshNodeFacesArrayName(const QString& value)
+{
+  m_SurfaceMeshNodeFacesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString VerifyTriangleWinding::getSurfaceMeshNodeFacesArrayName() const
+{
+  return m_SurfaceMeshNodeFacesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void VerifyTriangleWinding::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath VerifyTriangleWinding::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
 }

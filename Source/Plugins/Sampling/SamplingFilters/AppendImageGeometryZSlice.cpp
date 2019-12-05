@@ -32,13 +32,19 @@
 *    United States Prime Contract Navy N00173-07-C-2068
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+#include <memory>
+
 #include "AppendImageGeometryZSlice.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingVersion.h"
@@ -61,7 +67,7 @@ AppendImageGeometryZSlice::~AppendImageGeometryZSlice() = default;
 // -----------------------------------------------------------------------------
 void AppendImageGeometryZSlice::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     AttributeMatrixSelectionFilterParameter::RequirementType req = AttributeMatrixSelectionFilterParameter::CreateRequirement(AttributeMatrix::Type::Cell, IGeometry::Type::Image);
@@ -72,7 +78,7 @@ void AppendImageGeometryZSlice::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_AM_SELECTION_FP("Destination Cell Data", DestinationAttributeMatrix, FilterParameter::RequiredArray, AppendImageGeometryZSlice, req));
   }
 
-  parameters.push_back(SIMPL_NEW_BOOL_FP("Check Resolution", CheckResolution, FilterParameter::Parameter, AppendImageGeometryZSlice));
+  parameters.push_back(SIMPL_NEW_BOOL_FP("Check Spacing", CheckResolution, FilterParameter::Parameter, AppendImageGeometryZSlice));
 
   setFilterParameters(parameters);
 }
@@ -101,83 +107,74 @@ void AppendImageGeometryZSlice::initialize()
 // -----------------------------------------------------------------------------
 void AppendImageGeometryZSlice::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // Validate the Source & Destination Attribute Matrix are available
   AttributeMatrix::Pointer inputCellAttrMat = getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, getInputAttributeMatrix(), -8201);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   AttributeMatrix::Pointer destCellAttrMat = getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, getDestinationAttributeMatrix(), -8200);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   // Validate each AttributeMatrix is associated with an Image Geometry.
   ImageGeom::Pointer inputGeometry = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getInputAttributeMatrix().getDataContainerName());
-  if(nullptr == inputGeometry.get() || getErrorCondition() < 0)
+  if(nullptr == inputGeometry.get() || getErrorCode() < 0)
   {
     return;
   }
 
   ImageGeom::Pointer destGeometry = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getDestinationAttributeMatrix().getDataContainerName());
-  if(nullptr == destGeometry.get() || getErrorCondition() < 0)
+  if(nullptr == destGeometry.get() || getErrorCode() < 0)
   {
     return;
   }
 
   // Get the Dimensions of the ImageGeometries
 
-  size_t inputGeomDims[3] = {0, 0, 0};
-  std::tie(inputGeomDims[0], inputGeomDims[1], inputGeomDims[2]) = inputGeometry->getDimensions();
+  SizeVec3Type inputGeomDims = inputGeometry->getDimensions();
 
-  size_t destGeomDims[3] = {0, 0, 0};
-  std::tie(destGeomDims[0], destGeomDims[1], destGeomDims[2]) = destGeometry->getDimensions();
+  SizeVec3Type destGeomDims = destGeometry->getDimensions();
 
   if(getCheckResolution())
   {
-    float inputRes[3] = {0.0f, 0.0f, 0.0f};
-    inputGeometry->getResolution(inputRes);
+    FloatVec3Type inputRes = inputGeometry->getSpacing();
 
-    float destRes[3] = {0.0f, 0.0f, 0.0f};
-    destGeometry->getResolution(destRes);
+    FloatVec3Type destRes = destGeometry->getSpacing();
 
     if(inputRes[0] != destRes[0])
     {
-      QString ss = QObject::tr("Input X Resolution (%1) not equal to Destination X Resolution (%2)").arg(inputRes[0]).arg(destRes[0]);
-      setErrorCondition(-8205);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      QString ss = QObject::tr("Input X Spacing (%1) not equal to Destination X Spacing (%2)").arg(inputRes[0]).arg(destRes[0]);
+      setErrorCondition(-8205, ss);
     }
     if(inputRes[1] != destRes[1])
     {
-      QString ss = QObject::tr("Input Y Resolution (%1) not equal to Destination Y Resolution (%2)").arg(inputRes[1]).arg(destRes[1]);
-      setErrorCondition(-8206);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      QString ss = QObject::tr("Input Y Spacing (%1) not equal to Destination Y Spacing (%2)").arg(inputRes[1]).arg(destRes[1]);
+      setErrorCondition(-8206, ss);
     }
     if(inputRes[2] != destRes[2])
     {
-      QString ss = QObject::tr("Input Z Resolution (%1) not equal to Destination Z Resolution (%2)").arg(inputRes[2]).arg(destRes[2]);
-      setErrorCondition(-8207);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      QString ss = QObject::tr("Input Z Spacing (%1) not equal to Destination Z Spacing (%2)").arg(inputRes[2]).arg(destRes[2]);
+      setErrorCondition(-8207, ss);
     }
   }
 
   if(destGeomDims[0] != inputGeomDims[0])
   {
     QString ss = QObject::tr("Input X Dim (%1) not equal to Destination X Dim (%2)").arg(inputGeomDims[0]).arg(destGeomDims[0]);
-    setErrorCondition(-8202);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-8202, ss);
   }
 
   if(destGeomDims[0] != inputGeomDims[0])
   {
     QString ss = QObject::tr("Input Y Dim (%1) not equal to Destination Y Dim (%2)").arg(inputGeomDims[1]).arg(destGeomDims[1]);
-    setErrorCondition(-8203);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-8203, ss);
   }
 
   if(getInPreflight())
@@ -196,7 +193,7 @@ void AppendImageGeometryZSlice::dataCheck()
         totalPoints *= destGeomDims[i];
       }
     }
-    QVector<size_t> dgd = {destGeomDims[0], destGeomDims[1], destGeomDims[2]};
+    std::vector<size_t> dgd = {destGeomDims[0], destGeomDims[1], destGeomDims[2]};
     AttributeMatrix::Pointer newCellAttrMat = AttributeMatrix::New(dgd, destCellAttrMat->getName(), destCellAttrMat->getType());
     // Create new DataArrays with the new sizes and place into a temp AttributeMatrix which
     // will be inserted into the data container as a replacement for the existing
@@ -209,10 +206,10 @@ void AppendImageGeometryZSlice::dataCheck()
       IDataArray::Pointer data = p->createNewArray(totalPoints, p->getComponentDimensions(), p->getName(), false);
 
       destCellAttrMat->removeAttributeArray(*iter);
-      newCellAttrMat->addAttributeArray(*iter, data);
+      newCellAttrMat->insertOrAssign(data);
     }
     getDataContainerArray()->getDataContainer(getDestinationAttributeMatrix().getDataContainerName())->removeAttributeMatrix(destCellAttrMat->getName());
-    getDataContainerArray()->getDataContainer(getDestinationAttributeMatrix().getDataContainerName())->addAttributeMatrix(newCellAttrMat->getName(), newCellAttrMat);
+    getDataContainerArray()->getDataContainer(getDestinationAttributeMatrix().getDataContainerName())->addOrReplaceAttributeMatrix(newCellAttrMat);
   }
 }
 
@@ -234,11 +231,11 @@ void AppendImageGeometryZSlice::preflight()
 // -----------------------------------------------------------------------------
 void AppendImageGeometryZSlice::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -252,11 +249,9 @@ void AppendImageGeometryZSlice::execute()
 
   AttributeMatrix::Pointer destCellAttrMat = getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, getDestinationAttributeMatrix(), -8200);
 
-  size_t inputGeomDims[3] = {0, 0, 0};
-  std::tie(inputGeomDims[0], inputGeomDims[1], inputGeomDims[2]) = inputGeometry->getDimensions();
+  SizeVec3Type inputGeomDims = inputGeometry->getDimensions();
 
-  size_t destGeomDims[3] = {0, 0, 0};
-  std::tie(destGeomDims[0], destGeomDims[1], destGeomDims[2]) = destGeometry->getDimensions();
+  SizeVec3Type destGeomDims = destGeometry->getDimensions();
 
   size_t tupleOffset = 1;
   for(int i = 0; i < 3; i++)
@@ -274,7 +269,7 @@ void AppendImageGeometryZSlice::execute()
   // Update the existing z dimension of the image geometry and set that value back into the Image Geometry
   destGeometry->setDimensions(destGeomDims);
 
-  QVector<size_t> dgd = {destGeomDims[0], destGeomDims[1], destGeomDims[2]};
+  std::vector<size_t> dgd = {destGeomDims[0], destGeomDims[1], destGeomDims[2]};
   destCellAttrMat->resizeAttributeArrays(dgd);
 
   QList<QString> voxelArrayNames = destCellAttrMat->getAttributeArrayNames();
@@ -289,8 +284,7 @@ void AppendImageGeometryZSlice::execute()
     else
     {
       QString ss = QObject::tr("Data Array '%1' does not exist in the Input Cell AttributeMatrix.").arg(*iter);
-      setWarningCondition(-8203);
-      notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+      setWarningCondition(-8203, ss);
     }
   }
 
@@ -311,7 +305,7 @@ AbstractFilter::Pointer AppendImageGeometryZSlice::newFilterInstance(bool copyFi
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AppendImageGeometryZSlice::getCompiledLibraryName() const
+QString AppendImageGeometryZSlice::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -319,7 +313,7 @@ const QString AppendImageGeometryZSlice::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AppendImageGeometryZSlice::getBrandingString() const
+QString AppendImageGeometryZSlice::getBrandingString() const
 {
   return "Sampling";
 }
@@ -327,7 +321,7 @@ const QString AppendImageGeometryZSlice::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AppendImageGeometryZSlice::getFilterVersion() const
+QString AppendImageGeometryZSlice::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -337,7 +331,7 @@ const QString AppendImageGeometryZSlice::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AppendImageGeometryZSlice::getGroupName() const
+QString AppendImageGeometryZSlice::getGroupName() const
 {
   return SIMPL::FilterGroups::CoreFilters;
 }
@@ -345,7 +339,7 @@ const QString AppendImageGeometryZSlice::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AppendImageGeometryZSlice::getUuid()
+QUuid AppendImageGeometryZSlice::getUuid() const
 {
   return QUuid("{52b2918a-4fb5-57aa-97d4-ccc084b89572}");
 }
@@ -353,7 +347,7 @@ const QUuid AppendImageGeometryZSlice::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AppendImageGeometryZSlice::getSubGroupName() const
+QString AppendImageGeometryZSlice::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MemoryManagementFilters;
 }
@@ -361,7 +355,72 @@ const QString AppendImageGeometryZSlice::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AppendImageGeometryZSlice::getHumanLabel() const
+QString AppendImageGeometryZSlice::getHumanLabel() const
 {
   return "Append Z Slice (Image Geometry)";
+}
+
+// -----------------------------------------------------------------------------
+AppendImageGeometryZSlice::Pointer AppendImageGeometryZSlice::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AppendImageGeometryZSlice> AppendImageGeometryZSlice::New()
+{
+  struct make_shared_enabler : public AppendImageGeometryZSlice
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AppendImageGeometryZSlice::getNameOfClass() const
+{
+  return QString("AppendImageGeometryZSlice");
+}
+
+// -----------------------------------------------------------------------------
+QString AppendImageGeometryZSlice::ClassName()
+{
+  return QString("AppendImageGeometryZSlice");
+}
+
+// -----------------------------------------------------------------------------
+void AppendImageGeometryZSlice::setInputAttributeMatrix(const DataArrayPath& value)
+{
+  m_InputAttributeMatrix = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AppendImageGeometryZSlice::getInputAttributeMatrix() const
+{
+  return m_InputAttributeMatrix;
+}
+
+// -----------------------------------------------------------------------------
+void AppendImageGeometryZSlice::setDestinationAttributeMatrix(const DataArrayPath& value)
+{
+  m_DestinationAttributeMatrix = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AppendImageGeometryZSlice::getDestinationAttributeMatrix() const
+{
+  return m_DestinationAttributeMatrix;
+}
+
+// -----------------------------------------------------------------------------
+void AppendImageGeometryZSlice::setCheckResolution(bool value)
+{
+  m_CheckResolution = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AppendImageGeometryZSlice::getCheckResolution() const
+{
+  return m_CheckResolution;
 }

@@ -32,15 +32,22 @@
 *    United States Prime Contract Navy N00173-07-C-2068
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+#include <memory>
+
 #include "IdentifySample.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -63,7 +70,7 @@ IdentifySample::~IdentifySample() = default;
 // -----------------------------------------------------------------------------
 void IdentifySample::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_BOOL_FP("Fill Holes in Largest Feature", FillHoles, FilterParameter::Parameter, IdentifySample));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
@@ -97,12 +104,12 @@ void IdentifySample::initialize()
 // -----------------------------------------------------------------------------
 void IdentifySample::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getGoodVoxelsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_GoodVoxelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<bool>, AbstractFilter>(this, getGoodVoxelsArrayPath(),
                                                                                                      cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_GoodVoxelsPtr.lock())                                                                      /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -129,10 +136,10 @@ void IdentifySample::preflight()
 // -----------------------------------------------------------------------------
 void IdentifySample::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -140,8 +147,7 @@ void IdentifySample::execute()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_GoodVoxelsArrayPath.getDataContainerName());
   int64_t totalPoints = static_cast<int64_t>(m_GoodVoxelsPtr.lock()->getNumberOfTuples());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -330,7 +336,7 @@ AbstractFilter::Pointer IdentifySample::newFilterInstance(bool copyFilterParamet
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifySample::getCompiledLibraryName() const
+QString IdentifySample::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -338,7 +344,7 @@ const QString IdentifySample::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifySample::getBrandingString() const
+QString IdentifySample::getBrandingString() const
 {
   return "Processing";
 }
@@ -346,7 +352,7 @@ const QString IdentifySample::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifySample::getFilterVersion() const
+QString IdentifySample::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -357,7 +363,7 @@ const QString IdentifySample::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifySample::getGroupName() const
+QString IdentifySample::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -365,7 +371,7 @@ const QString IdentifySample::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid IdentifySample::getUuid()
+QUuid IdentifySample::getUuid() const
 {
   return QUuid("{0e8c0818-a3fb-57d4-a5c8-7cb8ae54a40a}");
 }
@@ -373,7 +379,7 @@ const QUuid IdentifySample::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifySample::getSubGroupName() const
+QString IdentifySample::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -381,7 +387,60 @@ const QString IdentifySample::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifySample::getHumanLabel() const
+QString IdentifySample::getHumanLabel() const
 {
   return "Isolate Largest Feature (Identify Sample)";
+}
+
+// -----------------------------------------------------------------------------
+IdentifySample::Pointer IdentifySample::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<IdentifySample> IdentifySample::New()
+{
+  struct make_shared_enabler : public IdentifySample
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifySample::getNameOfClass() const
+{
+  return QString("IdentifySample");
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifySample::ClassName()
+{
+  return QString("IdentifySample");
+}
+
+// -----------------------------------------------------------------------------
+void IdentifySample::setFillHoles(bool value)
+{
+  m_FillHoles = value;
+}
+
+// -----------------------------------------------------------------------------
+bool IdentifySample::getFillHoles() const
+{
+  return m_FillHoles;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifySample::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath IdentifySample::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
 }

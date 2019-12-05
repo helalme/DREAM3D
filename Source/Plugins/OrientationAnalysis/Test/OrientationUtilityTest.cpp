@@ -33,10 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
@@ -58,7 +56,24 @@ public:
   virtual ~OrientationUtilityTest()
   {
   }
-  SIMPL_TYPE_MACRO(OrientationUtilityTest)
+  /**
+   * @brief Returns the name of the class for OrientationUtilityTest
+   */
+  /**
+   * @brief Returns the name of the class for OrientationUtilityTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("OrientationUtilityTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for OrientationUtilityTest
+   */
+  QString ClassName()
+  {
+    return QString("OrientationUtilityTest");
+  }
 
   // -----------------------------------------------------------------------------
   //

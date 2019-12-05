@@ -38,14 +38,8 @@
 
 
 #include <QtCore/QString>
-#include <QtCore/QStringList>
-#include <QtCore/QSettings>
-#include <QtCore/QVector>
-#include <QtCore/QUrl>
 
 #include "EbsdLib/EbsdConstants.h"
-
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 
 #include "SVWidgetsLib/QtSupport/QtSPluginFrame.h"
 
@@ -138,14 +132,6 @@ class ConvertHexGridToSquareGridWidget : public FilterParameterWidget, private U
      * @brief validateInputFile
      */
     void validateInputFile();
-
-    /**
-     * @brief verifyPathExists
-     * @param outFilePath
-     * @param lineEdit
-     * @return
-     */
-    bool verifyPathExists(QString outFilePath, QLineEdit* lineEdit);
 
     /**
      * @brief setWidgetListEnabled

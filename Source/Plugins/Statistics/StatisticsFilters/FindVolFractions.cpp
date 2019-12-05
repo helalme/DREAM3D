@@ -33,17 +33,30 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindVolFractions.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -64,7 +77,7 @@ FindVolFractions::~FindVolFractions() = default;
 // -----------------------------------------------------------------------------
 void FindVolFractions::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -102,12 +115,12 @@ void FindVolFractions::initialize()
 // -----------------------------------------------------------------------------
 void FindVolFractions::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getCellPhasesArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CellPhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getCellPhasesArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellPhasesPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -115,8 +128,7 @@ void FindVolFractions::dataCheck()
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  m_VolFractionsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getVolFractionsArrayPath(), 0,
-                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_VolFractionsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getVolFractionsArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_VolFractionsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_VolFractions = m_VolFractionsPtr.lock()->getPointer(0);
@@ -141,10 +153,10 @@ void FindVolFractions::preflight()
 // -----------------------------------------------------------------------------
 void FindVolFractions::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -152,18 +164,24 @@ void FindVolFractions::execute()
   size_t totalPoints = m_CellPhasesPtr.lock()->getNumberOfTuples();
   size_t totalEnsembles = m_VolFractionsPtr.lock()->getNumberOfTuples();
 
+  std::vector<size_t> ensembleElements(totalEnsembles);
+
+  // Initialize everythign
   for(size_t i = 1; i < totalEnsembles; i++)
   {
     m_VolFractions[i] = 0;
-  }
-  for(size_t i = 0; i < totalPoints; i++)
-  {
-    m_VolFractions[m_CellPhases[i]]++;
+    ensembleElements[i] = 0;
   }
 
+  // Calculate the total number of elements in each Ensemble
+  for(size_t i = 0; i < totalPoints; i++)
+  {
+    ensembleElements[m_CellPhases[i]]++;
+  }
+  // Calculate the Volume Fraction
   for(size_t i = 1; i < totalEnsembles; i++)
   {
-    m_VolFractions[i] /= totalPoints;
+    m_VolFractions[i] = static_cast<double>(ensembleElements[i]) / static_cast<double>(totalPoints);
   }
 
 }
@@ -184,7 +202,7 @@ AbstractFilter::Pointer FindVolFractions::newFilterInstance(bool copyFilterParam
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindVolFractions::getCompiledLibraryName() const
+QString FindVolFractions::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -192,7 +210,7 @@ const QString FindVolFractions::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindVolFractions::getBrandingString() const
+QString FindVolFractions::getBrandingString() const
 {
   return "Statistics";
 }
@@ -200,7 +218,7 @@ const QString FindVolFractions::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindVolFractions::getFilterVersion() const
+QString FindVolFractions::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -210,7 +228,7 @@ const QString FindVolFractions::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindVolFractions::getGroupName() const
+QString FindVolFractions::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -218,7 +236,7 @@ const QString FindVolFractions::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindVolFractions::getUuid()
+QUuid FindVolFractions::getUuid() const
 {
   return QUuid("{68246a67-7f32-5c80-815a-bec82008d7bc}");
 }
@@ -226,7 +244,7 @@ const QUuid FindVolFractions::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindVolFractions::getSubGroupName() const
+QString FindVolFractions::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -234,7 +252,60 @@ const QString FindVolFractions::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindVolFractions::getHumanLabel() const
+QString FindVolFractions::getHumanLabel() const
 {
   return "Find Volume Fractions of Ensembles";
+}
+
+// -----------------------------------------------------------------------------
+FindVolFractions::Pointer FindVolFractions::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindVolFractions> FindVolFractions::New()
+{
+  struct make_shared_enabler : public FindVolFractions
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindVolFractions::getNameOfClass() const
+{
+  return QString("FindVolFractions");
+}
+
+// -----------------------------------------------------------------------------
+QString FindVolFractions::ClassName()
+{
+  return QString("FindVolFractions");
+}
+
+// -----------------------------------------------------------------------------
+void FindVolFractions::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindVolFractions::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindVolFractions::setVolFractionsArrayPath(const DataArrayPath& value)
+{
+  m_VolFractionsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindVolFractions::getVolFractionsArrayPath() const
+{
+  return m_VolFractionsArrayPath;
 }

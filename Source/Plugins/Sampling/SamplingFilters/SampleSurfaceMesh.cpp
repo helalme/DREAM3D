@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SampleSurfaceMesh.h"
 
 #include <mutex>
@@ -48,7 +50,10 @@
 #include <tbb/tbb_machine.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/DataArrays/DynamicListArray.hpp"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -58,6 +63,8 @@
 #include "SIMPLib/Math/GeometryMath.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
 #include "SIMPLib/Utilities/TimeUtilities.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingVersion.h"
@@ -91,8 +98,8 @@ public:
     float radius = 0.0f;
     float distToBoundary = 0.0f;
     int64_t numPoints = m_Points->getNumberOfVertices();
-    FloatArrayType::Pointer llPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Lower");
-    FloatArrayType::Pointer urPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Upper_Right");
+    FloatArrayType::Pointer llPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Lower", true);
+    FloatArrayType::Pointer urPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Upper_Right", true);
     float* ll = llPtr->getPointer(0);
     float* ur = urPtr->getPointer(0);
     float* point = nullptr;
@@ -169,8 +176,8 @@ public:
     float radius = 0.0f;
     float distToBoundary = 0.0f;
     int64_t numPoints = m_Points->getNumberOfVertices();
-    FloatArrayType::Pointer llPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Lower");
-    FloatArrayType::Pointer urPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Upper_Right");
+    FloatArrayType::Pointer llPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Lower", true);
+    FloatArrayType::Pointer urPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Upper_Right", true);
     float* ll = llPtr->getPointer(0);
     float* ur = urPtr->getPointer(0);
     float* point = nullptr;
@@ -231,7 +238,7 @@ SampleSurfaceMesh::~SampleSurfaceMesh() = default;
 // -----------------------------------------------------------------------------
 void SampleSurfaceMesh::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateRequirement(SIMPL::TypeNames::Int32, 2, AttributeMatrix::Type::Face, IGeometry::Type::Triangle);
@@ -263,26 +270,26 @@ void SampleSurfaceMesh::initialize()
 void SampleSurfaceMesh::dataCheck()
 {
   TriangleGeom::Pointer triangles = getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath().getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   QVector<IDataArray::Pointer> dataArrays;
 
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(triangles->getTriangles());
   }
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshFaceLabels = m_SurfaceMeshFaceLabelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_SurfaceMeshFaceLabelsPtr.lock());
   }
@@ -323,10 +330,10 @@ void SampleSurfaceMesh::assign_points(Int32ArrayType::Pointer iArray)
 // -----------------------------------------------------------------------------
 void SampleSurfaceMesh::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -340,13 +347,13 @@ void SampleSurfaceMesh::execute()
   int64_t numFaces = m_SurfaceMeshFaceLabelsPtr.lock()->getNumberOfTuples();
 
   // create array to hold bounding vertices for each face
-  FloatArrayType::Pointer llPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Lower_Left");
-  FloatArrayType::Pointer urPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Upper_Right");
+  FloatArrayType::Pointer llPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Lower_Left", true);
+  FloatArrayType::Pointer urPtr = FloatArrayType::CreateArray(3, "_INTERNAL_USE_ONLY_Upper_Right", true);
   float* ll = llPtr->getPointer(0);
   float* ur = urPtr->getPointer(0);
   VertexGeom::Pointer faceBBs = VertexGeom::CreateGeometry(2 * numFaces, "_INTERNAL_USE_ONLY_faceBBs");
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Counting number of Features...");
+  notifyStatusMessage("Counting number of Features...");
 
   // walk through faces to see how many features there are
   int32_t g1 = 0, g2 = 0;
@@ -379,11 +386,11 @@ void SampleSurfaceMesh::execute()
   std::vector<int32_t> linkCount(numFeatures, 0);
 
   // fill out lists with number of references to cells
-  Int32ArrayType::Pointer linkLocPtr = Int32ArrayType::CreateArray(numFaces, "_INTERNAL_USE_ONLY_cell refs");
+  Int32ArrayType::Pointer linkLocPtr = Int32ArrayType::CreateArray(numFaces, "_INTERNAL_USE_ONLY_cell refs", true);
   linkLocPtr->initializeWithZeros();
   int32_t* linkLoc = linkLocPtr->getPointer(0);
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Counting number of triangle faces per feature ...");
+  notifyStatusMessage("Counting number of triangle faces per feature ...");
 
   // traverse data to determine number of faces belonging to each feature
   for(int64_t i = 0; i < numFaces; i++)
@@ -409,7 +416,7 @@ void SampleSurfaceMesh::execute()
   // now allocate storage for the faces
   faceLists->allocateLists(linkCount);
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Allocating triangle faces per feature ...");
+  notifyStatusMessage("Allocating triangle faces per feature ...");
 
   // traverse data again to get the faces belonging to each feature
   for(int64_t i = 0; i < numFaces; i++)
@@ -436,11 +443,11 @@ void SampleSurfaceMesh::execute()
     return;
   }
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Vertex Geometry generating sampling points");
+  notifyStatusMessage("Vertex Geometry generating sampling points");
 
   // generate the list of sampling points from subclass
   VertexGeom::Pointer points = generate_points();
-  if(getErrorCondition() < 0 || nullptr == points.get())
+  if(getErrorCode() < 0 || nullptr == points.get())
   {
     return;
   }
@@ -448,11 +455,11 @@ void SampleSurfaceMesh::execute()
 
   // create array to hold which polyhedron (feature) each point falls in
   Int32ArrayType::Pointer iArray = Int32ArrayType::NullPointer();
-  iArray = Int32ArrayType::CreateArray(numPoints, "_INTERNAL_USE_ONLY_polyhedronIds");
+  iArray = Int32ArrayType::CreateArray(numPoints, "_INTERNAL_USE_ONLY_polyhedronIds", true);
   iArray->initializeWithZeros();
   int32_t* polyIds = iArray->getPointer(0);
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Sampling triangle geometry ...");
+  notifyStatusMessage("Sampling triangle geometry ...");
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
   tbb::task_scheduler_init init;
@@ -500,7 +507,7 @@ void SampleSurfaceMesh::execute()
   }
   assign_points(iArray);
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Complete");
+  notifyStatusMessage("Complete");
 }
 
 // -----------------------------------------------------------------------------
@@ -518,7 +525,7 @@ void SampleSurfaceMesh::sendThreadSafeProgressMessage(int featureId, size_t numC
     qint64 remainMillis = inverseRate * (totalFeatures - m_NumCompleted);
     QString ss = QObject::tr("Feature %3 | Points Completed: %1 of %2").arg(m_NumCompleted).arg(totalFeatures).arg(featureId);
     ss = ss + QObject::tr(" || Est. Time Remain: %1").arg(DREAM3D::convertMillisToHrsMinSecs(remainMillis));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     m_Millis = QDateTime::currentMSecsSinceEpoch();
     m_LastCompletedPoints = m_NumCompleted;
   }
@@ -540,7 +547,7 @@ AbstractFilter::Pointer SampleSurfaceMesh::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMesh::getCompiledLibraryName() const
+QString SampleSurfaceMesh::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -548,7 +555,7 @@ const QString SampleSurfaceMesh::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMesh::getBrandingString() const
+QString SampleSurfaceMesh::getBrandingString() const
 {
   return "Sampling";
 }
@@ -556,7 +563,7 @@ const QString SampleSurfaceMesh::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMesh::getFilterVersion() const
+QString SampleSurfaceMesh::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -566,7 +573,7 @@ const QString SampleSurfaceMesh::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMesh::getGroupName() const
+QString SampleSurfaceMesh::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -574,7 +581,7 @@ const QString SampleSurfaceMesh::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SampleSurfaceMesh::getUuid()
+QUuid SampleSurfaceMesh::getUuid() const
 {
   return QUuid("{1fc20816-a312-51ae-b89f-fa25e5042a03}");
 }
@@ -582,7 +589,7 @@ const QUuid SampleSurfaceMesh::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMesh::getSubGroupName() const
+QString SampleSurfaceMesh::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ResolutionFilters;
 }
@@ -590,7 +597,48 @@ const QString SampleSurfaceMesh::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMesh::getHumanLabel() const
+QString SampleSurfaceMesh::getHumanLabel() const
 {
   return "Sample Triangle Geometry";
+}
+
+// -----------------------------------------------------------------------------
+SampleSurfaceMesh::Pointer SampleSurfaceMesh::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SampleSurfaceMesh> SampleSurfaceMesh::New()
+{
+  struct make_shared_enabler : public SampleSurfaceMesh
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SampleSurfaceMesh::getNameOfClass() const
+{
+  return QString("SampleSurfaceMesh");
+}
+
+// -----------------------------------------------------------------------------
+QString SampleSurfaceMesh::ClassName()
+{
+  return QString("SampleSurfaceMesh");
+}
+
+// -----------------------------------------------------------------------------
+void SampleSurfaceMesh::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath SampleSurfaceMesh::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
 }

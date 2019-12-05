@@ -34,12 +34,17 @@
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 #include <QtCore/QCoreApplication>
-#include <QtCore/QDateTime>
-#include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QTime>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -48,6 +53,7 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "ImportExportTestFileLocations.h"
@@ -57,13 +63,13 @@
 class DxIOTest
 {
 public:
-  DxIOTest()
+  DxIOTest() = default;
+  virtual ~DxIOTest() = default;
+
+  QString getNameOfClass()
   {
+    return QString("DxIOTest");
   }
-  virtual ~DxIOTest()
-  {
-  }
-  SIMPL_TYPE_MACRO(DxIOTest)
 
   // -----------------------------------------------------------------------------
   //
@@ -167,7 +173,7 @@ public:
       err = pipeline->preflightPipeline();
       DREAM3D_REQUIRE_EQUAL(err, 0);
       pipeline->execute();
-      err = pipeline->getErrorCondition();
+      err = pipeline->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, 0);
     }
 
@@ -218,7 +224,7 @@ public:
       err = pipeline->preflightPipeline();
       DREAM3D_REQUIRE_EQUAL(err, 0);
       pipeline->execute();
-      err = pipeline->getErrorCondition();
+      err = pipeline->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, 0);
     }
     return EXIT_SUCCESS;
@@ -246,7 +252,7 @@ public:
       DREAM3D_REQUIRE_EQUAL(propWasSet, true)
       dxReader->setDataContainerArray(dca);
       dxReader->execute();
-      int err = dxReader->getErrorCondition();
+      int err = dxReader->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, 0);
       // pipeline->pushBack(DxReader);
     }
@@ -257,24 +263,20 @@ public:
       DREAM3D_REQUIRE_EQUAL(0, 1)
     }
 
-    size_t nx = 0;
-    size_t ny = 0;
-    size_t nz = 0;
-
     DataContainer::Pointer m = dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
     DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-    std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-    DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-    DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-    DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+    SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+    DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+    DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+    DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
     IDataArray::Pointer mdata =
         dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName)->getAttributeMatrix("CellData")->getAttributeArray(SIMPL::CellData::FeatureIds);
 
     int size = UnitTest::FeatureIdsTest::XSize * UnitTest::FeatureIdsTest::YSize * UnitTest::FeatureIdsTest::ZSize;
-    int32_t* data = Int32ArrayType::SafeReinterpretCast<IDataArray*, Int32ArrayType*, int32_t*>(mdata.get());
-
+    Int32ArrayType::Pointer dataPtr = std::dynamic_pointer_cast<Int32ArrayType>(mdata);
+    int32_t* data = dataPtr->getTuplePointer(0);
     for(int i = 0; i < size; ++i)
     {
       int32_t file_value = data[i];
@@ -322,7 +324,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         dxReader->setDataContainerArray(dca);
         dxReader->preflight();
-        int err = dxReader->getErrorCondition();
+        int err = dxReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -332,17 +334,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read the file
       bool prop = dxReader->property("FileWasRead").toBool();
@@ -359,7 +357,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         dxReader->setDataContainerArray(dca);
         dxReader->preflight();
-        int err = dxReader->getErrorCondition();
+        int err = dxReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -369,17 +367,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read from the cache this time, since we're reading from the same file
       bool prop = dxReader->property("FileWasRead").toBool();
@@ -396,7 +390,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         dxReader->setDataContainerArray(dca);
         dxReader->preflight();
-        int err = dxReader->getErrorCondition();
+        int err = dxReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -406,17 +400,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize + 2); // Add 2 because we added a suface layer during the writing of the file
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize + 2);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize + 2);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize + 2); // Add 2 because we added a suface layer during the writing of the file
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize + 2);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize + 2);
 
       // Check that the filter read from the file again, since we changed file names
       bool prop = dxReader->property("FileWasRead").toBool();
@@ -444,7 +434,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         dxReader->setDataContainerArray(dca);
         dxReader->preflight();
-        int err = dxReader->getErrorCondition();
+        int err = dxReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -454,17 +444,14 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize + 2); // Add 2 because we added a suface layer during the writing of the file
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize + 2);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize + 2);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize + 2); // Add 2 because we added a suface layer during the writing of the file
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize + 2);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize + 2);
 
       // Check that the filter read from the file again, since we changed the contents of the file outside the program
       bool prop = dxReader->property("FileWasRead").toBool();
@@ -485,7 +472,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         dxReader->setDataContainerArray(dca);
         dxReader->preflight();
-        int err = dxReader->getErrorCondition();
+        int err = dxReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -495,17 +482,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = dxReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize + 2); // Add 2 because we added a suface layer during the writing of the file
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize + 2);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize + 2);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize + 2); // Add 2 because we added a suface layer during the writing of the file
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize + 2);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize + 2);
 
       // Check that the filter read from the file again, since we flushed the cache
       bool prop = dxReader->property("FileWasRead").toBool();

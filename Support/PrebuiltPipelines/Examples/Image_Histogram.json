@@ -9,6 +9,16 @@
         "ImageDataArrayName": "ImageData"
     },
     "1": {
+        "FilterVersion": "1.2.863",
+        "Filter_Enabled": true,
+        "Filter_Human_Label": "Write DREAM.3D Data File",
+        "Filter_Name": "DataContainerWriter",
+        "Filter_Uuid": "{3fcd4c43-9d75-5b86-aad4-4441bc914f37}",
+        "OutputFile": "Data/Output/ImageReaderTest.dream3d",
+        "WriteTimeSeries": 0,
+        "WriteXdmfFile": 1
+    },
+    "2": {
         "FilterVersion": "6.4.500",
         "Filter_Human_Label": "Calculate Frequency Histogram",
         "Filter_Name": "CalculateArrayHistogram",
@@ -27,14 +37,18 @@
         },
         "UserDefinedRange": 1
     },
-    "2": {
+    "3": {
         "Delimiter": 0,
         "FileExtension": ".csv",
-        "FilterVersion": "1.0.953",
+        "FilterVersion": "1.2.758",
+        "Filter_Enabled": true,
         "Filter_Human_Label": "Export ASCII Data",
         "Filter_Name": "WriteASCIIData",
+        "Filter_Uuid": "{5fbf9204-2c6c-597b-856a-f4612adbac38}",
         "MaxValPerLine": 1,
-        "OutputPath": "Data/Output/Histograms",
+        "OutputFilePath": "Data/Output/Histograms/Image_Histogram.csv",
+        "OutputPath": "",
+        "OutputStyle": 1,
         "SelectedDataArrayPaths": [
             {
                 "Attribute Matrix Name": "HistogramAttributeMatrix",
@@ -45,7 +59,7 @@
     },
     "PipelineBuilder": {
         "Name": "Image Histogram",
-        "Number_Filters": 3,
+        "Number_Filters": 4,
         "Version": 6
     }
 }

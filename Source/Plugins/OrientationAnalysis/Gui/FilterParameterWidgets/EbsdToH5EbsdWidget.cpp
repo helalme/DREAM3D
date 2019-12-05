@@ -41,9 +41,6 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QFileInfoList>
 #include <QtCore/QString>
-#include <QtCore/QThread>
-#include <QtCore/QUrl>
-#include <QtGui/QCloseEvent>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QPainter>
 #include <QtWidgets/QButtonGroup>
@@ -51,7 +48,6 @@
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QListWidgetItem>
 #include <QtWidgets/QMenu>
-#include <QtWidgets/QMessageBox>
 
 #include "SIMPLib/Common/Constants.h"
 #include "SIMPLib/Utilities/FilePathGenerator.h"
@@ -81,12 +77,12 @@ EbsdToH5EbsdWidget::EbsdToH5EbsdWidget(FilterParameter* parameter, AbstractFilte
   m_SampleTransformation.angle = 0.0f;
   m_SampleTransformation.h = 0.0f;
   m_SampleTransformation.k = 0.0f;
-  m_SampleTransformation.l = 1.0f;
+  m_SampleTransformation.l = 0.0f;
 
   m_EulerTransformation.angle = 0.0f;
   m_EulerTransformation.h = 0.0f;
   m_EulerTransformation.k = 0.0f;
-  m_EulerTransformation.l = 1.0f;
+  m_EulerTransformation.l = 0.0f;
 
   m_Filter = qobject_cast<EbsdToH5Ebsd*>(filter);
   Q_ASSERT_X(nullptr != m_Filter, "EbsdToH5EbsdWidget can ONLY be used with EbsdToH5Ebsd filter", __FILE__);
@@ -203,6 +199,7 @@ void EbsdToH5EbsdWidget::keyPressEvent(QKeyEvent* event)
   {
     m_LineEdit->setText(m_CurrentText);
     m_LineEdit->setToolTip("");
+    setValidFilePath(m_LineEdit->text());
   }
 }
 
@@ -265,6 +262,8 @@ void EbsdToH5EbsdWidget::getGuiParametersFromFilter()
     inputPath = QDir::homePath();
   }
   m_LineEdit->setText(inputPath);
+  setValidFilePath(m_LineEdit->text());
+
   m_OutputFile->setText(m_Filter->getOutputFile());
 
   QObjectList obs = children();
@@ -351,7 +350,7 @@ void EbsdToH5EbsdWidget::on_m_OutputFile_textChanged(const QString& text)
 // -----------------------------------------------------------------------------
 void EbsdToH5EbsdWidget::checkIOFiles()
 {
-  if(this->verifyPathExists(m_LineEdit->text(), this->m_LineEdit))
+  if(QtSFileUtils::VerifyPathExists(m_LineEdit->text(), this->m_LineEdit))
   {
     findEbsdMaxSliceAndPrefix();
   }
@@ -385,6 +384,7 @@ void EbsdToH5EbsdWidget::on_m_InputDirBtn_clicked()
   {
     m_LineEdit->blockSignals(true);
     m_LineEdit->setText(QDir::toNativeSeparators(outputFile));
+    setValidFilePath(m_LineEdit->text());
     on_m_LineEdit_textChanged(m_LineEdit->text());
     setInputDirectory(outputFile);
     m_LineEdit->blockSignals(false);
@@ -410,7 +410,7 @@ void EbsdToH5EbsdWidget::on_m_LineEdit_textChanged(const QString& text)
     inputAbsPathLabel->hide();
   }
 
-  if(verifyPathExists(inputPath, m_LineEdit))
+  if(QtSFileUtils::VerifyPathExists(inputPath, m_LineEdit))
   {
     m_ShowFileAction->setEnabled(true);
     m_RefFrameOptionsBtn->setEnabled(true);
@@ -421,6 +421,7 @@ void EbsdToH5EbsdWidget::on_m_LineEdit_textChanged(const QString& text)
     generateExampleEbsdInputFile();
     m_LineEdit->blockSignals(true);
     m_LineEdit->setText(QDir::toNativeSeparators(m_LineEdit->text()));
+    setValidFilePath(m_LineEdit->text());
     m_LineEdit->blockSignals(false);
     referenceFrameCheck->setText("Have you set the Reference Frame?");
   }
@@ -429,6 +430,8 @@ void EbsdToH5EbsdWidget::on_m_LineEdit_textChanged(const QString& text)
     m_ShowFileAction->setDisabled(true);
     m_FileListView->clear();
   }
+  m_fileExtUsedForTransformInit = false;
+
   emit parametersChanged();
 }
 
@@ -608,10 +611,36 @@ void EbsdToH5EbsdWidget::on_m_RefFrameOptionsBtn_clicked()
   }
   QString ebsdFileName = (fileList[0]);
 
+  QFileInfo fi(ebsdFileName);
+  if(fi.suffix() == "ctf")
+  {
+  }
+
   identifyRefFrame();
 
   QEbsdReferenceFrameDialog d(ebsdFileName, this);
   d.setEbsdFileName(ebsdFileName);
+
+  if(!m_fileExtUsedForTransformInit)
+  {
+    if(fi.suffix() == "ctf")
+    {
+      m_HKLchecked = true;
+      m_NoTranschecked = false;
+    }
+    if(fi.suffix() == "ang")
+    {
+      m_TSLchecked = true;
+      m_NoTranschecked = false;
+    }
+    if(fi.suffix() == "mic")
+    {
+      m_HEDMchecked = true;
+      m_NoTranschecked = false;
+    }
+    m_fileExtUsedForTransformInit = true;
+  }
+
   d.setTSLDefault(m_TSLchecked);
   d.setHKLDefault(m_HKLchecked);
   d.setHEDMDefault(m_HEDMchecked);
@@ -636,7 +665,7 @@ void EbsdToH5EbsdWidget::identifyRefFrame()
 {
   m_TSLchecked = false;
   m_HKLchecked = false;
-  m_NoTranschecked = false;
+  m_NoTranschecked = true;
   m_HEDMchecked = false;
 
   // TSL/EDAX
@@ -896,6 +925,7 @@ QString EbsdToH5EbsdWidget::getOutputPath()
 void EbsdToH5EbsdWidget::setInputDirectory(const QString &val)
 {
   m_LineEdit->setText(val);
+  setValidFilePath(m_LineEdit->text());
 }
 
 // -----------------------------------------------------------------------------
@@ -903,7 +933,7 @@ void EbsdToH5EbsdWidget::setInputDirectory(const QString &val)
 // -----------------------------------------------------------------------------
 void EbsdToH5EbsdWidget::showFileInFileSystem()
 {
-  verifyPathExists(m_LineEdit->text(), m_LineEdit); // This basically sets an internal variable of the superclass.
+  QtSFileUtils::VerifyPathExists(m_LineEdit->text(), m_LineEdit); // This basically sets an internal variable of the superclass.
   FilterParameterWidget::showFileInFileSystem();
 #if 0
   QFileInfo fi(m_CurrentlyValidPath);

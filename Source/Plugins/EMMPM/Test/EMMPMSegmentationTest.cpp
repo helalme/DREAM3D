@@ -33,12 +33,10 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
-#include <QtCore/QDir>
+#include <QtCore/QFile>
 
 #include <QtGui/QImage>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
@@ -60,7 +58,6 @@ public:
   virtual ~EMMPMSegmentationTest()
   {
   }
-  SIMPL_TYPE_MACRO(EMMPMSegmentationTest)
 
   enum ErrorCodes
   {
@@ -294,7 +291,7 @@ public:
       createAndAddEMMPMFilter(pipeline, DataArrayPath("ImageDataContainer", "GrayScaleCellData", "GrayImageData"), DataArrayPath("ImageDataContainer", "GrayScaleCellData", "Test"));
 
       pipeline->execute();
-      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCondition(), NO_ERROR)
+      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCode(), NO_ERROR)
     }
 
     pipeline->clear();
@@ -305,7 +302,7 @@ public:
       createAndAddEMMPMFilter(pipeline, DataArrayPath("ImageDataContainer", "CellData", "ImageData"), DataArrayPath("ImageDataContainer", "CellData", "Test"));
 
       pipeline->execute();
-      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCondition(), COMPONENTS_DONT_MATCH)
+      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCode(), COMPONENTS_DONT_MATCH)
     }
 
     return EXIT_SUCCESS;
@@ -330,7 +327,7 @@ public:
       inputPaths.push_back(DataArrayPath("ImageDataContainer", "GrayScaleCellData", "GrayImageData"));
       createAndAddMultiEMMPMFilter(pipeline, inputPaths);
       pipeline->execute();
-      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCondition(), NO_ERROR)
+      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCode(), NO_ERROR)
     }
 
     pipeline->clear();
@@ -344,7 +341,7 @@ public:
       inputPaths.push_back(DataArrayPath("ImageDataContainer", "CellData", "ImageData"));
       createAndAddMultiEMMPMFilter(pipeline, inputPaths);
       pipeline->execute();
-      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCondition(), COMPONENTS_DONT_MATCH)
+      DREAM3D_REQUIRE_EQUAL(pipeline->getErrorCode(), COMPONENTS_DONT_MATCH)
     }
 
     return EXIT_SUCCESS;

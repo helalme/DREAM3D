@@ -37,20 +37,17 @@
 #include <iostream>
 #include <limits>
 
-#include <QtCore/QSettings>
 #include <QtGui/QDoubleValidator>
-#include <QtGui/QIntValidator>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QLineEdit>
-#include <QtWidgets/QMessageBox>
-#include <QtWidgets/QProgressDialog>
-#include <QtWidgets/QTreeWidget>
-#include <QtWidgets/QTreeWidgetItem>
 
 // Needed for AxisAngle_t and Crystal Symmetry constants
 #include "EbsdLib/EbsdConstants.h"
 
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/SIMPLib.h"
 #include "SIMPLib/StatsData/PrecipitateStatsData.h"
 #include "SIMPLib/StatsData/PrimaryStatsData.h"
@@ -868,8 +865,8 @@ int StatsGenFeatureSizeWidget::getStatisticsData(PrimaryStatsData* primaryStatsD
   // Feature Size Distribution
   {
     VectorOfFloatArray data;
-    FloatArrayType::Pointer d1 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::Average);
-    FloatArrayType::Pointer d2 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::StandardDeviation);
+    FloatArrayType::Pointer d1 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::Average, true);
+    FloatArrayType::Pointer d2 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::StandardDeviation, true);
     data.push_back(d1);
     data.push_back(d2);
     d1->setValue(0, avglogdiam);
@@ -954,4 +951,40 @@ float StatsGenFeatureSizeWidget::getBinStep()
     f = std::numeric_limits<float>::quiet_NaN();
   }
   return f;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenFeatureSizeWidget::setPhaseIndex(int value)
+{
+  m_PhaseIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int StatsGenFeatureSizeWidget::getPhaseIndex() const
+{
+  return m_PhaseIndex;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenFeatureSizeWidget::setCrystalStructure(unsigned int value)
+{
+  m_CrystalStructure = value;
+}
+
+// -----------------------------------------------------------------------------
+unsigned int StatsGenFeatureSizeWidget::getCrystalStructure() const
+{
+  return m_CrystalStructure;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenFeatureSizeWidget::setBinSizes(const QwtArray<float>& value)
+{
+  m_BinSizes = value;
+}
+
+// -----------------------------------------------------------------------------
+QwtArray<float> StatsGenFeatureSizeWidget::getBinSizes() const
+{
+  return m_BinSizes;
 }

@@ -30,9 +30,10 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ImportEbsdMontage.h"
 
-#include <QtCore/QDateTime>
 #include <QtCore/QFileInfo>
 
 #include "EbsdLib/HKL/CtfFields.h"
@@ -40,19 +41,30 @@
 #include "EbsdLib/TSL/AngFields.h"
 #include "EbsdLib/TSL/AngReader.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/DataArrays/StringDataArray.h"
+#include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Utilities/FilePathGenerator.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationAnalysis/FilterParameters/EbsdMontageImportFilterParameter.h"
-
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
+#include "OrientationAnalysis/OrientationAnalysisFilters/GenerateIPFColors.h"
 #include "OrientationAnalysis/OrientationAnalysisFilters/ReadAngData.h"
 #include "OrientationAnalysis/OrientationAnalysisFilters/ReadCtfData.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID31 = 31
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -75,8 +87,8 @@ ImportEbsdMontage::~ImportEbsdMontage() = default;
 // -----------------------------------------------------------------------------
 void ImportEbsdMontage::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -85,13 +97,17 @@ void ImportEbsdMontage::initialize()
 // -----------------------------------------------------------------------------
 void ImportEbsdMontage::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_EbsdMontageListInfo_FP("Input File List", InputFileListInfo, FilterParameter::Parameter, ImportEbsdMontage));
-  // parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", DataContainerName, FilterParameter::CreatedArray, ImportEbsdMontage));
+  // parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", DataContainerName, FilterParameter::CreatedArray, ImportEbsdMontage));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
   parameters.push_back(SIMPL_NEW_STRING_FP("Cell Attribute Matrix", CellAttributeMatrixName, FilterParameter::CreatedArray, ImportEbsdMontage));
   parameters.push_back(SIMPL_NEW_STRING_FP("Cell Ensemble Attribute Matrix", CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, ImportEbsdMontage));
+
+  QStringList linkedProps("CellIPFColorsArrayName");
+  parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Generate IPF Color Map", GenerateIPFColorMap, FilterParameter::Parameter, ImportEbsdMontage, linkedProps));
+  parameters.push_back(SIMPL_NEW_STRING_FP("IPF Colors", CellIPFColorsArrayName, FilterParameter::CreatedArray, ImportEbsdMontage));
 
   setFilterParameters(parameters);
 }
@@ -106,9 +122,8 @@ void readEbsdFile(ImportEbsdMontage* filter, const QString& fileName, std::map<Q
   QString fname = fi.completeBaseName();
   if(filter->getDataContainerArray()->doesDataContainerExist(fname))
   {
-    filter->setErrorCondition(-74000);
     QString msg = QString("Error: DataContainer '%1' already exists in the DataContainerArray.").arg(fname);
-    filter->notifyErrorMessage(filter->getHumanLabel(), msg, filter->getErrorCondition());
+    filter->setErrorCondition(-74000, msg);
     return;
   }
 
@@ -123,7 +138,7 @@ void readEbsdFile(ImportEbsdMontage* filter, const QString& fileName, std::map<Q
   {
     reader = EbsdReaderClass::New();
     reader->setInputFile(fileName);
-    reader->setDataContainerName(fname);
+    reader->setDataContainerName(DataArrayPath(fname));
   }
   newFilterCache[fileName] = reader;
   reader->setDataContainerArray(dca);
@@ -137,16 +152,15 @@ void readEbsdFile(ImportEbsdMontage* filter, const QString& fileName, std::map<Q
   {
     reader->execute();
   }
-  if(reader->getErrorCondition() < 0)
+  if(reader->getErrorCode() < 0)
   {
-    filter->setErrorCondition(reader->getErrorCondition());
-    QString msg = QString("Sub filter (%1) caused an error during preflight.").arg(reader->getHumanLabel());
-    filter->notifyErrorMessage(filter->getHumanLabel(), msg, filter->getErrorCondition());
+    QString msg = QString("Sub filter (%1) caused an error.").arg(reader->getHumanLabel());
+    filter->setErrorCondition(reader->getErrorCode(), msg);
     return;
   }
 
   DataContainer::Pointer dc = dca->getDataContainer(fname);
-  filter->getDataContainerArray()->addDataContainer(dc);
+  filter->getDataContainerArray()->addOrReplaceDataContainer(dc);
 }
 
 // -----------------------------------------------------------------------------
@@ -154,9 +168,8 @@ void readEbsdFile(ImportEbsdMontage* filter, const QString& fileName, std::map<Q
 // -----------------------------------------------------------------------------
 void ImportEbsdMontage::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataArrayPath tempPath;
   QString ss;
@@ -164,8 +177,7 @@ void ImportEbsdMontage::dataCheck()
   if(m_InputFileListInfo.InputPath.isEmpty())
   {
     ss = QObject::tr("The input directory must be set");
-    setErrorCondition(-13);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-13, ss);
     m_FilterCache.clear();
   }
   bool hasMissingFiles = false;
@@ -190,8 +202,7 @@ void ImportEbsdMontage::dataCheck()
 
     m_FilterCache.clear();
 
-    setErrorCondition(-11);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11, ss);
     return;
   }
 
@@ -214,35 +225,46 @@ void ImportEbsdMontage::dataCheck()
     {
       QFileInfo fi(tile2D.FileName);
       QString fname = fi.completeBaseName();
+      QString phasesName;
+      QString eulersName;
+      QString xtalName;
 
       if(m_InputFileListInfo.FileExtension == Ebsd::Ang::FileExt)
       {
         readEbsdFile<ReadAngData>(this, tile2D.FileName, m_FilterCache, newFilterCache);
+        phasesName = Ebsd::AngFile::Phases;
+        eulersName = Ebsd::AngFile::EulerAngles;
+        xtalName = Ebsd::AngFile::CrystalStructures;
       }
       if(m_InputFileListInfo.FileExtension == Ebsd::Ctf::FileExt)
       {
         readEbsdFile<ReadCtfData>(this, tile2D.FileName, m_FilterCache, newFilterCache);
+        phasesName = Ebsd::CtfFile::Phases;
+        eulersName = Ebsd::CtfFile::EulerAngles;
+        xtalName = Ebsd::CtfFile::CrystalStructures;
       }
-      if(getErrorCondition() >= 0)
+      if(!fi.exists())
+      {
+        QString msg = QString("Input EBSD file '%1' does not exist").arg(tile2D.FileName);
+        setErrorCondition(-56500, msg);
+      }
+      if(getErrorCode() >= 0)
       {
         DataContainer::Pointer dc = getDataContainerArray()->getDataContainer(fname);
         ImageGeom::Pointer imageGeom = dc->getGeometryAs<ImageGeom>();
 
-        std::array<size_t, 3> dims = {{0, 0, 0}};
-        std::tie(dims[0], dims[1], dims[2]) = imageGeom->getDimensions();
-        std::array<float, 3> res = {{0.0f, 0.0f, 0.0f}};
-        std::tie(res[0], res[1], res[2]) = imageGeom->getResolution();
-        std::array<float, 3> origin = {{0.0f, 0.0f, 0.0f}};
-        std::tie(origin[0], origin[1], origin[2]) = imageGeom->getOrigin();
+        SizeVec3Type dims = imageGeom->getDimensions();
+        FloatVec3Type spacing = imageGeom->getSpacing();
+        FloatVec3Type origin = imageGeom->getOrigin();
 
         //
         origin[0] = globalTileOrigin[0];
         origin[1] = globalTileOrigin[1];
-        imageGeom->setOrigin(origin.data());
+        imageGeom->setOrigin(origin);
 
         // Now update the globalTileOrigin values
-        globalTileOrigin[0] += origin[0] + (dims[0] * res[0]);
-        tileHeight = (dims[1] * res[1]);
+        globalTileOrigin[0] += origin[0] + (dims[0] * spacing[0]);
+        tileHeight = (dims[1] * spacing[1]);
 
         if(getCancel())
         {
@@ -252,7 +274,56 @@ void ImportEbsdMontage::dataCheck()
         if(!getInPreflight())
         {
           QString msg = QString("==> [%1/%2] %3").arg(tilesRead).arg(totalTiles).arg(tile2D.FileName);
-          notifyStatusMessage(getHumanLabel(), msg);
+          notifyStatusMessage(msg);
+        }
+
+        if(getGenerateIPFColorMap())
+        {
+          if(getCellIPFColorsArrayName().isEmpty())
+          {
+            ss = QObject::tr("Generate IPF Colors is ENABLED. Please set name for the generated IPColors DataArray");
+            setErrorCondition(-23500, ss);
+          }
+          else
+          {
+            DataArrayPath dap(fname, getCellAttributeMatrixName(), getCellIPFColorsArrayName());
+            // QVector<size_t> cDims = {3};
+
+            GenerateIPFColors::Pointer generateIPFColors = GenerateIPFColors::New();
+            generateIPFColors->setDataContainerArray(getDataContainerArray());
+            generateIPFColors->setReferenceDir(m_ReferenceDir);
+            dap.setDataArrayName(phasesName);
+            generateIPFColors->setCellPhasesArrayPath(dap);
+            dap.setDataArrayName(eulersName);
+            generateIPFColors->setCellEulerAnglesArrayPath(dap);
+
+            dap.setAttributeMatrixName(getCellEnsembleAttributeMatrixName());
+            dap.setDataArrayName(xtalName);
+            generateIPFColors->setCrystalStructuresArrayPath(dap);
+            generateIPFColors->setUseGoodVoxels(false);
+
+            generateIPFColors->setCellIPFColorsArrayName(getCellIPFColorsArrayName());
+            if(getInPreflight())
+            {
+              generateIPFColors->preflight();
+              if(generateIPFColors->getErrorCode() < 0)
+              {
+                ss = QObject::tr("Preflight of GenerateIPFColors failed with error code ").arg(generateIPFColors->getErrorCode());
+                setErrorCondition(generateIPFColors->getErrorCode(), ss);
+              }
+            }
+            else
+            {
+              QString msg = QString("==> [%1/%2] %3 Generating IPF Colors").arg(tilesRead).arg(totalTiles).arg(tile2D.FileName);
+              notifyStatusMessage(msg);
+              generateIPFColors->execute();
+              if(generateIPFColors->getErrorCode() < 0)
+              {
+                ss = QObject::tr("GenerateIPFColors failed with error code ").arg(generateIPFColors->getErrorCode());
+                setErrorCondition(generateIPFColors->getErrorCode(), ss);
+              }
+            }
+          }
         }
       }
     }
@@ -260,7 +331,7 @@ void ImportEbsdMontage::dataCheck()
   }
 
   m_FilterCache = newFilterCache; // Swap our maps. This dumps any previous instantiations of the reader filter that are not used any more.
-  setWarningCondition(0);
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -287,7 +358,6 @@ void ImportEbsdMontage::execute()
 
   // The entire Reading of the data, whether that is in prefligth (so just read the header) or in execute is performed
   // in the dataCheck() method so we essentially do nothing here.
-
 }
 
 // -----------------------------------------------------------------------------
@@ -306,7 +376,7 @@ AbstractFilter::Pointer ImportEbsdMontage::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ImportEbsdMontage::getCompiledLibraryName() const
+QString ImportEbsdMontage::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -314,7 +384,7 @@ const QString ImportEbsdMontage::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ImportEbsdMontage::getBrandingString() const
+QString ImportEbsdMontage::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -322,7 +392,7 @@ const QString ImportEbsdMontage::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ImportEbsdMontage::getFilterVersion() const
+QString ImportEbsdMontage::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -333,7 +403,7 @@ const QString ImportEbsdMontage::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ImportEbsdMontage::getGroupName() const
+QString ImportEbsdMontage::getGroupName() const
 {
   return SIMPL::FilterGroups::Unsupported;
 }
@@ -341,7 +411,7 @@ const QString ImportEbsdMontage::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ImportEbsdMontage::getSubGroupName() const
+QString ImportEbsdMontage::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -349,7 +419,7 @@ const QString ImportEbsdMontage::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ImportEbsdMontage::getHumanLabel() const
+QString ImportEbsdMontage::getHumanLabel() const
 {
   return "Import EBSD Montage";
 }
@@ -357,7 +427,107 @@ const QString ImportEbsdMontage::getHumanLabel() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ImportEbsdMontage::getUuid()
+QUuid ImportEbsdMontage::getUuid() const
 {
   return QUuid("{179b0c7a-4e62-5070-ba49-ae58d5ccbfe8}");
+}
+
+// -----------------------------------------------------------------------------
+ImportEbsdMontage::Pointer ImportEbsdMontage::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ImportEbsdMontage> ImportEbsdMontage::New()
+{
+  struct make_shared_enabler : public ImportEbsdMontage
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ImportEbsdMontage::getNameOfClass() const
+{
+  return QString("ImportEbsdMontage");
+}
+
+// -----------------------------------------------------------------------------
+QString ImportEbsdMontage::ClassName()
+{
+  return QString("ImportEbsdMontage");
+}
+
+// -----------------------------------------------------------------------------
+void ImportEbsdMontage::setDataContainerName(const DataArrayPath& value)
+{
+  m_DataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ImportEbsdMontage::getDataContainerName() const
+{
+  return m_DataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void ImportEbsdMontage::setCellEnsembleAttributeMatrixName(const QString& value)
+{
+  m_CellEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ImportEbsdMontage::getCellEnsembleAttributeMatrixName() const
+{
+  return m_CellEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void ImportEbsdMontage::setCellAttributeMatrixName(const QString& value)
+{
+  m_CellAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ImportEbsdMontage::getCellAttributeMatrixName() const
+{
+  return m_CellAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void ImportEbsdMontage::setInputFileListInfo(const MontageFileListInfo& value)
+{
+  m_InputFileListInfo = value;
+}
+
+// -----------------------------------------------------------------------------
+MontageFileListInfo ImportEbsdMontage::getInputFileListInfo() const
+{
+  return m_InputFileListInfo;
+}
+
+// -----------------------------------------------------------------------------
+void ImportEbsdMontage::setGenerateIPFColorMap(bool value)
+{
+  m_GenerateIPFColorMap = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ImportEbsdMontage::getGenerateIPFColorMap() const
+{
+  return m_GenerateIPFColorMap;
+}
+// -----------------------------------------------------------------------------
+void ImportEbsdMontage::setCellIPFColorsArrayName(const QString& value)
+{
+  m_CellIPFColorsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ImportEbsdMontage::getCellIPFColorsArrayName() const
+{
+  return m_CellIPFColorsArrayName;
 }

@@ -30,11 +30,12 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <QtCore/QDebug>
+
 #include "SIMPLib/CoreFilters/DataContainerWriter.h"
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/FilterParameters/JsonFilterParametersReader.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
@@ -130,11 +131,11 @@ public:
     pipeline->pushBack(writer);
 
     pipeline->preflightPipeline();
-    int error = pipeline->getErrorCondition();
+    int error = pipeline->getErrorCode();
     DREAM3D_REQUIRED(error, >=, 0)
 
     pipeline->execute();
-    error = pipeline->getErrorCondition();
+    error = pipeline->getErrorCode();
     DREAM3D_REQUIRED(error, >=, 0)
 
     return EXIT_SUCCESS;

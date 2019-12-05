@@ -33,11 +33,18 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "DxWriter.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -69,7 +76,7 @@ DxWriter::~DxWriter() = default;
 void DxWriter::setupFilterParameters()
 {
   FileWriter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output File", OutputFile, FilterParameter::Parameter, DxWriter, "*.dx", "Open DX Visualization"));
   parameters.push_back(SIMPL_NEW_BOOL_FP("Add Surface Layer", AddSurfaceLayer, FilterParameter::Parameter, DxWriter));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
@@ -104,8 +111,8 @@ void DxWriter::initialize()
 // -----------------------------------------------------------------------------
 void DxWriter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
@@ -116,7 +123,7 @@ void DxWriter::dataCheck()
   }
   FileSystemPathHelper::CheckOutputFile(this, "Output File Path", getOutputFile(), true);
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -124,7 +131,7 @@ void DxWriter::dataCheck()
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -133,11 +140,10 @@ void DxWriter::dataCheck()
 
   if(volTuples != m_FeatureIdsPtr.lock()->getNumberOfTuples())
   {
-    setErrorCondition(-10200);
     QString ss = QObject::tr("The number of Tuples for the DataArray %1 is %2 and for the associated Image Geometry is %3. The number of tuples must match")
                      .arg(m_FeatureIdsPtr.lock()->getName())
                      .arg(m_FeatureIdsPtr.lock()->getNumberOfTuples());
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-10200, ss);
   }
 }
 
@@ -167,19 +173,18 @@ int32_t DxWriter::writeHeader()
 // -----------------------------------------------------------------------------
 int32_t DxWriter::writeFile()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
-    return getErrorCondition();
+    return getErrorCode();
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
   int32_t err = 0;
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]),
@@ -196,8 +201,7 @@ int32_t DxWriter::writeFile()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(dir.path());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return -1;
   }
 
@@ -205,9 +209,8 @@ int32_t DxWriter::writeFile()
   if(!file.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
-    return getErrorCondition();
+    setErrorCondition(-100, ss);
+    return getErrorCode();
   }
 
   QTextStream out(&file);
@@ -396,7 +399,7 @@ AbstractFilter::Pointer DxWriter::newFilterInstance(bool copyFilterParameters) c
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString DxWriter::getCompiledLibraryName() const
+QString DxWriter::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -404,7 +407,7 @@ const QString DxWriter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString DxWriter::getBrandingString() const
+QString DxWriter::getBrandingString() const
 {
   return "IO";
 }
@@ -412,7 +415,7 @@ const QString DxWriter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString DxWriter::getFilterVersion() const
+QString DxWriter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -422,7 +425,7 @@ const QString DxWriter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString DxWriter::getGroupName() const
+QString DxWriter::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -430,7 +433,7 @@ const QString DxWriter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid DxWriter::getUuid()
+QUuid DxWriter::getUuid() const
 {
   return QUuid("{9072e51c-632f-5ee5-bf6b-9a90bfac2fcf}");
 }
@@ -438,7 +441,7 @@ const QUuid DxWriter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString DxWriter::getSubGroupName() const
+QString DxWriter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -446,7 +449,60 @@ const QString DxWriter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString DxWriter::getHumanLabel() const
+QString DxWriter::getHumanLabel() const
 {
   return "Export Dx File (Feature Ids)";
+}
+
+// -----------------------------------------------------------------------------
+DxWriter::Pointer DxWriter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<DxWriter> DxWriter::New()
+{
+  struct make_shared_enabler : public DxWriter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString DxWriter::getNameOfClass() const
+{
+  return QString("DxWriter");
+}
+
+// -----------------------------------------------------------------------------
+QString DxWriter::ClassName()
+{
+  return QString("DxWriter");
+}
+
+// -----------------------------------------------------------------------------
+void DxWriter::setAddSurfaceLayer(bool value)
+{
+  m_AddSurfaceLayer = value;
+}
+
+// -----------------------------------------------------------------------------
+bool DxWriter::getAddSurfaceLayer() const
+{
+  return m_AddSurfaceLayer;
+}
+
+// -----------------------------------------------------------------------------
+void DxWriter::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath DxWriter::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
 }

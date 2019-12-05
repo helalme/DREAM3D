@@ -33,7 +33,11 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "EMMPMFilter.h"
+
+#include <QtGui/QColor>
 
 #include "EMMPM/EMMPMConstants.h"
 #include "EMMPM/EMMPMLib/Common/EMMPM_Math.h"
@@ -45,7 +49,10 @@
 #include "EMMPM/EMMPMLib/EMMPMLib.h"
 #include "EMMPM/FilterParameters/EMMPMFilterParameter.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
@@ -57,9 +64,67 @@
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/Messages/AbstractMessageHandler.h"
+#include "SIMPLib/Messages/GenericProgressMessage.h"
+#include "SIMPLib/Messages/GenericStatusMessage.h"
+#include "SIMPLib/Messages/GenericErrorMessage.h"
+#include "SIMPLib/Messages/GenericWarningMessage.h"
 #include "SIMPLib/SIMPLibVersion.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "EMMPM/EMMPMVersion.h"
+
+/**
+ * @brief This message handler is used by EMMPMFilter instances to re-emit incoming generic messages from the
+ * EMMPM observable object as its own filter messages
+ */
+class EMMPMFilterMessageHandler : public AbstractMessageHandler
+{
+  public:
+    explicit EMMPMFilterMessageHandler(EMMPMFilter* filter) : m_Filter(filter) {}
+
+    /**
+     * @brief Re-emits incoming GenericProgressMessages as FilterProgressMessages.
+     */
+    void processMessage(const GenericProgressMessage* msg) const override
+    {
+      emit m_Filter->notifyProgressMessage(msg->getProgressValue(), msg->getMessageText());
+    }
+
+    /**
+     * @brief Re-emits incoming GenericStatusMessages as FilterStatusMessages.
+     */
+    void processMessage(const GenericStatusMessage* msg) const override
+    {
+      emit m_Filter->notifyStatusMessage(msg->getMessageText());
+    }
+
+    /**
+     * @brief Re-emits incoming GenericErrorMessages as FilterErrorMessages.
+     */
+    void processMessage(const GenericErrorMessage* msg) const override
+    {
+      emit m_Filter->setErrorCondition(msg->getCode(), msg->getMessageText());
+    }
+
+    /**
+     * @brief Re-emits incoming GenericWarningMessages as FilterWarningMessages.
+     */
+    void processMessage(const GenericWarningMessage* msg) const override
+    {
+      emit m_Filter->setWarningCondition(msg->getCode(), msg->getMessageText());
+    }
+
+  private:
+    EMMPMFilter* m_Filter = nullptr;
+};
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -111,7 +176,7 @@ EMMPMFilter::~EMMPMFilter() = default;
 // -----------------------------------------------------------------------------
 void EMMPMFilter::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     EMMPMFilterParameter::Pointer parameter = EMMPMFilterParameter::New();
@@ -204,12 +269,12 @@ void EMMPMFilter::initialize()
 // -----------------------------------------------------------------------------
 void EMMPMFilter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getInputDataArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1); // We need a single component, gray scale image
+  std::vector<size_t> cDims(1, 1); // We need a single component, gray scale image
   m_InputImagePtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<uint8_t>, AbstractFilter>(this, getInputDataArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_InputImagePtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -217,8 +282,7 @@ void EMMPMFilter::dataCheck()
     m_InputImage = m_InputImagePtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to Data from the DataArray<T> object */
 
-  m_OutputImagePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint8_t>, AbstractFilter, uint8_t>(
-      this, getOutputDataArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_OutputImagePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint8_t>, AbstractFilter, uint8_t>(this, getOutputDataArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_OutputImagePtr.lock())         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_OutputImage = m_OutputImagePtr.lock()->getPointer(0);
@@ -226,15 +290,13 @@ void EMMPMFilter::dataCheck()
 
   if(getNumClasses() > 15)
   {
-    setErrorCondition(-89100);
     QString ss = QObject::tr("The maximum number of classes is 15");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-89100, ss);
   }
   if(getNumClasses() < 2)
   {
-    setErrorCondition(-89101);
     QString ss = QObject::tr("The minimum number of classes is 2");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-89101, ss);
   }
 }
 
@@ -257,10 +319,10 @@ void EMMPMFilter::preflight()
 // -----------------------------------------------------------------------------
 void EMMPMFilter::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -327,9 +389,9 @@ void EMMPMFilter::segment(EMMPM_InitializationType initType)
 
   DataArrayPath dap = getInputDataArrayPath();
   AttributeMatrix::Pointer am = getDataContainerArray()->getAttributeMatrix(dap);
-  QVector<size_t> tDims = am->getTupleDimensions();
+  std::vector<size_t> tDims = am->getTupleDimensions();
   IDataArray::Pointer iDataArray = am->getAttributeArray(getInputDataArrayPath().getDataArrayName());
-  QVector<size_t> cDims = iDataArray->getComponentDimensions();
+  std::vector<size_t> cDims = iDataArray->getComponentDimensions();
 
   m_Data->columns = tDims[0];
   m_Data->rows = tDims[1];
@@ -373,10 +435,9 @@ void EMMPMFilter::segment(EMMPM_InitializationType initType)
   emmpm->setData(m_Data);
   emmpm->setStatsDelegate(statsDelegate.get());
   emmpm->setInitializationFunction(initFunction);
-  emmpm->setMessagePrefix(getMessagePrefix());
 
   // Connect up the Error/Warning/Progress object so the filter can report those things
-  connect(emmpm.get(), SIGNAL(filterGeneratedMessage(const PipelineMessage&)), this, SLOT(broadcastPipelineMessage(const PipelineMessage&)));
+  connect(emmpm.get(), SIGNAL(messageGenerated(const AbstractMessage::Pointer&)), this, SLOT(handleEmmpmMessage(const AbstractMessage::Pointer&)));
 
   emmpm->execute();
 
@@ -388,6 +449,15 @@ void EMMPMFilter::segment(EMMPM_InitializationType initType)
   // into the initialization of the next Image to be Segmented
   m_PreviousMu.resize(getNumClasses() * m_Data->dims);
   m_PreviousSigma.resize(getNumClasses() * m_Data->dims);
+}
+
+// -----------------------------------------------------------------------------
+//
+// -----------------------------------------------------------------------------
+void EMMPMFilter::handleEmmpmMessage(const AbstractMessage::Pointer &msg)
+{
+  EMMPMFilterMessageHandler msgHandler(this);
+  msg->visit(&msgHandler);
 }
 
 // -----------------------------------------------------------------------------
@@ -438,7 +508,7 @@ void EMMPMFilter::setPreviousSigma(std::vector<float> prevSigma)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EMMPMFilter::getCompiledLibraryName() const
+QString EMMPMFilter::getCompiledLibraryName() const
 {
   return EMMPMConstants::EMMPMBaseName;
 }
@@ -446,7 +516,7 @@ const QString EMMPMFilter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EMMPMFilter::getBrandingString() const
+QString EMMPMFilter::getBrandingString() const
 {
   return "EMMPM";
 }
@@ -454,7 +524,7 @@ const QString EMMPMFilter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EMMPMFilter::getFilterVersion() const
+QString EMMPMFilter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -464,7 +534,7 @@ const QString EMMPMFilter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EMMPMFilter::getGroupName() const
+QString EMMPMFilter::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -472,7 +542,7 @@ const QString EMMPMFilter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid EMMPMFilter::getUuid()
+QUuid EMMPMFilter::getUuid() const
 {
   return QUuid("{4cd8f98b-75d0-5293-bf8e-d0f9f6211f58}");
 }
@@ -480,7 +550,7 @@ const QUuid EMMPMFilter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EMMPMFilter::getSubGroupName() const
+QString EMMPMFilter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::SegmentationFilters;
 }
@@ -488,7 +558,228 @@ const QString EMMPMFilter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EMMPMFilter::getHumanLabel() const
+QString EMMPMFilter::getHumanLabel() const
 {
   return "Segment Features (EM/MPM)";
+}
+
+// -----------------------------------------------------------------------------
+EMMPMFilter::Pointer EMMPMFilter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<EMMPMFilter> EMMPMFilter::New()
+{
+  struct make_shared_enabler : public EMMPMFilter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString EMMPMFilter::getNameOfClass() const
+{
+  return QString("EMMPMFilter");
+}
+
+// -----------------------------------------------------------------------------
+QString EMMPMFilter::ClassName()
+{
+  return QString("EMMPMFilter");
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setInputDataArrayPath(const DataArrayPath& value)
+{
+  m_InputDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath EMMPMFilter::getInputDataArrayPath() const
+{
+  return m_InputDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setUseOneBasedValues(bool value)
+{
+  m_UseOneBasedValues = value;
+}
+
+// -----------------------------------------------------------------------------
+bool EMMPMFilter::getUseOneBasedValues() const
+{
+  return m_UseOneBasedValues;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setNumClasses(int value)
+{
+  m_NumClasses = value;
+}
+
+// -----------------------------------------------------------------------------
+int EMMPMFilter::getNumClasses() const
+{
+  return m_NumClasses;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setExchangeEnergy(float value)
+{
+  m_ExchangeEnergy = value;
+}
+
+// -----------------------------------------------------------------------------
+float EMMPMFilter::getExchangeEnergy() const
+{
+  return m_ExchangeEnergy;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setHistogramLoops(int value)
+{
+  m_HistogramLoops = value;
+}
+
+// -----------------------------------------------------------------------------
+int EMMPMFilter::getHistogramLoops() const
+{
+  return m_HistogramLoops;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setSegmentationLoops(int value)
+{
+  m_SegmentationLoops = value;
+}
+
+// -----------------------------------------------------------------------------
+int EMMPMFilter::getSegmentationLoops() const
+{
+  return m_SegmentationLoops;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setEMMPMTableData(const DynamicTableData& value)
+{
+  m_EMMPMTableData = value;
+}
+
+// -----------------------------------------------------------------------------
+DynamicTableData EMMPMFilter::getEMMPMTableData() const
+{
+  return m_EMMPMTableData;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setUseSimulatedAnnealing(bool value)
+{
+  m_UseSimulatedAnnealing = value;
+}
+
+// -----------------------------------------------------------------------------
+bool EMMPMFilter::getUseSimulatedAnnealing() const
+{
+  return m_UseSimulatedAnnealing;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setUseGradientPenalty(bool value)
+{
+  m_UseGradientPenalty = value;
+}
+
+// -----------------------------------------------------------------------------
+bool EMMPMFilter::getUseGradientPenalty() const
+{
+  return m_UseGradientPenalty;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setGradientBetaE(double value)
+{
+  m_GradientBetaE = value;
+}
+
+// -----------------------------------------------------------------------------
+double EMMPMFilter::getGradientBetaE() const
+{
+  return m_GradientBetaE;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setUseCurvaturePenalty(bool value)
+{
+  m_UseCurvaturePenalty = value;
+}
+
+// -----------------------------------------------------------------------------
+bool EMMPMFilter::getUseCurvaturePenalty() const
+{
+  return m_UseCurvaturePenalty;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setCurvatureBetaC(double value)
+{
+  m_CurvatureBetaC = value;
+}
+
+// -----------------------------------------------------------------------------
+double EMMPMFilter::getCurvatureBetaC() const
+{
+  return m_CurvatureBetaC;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setCurvatureRMax(double value)
+{
+  m_CurvatureRMax = value;
+}
+
+// -----------------------------------------------------------------------------
+double EMMPMFilter::getCurvatureRMax() const
+{
+  return m_CurvatureRMax;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setCurvatureEMLoopDelay(int value)
+{
+  m_CurvatureEMLoopDelay = value;
+}
+
+// -----------------------------------------------------------------------------
+int EMMPMFilter::getCurvatureEMLoopDelay() const
+{
+  return m_CurvatureEMLoopDelay;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setOutputDataArrayPath(const DataArrayPath& value)
+{
+  m_OutputDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath EMMPMFilter::getOutputDataArrayPath() const
+{
+  return m_OutputDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void EMMPMFilter::setEmmpmInitType(const EMMPM_InitializationType& value)
+{
+  m_EmmpmInitType = value;
+}
+
+// -----------------------------------------------------------------------------
+EMMPM_InitializationType EMMPMFilter::getEmmpmInitType() const
+{
+  return m_EmmpmInitType;
 }

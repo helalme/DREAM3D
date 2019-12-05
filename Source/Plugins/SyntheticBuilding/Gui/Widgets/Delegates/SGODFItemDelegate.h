@@ -40,9 +40,7 @@
 #include <QtCore/QModelIndex>
 #include <QtGui/QDoubleValidator>
 #include <QtGui/QPainter>
-#include <QtWidgets/QComboBox>
 #include <QtWidgets/QLineEdit>
-#include <QtWidgets/QStyleOptionViewItemV4>
 #include <QtWidgets/QStyledItemDelegate>
 
 #include "EbsdLib/EbsdConstants.h"
@@ -61,7 +59,7 @@ class SGODFItemDelegate : public QStyledItemDelegate
   Q_OBJECT
 
 public:
-  explicit SGODFItemDelegate(unsigned int crystalStructure, QObject* parent = 0)
+  explicit SGODFItemDelegate(unsigned int crystalStructure, QObject* parent = nullptr)
   : QStyledItemDelegate(parent)
   , m_CrystalStructure(crystalStructure)
   {

@@ -33,16 +33,29 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindNumFeatures.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -63,7 +76,7 @@ FindNumFeatures::~FindNumFeatures() = default;
 // -----------------------------------------------------------------------------
 void FindNumFeatures::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateCategoryRequirement(SIMPL::TypeNames::Int32, 1, AttributeMatrix::Category::Feature);
@@ -102,10 +115,10 @@ void FindNumFeatures::initialize()
 // -----------------------------------------------------------------------------
 void FindNumFeatures::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeaturePhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, m_FeaturePhasesArrayPath,
                                                                                                            cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeaturePhasesPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -113,8 +126,7 @@ void FindNumFeatures::dataCheck()
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  m_NumFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-      this, getNumFeaturesArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_NumFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, getNumFeaturesArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_NumFeaturesPtr.lock())          /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_NumFeatures = m_NumFeaturesPtr.lock()->getPointer(0);
@@ -139,10 +151,10 @@ void FindNumFeatures::preflight()
 // -----------------------------------------------------------------------------
 void FindNumFeatures::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -177,7 +189,7 @@ AbstractFilter::Pointer FindNumFeatures::newFilterInstance(bool copyFilterParame
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNumFeatures::getCompiledLibraryName() const
+QString FindNumFeatures::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -185,7 +197,7 @@ const QString FindNumFeatures::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNumFeatures::getBrandingString() const
+QString FindNumFeatures::getBrandingString() const
 {
   return "Statistics";
 }
@@ -193,7 +205,7 @@ const QString FindNumFeatures::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNumFeatures::getFilterVersion() const
+QString FindNumFeatures::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -203,7 +215,7 @@ const QString FindNumFeatures::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNumFeatures::getGroupName() const
+QString FindNumFeatures::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -211,7 +223,7 @@ const QString FindNumFeatures::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindNumFeatures::getUuid()
+QUuid FindNumFeatures::getUuid() const
 {
   return QUuid("{529743cf-d5d5-5d5a-a79f-95c84a5ddbb5}");
 }
@@ -219,7 +231,7 @@ const QUuid FindNumFeatures::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNumFeatures::getSubGroupName() const
+QString FindNumFeatures::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -227,7 +239,60 @@ const QString FindNumFeatures::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNumFeatures::getHumanLabel() const
+QString FindNumFeatures::getHumanLabel() const
 {
   return "Find Number of Features";
+}
+
+// -----------------------------------------------------------------------------
+FindNumFeatures::Pointer FindNumFeatures::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindNumFeatures> FindNumFeatures::New()
+{
+  struct make_shared_enabler : public FindNumFeatures
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNumFeatures::getNameOfClass() const
+{
+  return QString("FindNumFeatures");
+}
+
+// -----------------------------------------------------------------------------
+QString FindNumFeatures::ClassName()
+{
+  return QString("FindNumFeatures");
+}
+
+// -----------------------------------------------------------------------------
+void FindNumFeatures::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindNumFeatures::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindNumFeatures::setNumFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_NumFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindNumFeatures::getNumFeaturesArrayPath() const
+{
+  return m_NumFeaturesArrayPath;
 }

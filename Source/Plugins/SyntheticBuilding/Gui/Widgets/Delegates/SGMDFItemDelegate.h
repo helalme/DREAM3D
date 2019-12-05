@@ -40,9 +40,7 @@
 #include <QtCore/QModelIndex>
 #include <QtGui/QDoubleValidator>
 #include <QtGui/QPainter>
-#include <QtWidgets/QComboBox>
 #include <QtWidgets/QLineEdit>
-#include <QtWidgets/QStyleOptionViewItemV4>
 #include <QtWidgets/QStyledItemDelegate>
 
 #include "SyntheticBuilding/Gui/Widgets/TableModels/SGMDFTableModel.h"
@@ -59,7 +57,7 @@ class SGMDFItemDelegate : public QStyledItemDelegate
   Q_OBJECT
 
 public:
-  explicit SGMDFItemDelegate(QObject* parent = 0)
+  explicit SGMDFItemDelegate(QObject* parent = nullptr)
   : QStyledItemDelegate(parent)
   {
   }

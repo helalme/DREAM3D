@@ -33,7 +33,25 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "AlignSections.h"
+
+#include <QtCore/QTextStream>
+
+#include "SIMPLib/Common/Constants.h"
+#include "SIMPLib/Common/TemplateHelpers.h"
+#include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+#include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
+#include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/Utilities/FileSystemPathHelper.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
+#include "Reconstruction/ReconstructionConstants.h"
+#include "Reconstruction/ReconstructionVersion.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
 #include <tbb/atomic.h>
@@ -43,17 +61,6 @@
 #include <tbb/task_scheduler_init.h>
 #include <tbb/tick_count.h>
 #endif
-
-#include "Reconstruction/ReconstructionConstants.h"
-#include "Reconstruction/ReconstructionVersion.h"
-#include "SIMPLib/Common/Constants.h"
-#include "SIMPLib/Common/TemplateHelpers.h"
-#include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
-#include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
-#include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
-#include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
-#include "SIMPLib/Geometry/ImageGeom.h"
-#include "SIMPLib/Utilities/FileSystemPathHelper.h"
 
 // -----------------------------------------------------------------------------
 //
@@ -176,7 +183,7 @@ AlignSections::~AlignSections() = default;
 // -----------------------------------------------------------------------------
 void AlignSections::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   QStringList linkedProps("AlignmentShiftFileName");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Write Alignment Shift File", WriteAlignmentShifts, FilterParameter::Parameter, AlignSections, linkedProps));
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Alignment File", AlignmentShiftFileName, FilterParameter::Parameter, AlignSections, "", "*.txt"));
@@ -206,12 +213,12 @@ void AlignSections::initialize()
 // -----------------------------------------------------------------------------
 void AlignSections::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -220,11 +227,10 @@ void AlignSections::dataCheck()
   {
     QString ss =
         QObject::tr("The Image Geometry is not 3D and cannot be run through this filter. The dimensions are (%1,%2,%3)").arg(image->getXPoints()).arg(image->getYPoints()).arg(image->getZPoints());
-    setErrorCondition(-3010);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-3010, ss);
   }
 
-  tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), "");
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), "");
   getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, tempPath, -301);
 
   if(m_WriteAlignmentShifts)
@@ -261,7 +267,7 @@ void AlignSections::updateProgress(size_t p)
   m_Progress += p;
   int32_t progressInt = static_cast<int>((static_cast<float>(m_Progress) / static_cast<float>(m_TotalProgress)) * 100.0f);
   QString ss = QObject::tr("Transferring Cell Data %1%").arg(progressInt);
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 }
 
 // -----------------------------------------------------------------------------
@@ -269,10 +275,10 @@ void AlignSections::updateProgress(size_t p)
 // -----------------------------------------------------------------------------
 void AlignSections::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -282,8 +288,7 @@ void AlignSections::execute()
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getDataContainerName());
 
-  size_t dims[3] = {0, 0, 0};
-  std::tie(dims[0], dims[1], dims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   std::vector<int64_t> xshifts(dims[2], 0);
   std::vector<int64_t> yshifts(dims[2], 0);
@@ -312,7 +317,7 @@ void AlignSections::execute()
     for(const auto& arrayName : voxelArrayNames)
     {
       IDataArray::Pointer dataArrayPtr = m->getAttributeMatrix(getCellAttributeMatrixName())->getAttributeArray(arrayName);
-      taskGroup->run(AlignSectionsTransferDataImpl(this, dims, xshifts, yshifts, dataArrayPtr));
+      taskGroup->run(AlignSectionsTransferDataImpl(this, dims.data(), xshifts, yshifts, dataArrayPtr));
     }
     // Wait for them to complete.
     taskGroup->wait();
@@ -332,7 +337,7 @@ void AlignSections::execute()
       {
         progressInt = static_cast<int>((static_cast<float>(i) / static_cast<float>(dims[2])) * 100.0f);
         QString ss = QObject::tr("Transferring Cell Data %1%").arg(progressInt);
-        notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+        notifyStatusMessage(ss);
         prog = prog + progIncrement;
       }
       if(getCancel())
@@ -405,7 +410,7 @@ AbstractFilter::Pointer AlignSections::newFilterInstance(bool copyFilterParamete
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSections::getCompiledLibraryName() const
+QString AlignSections::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -413,7 +418,7 @@ const QString AlignSections::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSections::getBrandingString() const
+QString AlignSections::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -421,7 +426,7 @@ const QString AlignSections::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSections::getFilterVersion() const
+QString AlignSections::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -431,7 +436,7 @@ const QString AlignSections::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSections::getGroupName() const
+QString AlignSections::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -439,7 +444,7 @@ const QString AlignSections::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AlignSections::getUuid()
+QUuid AlignSections::getUuid() const
 {
   return QUuid("{fc882470-6aa7-5fd1-8041-ffd14ba8ad9b}");
 }
@@ -447,7 +452,7 @@ const QUuid AlignSections::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSections::getSubGroupName() const
+QString AlignSections::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::AlignmentFilters;
 }
@@ -455,7 +460,96 @@ const QString AlignSections::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSections::getHumanLabel() const
+QString AlignSections::getHumanLabel() const
 {
   return "Align Sections";
+}
+
+// -----------------------------------------------------------------------------
+AlignSections::Pointer AlignSections::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AlignSections> AlignSections::New()
+{
+  struct make_shared_enabler : public AlignSections
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSections::getNameOfClass() const
+{
+  return QString("AlignSections");
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSections::ClassName()
+{
+  return QString("AlignSections");
+}
+
+// -----------------------------------------------------------------------------
+void AlignSections::setDataContainerName(const DataArrayPath& value)
+{
+  m_DataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AlignSections::getDataContainerName() const
+{
+  return m_DataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSections::setCellAttributeMatrixName(const QString& value)
+{
+  m_CellAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSections::getCellAttributeMatrixName() const
+{
+  return m_CellAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSections::setWriteAlignmentShifts(bool value)
+{
+  m_WriteAlignmentShifts = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AlignSections::getWriteAlignmentShifts() const
+{
+  return m_WriteAlignmentShifts;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSections::setAlignmentShiftFileName(const QString& value)
+{
+  m_AlignmentShiftFileName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSections::getAlignmentShiftFileName() const
+{
+  return m_AlignmentShiftFileName;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSections::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> AlignSections::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

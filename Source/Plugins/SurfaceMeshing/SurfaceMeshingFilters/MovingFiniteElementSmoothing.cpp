@@ -49,15 +49,24 @@
 //  look for mobility values etc, and perhaps tweak them
 // Integrated into DREAM3D as MovingFiniteElementSmoothing.{cpp|h} by
 // Michael A. Jackson as part of SAIC Prime contract N00173-07-C-2068
+#include <memory>
+
 #include "MovingFiniteElementSmoothing.h"
 
 #include <iomanip>
 #include <limits>
 
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/DataArrays/StructArray.hpp"
 #include "SIMPLib/Geometry/MeshStructs.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingFilters/MeshFunctions.h"
 #include "SurfaceMeshing/SurfaceMeshingFilters/MeshLinearAlgebra.h"
@@ -153,7 +162,7 @@ MovingFiniteElementSmoothing::~MovingFiniteElementSmoothing() = default;
 void MovingFiniteElementSmoothing::setupFilterParameters()
 {
   SurfaceMeshFilter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Iteration Steps", IterationSteps, FilterParameter::Uncategorized, MovingFiniteElementSmoothing));
   parameters.push_back(SIMPL_NEW_BOOL_FP("Apply Node Contraints", NodeConstraints, FilterParameter::Uncategorized, MovingFiniteElementSmoothing));
   parameters.push_back(SIMPL_NEW_BOOL_FP("Constrain Surface Nodes", ConstrainSurfaceNodes, FilterParameter::Uncategorized, MovingFiniteElementSmoothing));
@@ -193,8 +202,8 @@ void MovingFiniteElementSmoothing::initialize()
 // -----------------------------------------------------------------------------
 void MovingFiniteElementSmoothing::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataContainer::Pointer sm = getDataContainerArray()->getPrereqDataContainer(this, getSurfaceMeshNodeTypeArrayPath().getDataContainerName(), false);
   if(getErrorCondition() < 0)
@@ -205,22 +214,20 @@ void MovingFiniteElementSmoothing::dataCheck()
   // We MUST have Nodes
   if(sm->getVertices().get() == nullptr)
   {
-    setErrorCondition(-384);
-    notifyErrorMessage(getHumanLabel(), "SurfaceMesh DataContainer missing Nodes", getErrorCondition());
+    setErrorCondition(-384, "SurfaceMesh DataContainer missing Nodes");
   }
 
   // We MUST have Triangles defined also.
   if(sm->getFaces().get() == nullptr)
   {
-    setErrorCondition(-385);
-    notifyErrorMessage(getHumanLabel(), "SurfaceMesh DataContainer missing Triangles", getErrorCondition());
+    setErrorCondition(-385, "SurfaceMesh DataContainer missing Triangles");
   }
 
   if(getErrorCondition() >= 0)
   {
     // Check for Node Type Array
     // int size = sm->getVertices()->getNumberOfTuples();
-    QVector<size_t> dims(1, 1);
+    std::vector<size_t> dims(1, 1);
     m_SurfaceMeshNodeTypePtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int8_t>, AbstractFilter>(this, getSurfaceMeshNodeTypeArrayPath(),
                                                                                                                   dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
     if(nullptr != m_SurfaceMeshNodeTypePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -233,8 +240,7 @@ void MovingFiniteElementSmoothing::dataCheck()
   {
     if(sm->getEdges().get() == nullptr)
     {
-      setErrorCondition(-385);
-      notifyErrorMessage(getHumanLabel(), "Constraining Quad Points or Triples lines requires Edges array", getErrorCondition());
+      setErrorCondition(-385, "Constraining Quad Points or Triples lines requires Edges array");
     }
   }
 }
@@ -252,9 +258,8 @@ void MovingFiniteElementSmoothing::preflight()
   setInPreflight(false);
 
   /* *** THIS FILTER NEEDS TO BE CHECKED *** */
-  setErrorCondition(0xABABABAB);
   QString ss = QObject::tr("Filter is NOT updated for IGeometry Redesign. A Programmer needs to check this filter. Please report this to the DREAM3D developers.");
-  notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+  setErrorCondition(0xABABABAB, ss);
   /* *** THIS FILTER NEEDS TO BE CHECKED *** */
 }
 
@@ -263,8 +268,8 @@ void MovingFiniteElementSmoothing::preflight()
 // -----------------------------------------------------------------------------
 void MovingFiniteElementSmoothing::execute()
 {
-  int err = 0;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
   if(getErrorCondition() < 0)
   {
@@ -276,8 +281,8 @@ void MovingFiniteElementSmoothing::execute()
   VertexArray::Pointer floatNodesPtr = sm->getVertices();
   FaceArray::Pointer trianglesPtr = sm->getFaces();
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   /* Place all your code to execute your filter here. */
   VertexArray::Vert_t* nodesF = floatNodesPtr->getPointer(0); // Get the pointer to the from of the array so we can use [] notation
   FaceArray::Face_t* triangles = trianglesPtr->getPointer(0); // Get the pointer to the from of the array so we can use [] notation
@@ -286,7 +291,7 @@ void MovingFiniteElementSmoothing::execute()
   int numberNodes = floatNodesPtr->getNumberOfTuples();
   int ntri = trianglesPtr->getNumberOfTuples();
 
-  StructArray<VertexArray::VertD_t>::Pointer nodesDPtr = StructArray<VertexArray::VertD_t>::CreateArray(numberNodes, "MFE_Double_Nodes");
+  StructArray<VertexArray::VertD_t>::Pointer nodesDPtr = StructArray<VertexArray::VertD_t>::CreateArray(numberNodes, "MFE_Double_Nodes", true);
   nodesDPtr->initializeWithZeros();
   VertexArray::VertD_t* nodes = nodesDPtr->getPointer(0);
 
@@ -301,7 +306,7 @@ void MovingFiniteElementSmoothing::execute()
   bool isVerbose = true;
 
   // We need a few more arrays to support the code from CMU:
-  StructArray<TripleNN>::Pointer triplennPtr = StructArray<TripleNN>::CreateArray(numberNodes, "TripleLine_Neighbors_Or_IDS");
+  StructArray<TripleNN>::Pointer triplennPtr = StructArray<TripleNN>::CreateArray(numberNodes, "TripleLine_Neighbors_Or_IDS", true);
   triplennPtr->initializeWithZeros();
   TripleNN* triplenn = triplennPtr->getPointer(0);
 
@@ -361,11 +366,7 @@ void MovingFiniteElementSmoothing::execute()
     IDataArray::Pointer iEdgesDataArray = m->getPointData(SIMPL::CellData::SurfaceMeshInternalEdges);
     if((edgesDataArray.get() == nullptr || iEdgesDataArray.get() == nullptr) && m_SmoothTripleLines == true)
     {
-      setErrorCondition(-596);
-      notifyErrorMessage(
-          getHumanLabel(),
-          "Either the Edges or Internal Edges array was nullptr which means those arrays have not been created and you have selected to smooth triple lines. Disable the smoothing of triple lines.",
-          -556);
+      setErrorCondition(-596, "Either the Edges or Internal Edges array was nullptr which means those arrays have not been created and you have selected to smooth triple lines. Disable the smoothing of triple lines.");
       return;
     }
 
@@ -436,8 +437,7 @@ void MovingFiniteElementSmoothing::execute()
               {
                 qDebug() << "triplenn[nid[1]].triplenn2 != 0 was TRUE. This is bad"
                          << "\n";
-                setErrorCondition(-666);
-                notifyErrorMessage(getHumanLabel(), "triplenn[nid[1]].triplenn2 != 0 was TRUE. This is bad", -666);
+                setErrorCondition(-666, "triplenn[nid[1]].triplenn2 != 0 was TRUE. This is bad");
               }
               return;
             }
@@ -462,8 +462,7 @@ void MovingFiniteElementSmoothing::execute()
               {
                 qDebug() << "triplenn[nid[1]].triplenn2 != 0 was TRUE. This is bad"
                          << "\n";
-                setErrorCondition(-666);
-                notifyErrorMessage(getHumanLabel(), "triplenn[nid[1]].triplenn2 != 0 was TRUE. This is bad", -666);
+                setErrorCondition(-666, "triplenn[nid[1]].triplenn2 != 0 was TRUE. This is bad");
               }
               return;
             }
@@ -726,7 +725,7 @@ void MovingFiniteElementSmoothing::execute()
       qDebug() << "Update loop: " << updates << "\n";
     }
     QString ss = QObject::tr("Iteration: %1").arg(updates);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
 
     Dihedral_min = 180.;
     Dihedral_max = 0.;
@@ -1090,7 +1089,7 @@ void MovingFiniteElementSmoothing::execute()
 AbstractFilter::Pointer MovingFiniteElementSmoothing::newFilterInstance(bool copyFilterParameters) const
 {
   MovingFiniteElementSmoothing::Pointer filter = MovingFiniteElementSmoothing::New();
-  if(true == copyFilterParameters)
+  if(copyFilterParameters)
   {
     copyFilterParameterInstanceVariables(filter.get());
   }
@@ -1100,7 +1099,7 @@ AbstractFilter::Pointer MovingFiniteElementSmoothing::newFilterInstance(bool cop
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MovingFiniteElementSmoothing::getCompiledLibraryName() const
+QString MovingFiniteElementSmoothing::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -1108,7 +1107,7 @@ const QString MovingFiniteElementSmoothing::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MovingFiniteElementSmoothing::getBrandingString() const
+QString MovingFiniteElementSmoothing::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -1116,7 +1115,7 @@ const QString MovingFiniteElementSmoothing::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MovingFiniteElementSmoothing::getFilterVersion() const
+QString MovingFiniteElementSmoothing::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -1127,7 +1126,7 @@ const QString MovingFiniteElementSmoothing::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MovingFiniteElementSmoothing::getGroupName() const
+QString MovingFiniteElementSmoothing::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -1135,7 +1134,7 @@ const QString MovingFiniteElementSmoothing::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid MovingFiniteElementSmoothing::getUuid()
+QUuid MovingFiniteElementSmoothing::getUuid() const
 {
   return QUuid("{a5a18501-0c48-5c7f-8aa2-1eba209ccbe6}");
 }
@@ -1143,7 +1142,7 @@ const QUuid MovingFiniteElementSmoothing::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MovingFiniteElementSmoothing::getSubGroupName() const
+QString MovingFiniteElementSmoothing::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::SmoothingFilters;
 }
@@ -1151,7 +1150,108 @@ const QString MovingFiniteElementSmoothing::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MovingFiniteElementSmoothing::getHumanLabel() const
+QString MovingFiniteElementSmoothing::getHumanLabel() const
 {
   return "Moving Finite Element Smoothing";
+}
+
+// -----------------------------------------------------------------------------
+MovingFiniteElementSmoothing::Pointer MovingFiniteElementSmoothing::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<MovingFiniteElementSmoothing> MovingFiniteElementSmoothing::New()
+{
+  struct make_shared_enabler : public MovingFiniteElementSmoothing
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString MovingFiniteElementSmoothing::getNameOfClass() const
+{
+  return QString("MovingFiniteElementSmoothing");
+}
+
+// -----------------------------------------------------------------------------
+QString MovingFiniteElementSmoothing::ClassName()
+{
+  return QString("MovingFiniteElementSmoothing");
+}
+
+// -----------------------------------------------------------------------------
+void MovingFiniteElementSmoothing::setIterationSteps(int value)
+{
+  m_IterationSteps = value;
+}
+
+// -----------------------------------------------------------------------------
+int MovingFiniteElementSmoothing::getIterationSteps() const
+{
+  return m_IterationSteps;
+}
+
+// -----------------------------------------------------------------------------
+void MovingFiniteElementSmoothing::setNodeConstraints(bool value)
+{
+  m_NodeConstraints = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MovingFiniteElementSmoothing::getNodeConstraints() const
+{
+  return m_NodeConstraints;
+}
+
+// -----------------------------------------------------------------------------
+void MovingFiniteElementSmoothing::setConstrainSurfaceNodes(bool value)
+{
+  m_ConstrainSurfaceNodes = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MovingFiniteElementSmoothing::getConstrainSurfaceNodes() const
+{
+  return m_ConstrainSurfaceNodes;
+}
+
+// -----------------------------------------------------------------------------
+void MovingFiniteElementSmoothing::setConstrainQuadPoints(bool value)
+{
+  m_ConstrainQuadPoints = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MovingFiniteElementSmoothing::getConstrainQuadPoints() const
+{
+  return m_ConstrainQuadPoints;
+}
+
+// -----------------------------------------------------------------------------
+void MovingFiniteElementSmoothing::setSmoothTripleLines(bool value)
+{
+  m_SmoothTripleLines = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MovingFiniteElementSmoothing::getSmoothTripleLines() const
+{
+  return m_SmoothTripleLines;
+}
+
+// -----------------------------------------------------------------------------
+void MovingFiniteElementSmoothing::setSurfaceMeshNodeTypeArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshNodeTypeArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MovingFiniteElementSmoothing::getSurfaceMeshNodeTypeArrayPath() const
+{
+  return m_SurfaceMeshNodeTypeArrayPath;
 }

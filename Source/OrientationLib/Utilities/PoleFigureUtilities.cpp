@@ -36,7 +36,6 @@
 #include "PoleFigureUtilities.h"
 
 #include <QtCore/QFile>
-#include <QtCore/QByteArray>
 #include <QtCore/QTextStream>
 
 #include "SIMPLib/Utilities/ColorTable.h"
@@ -94,8 +93,8 @@ int writeVtkFile(FloatArrayType* xyz, const QString& filename)
 // -----------------------------------------------------------------------------
 UInt8ArrayType::Pointer PoleFigureUtilities::CreateColorImage(DoubleArrayType* data, int width, int height, int nColors, const QString& name, double min, double max)
 {
-  QVector<size_t> dims(1, 4);
-  UInt8ArrayType::Pointer image = UInt8ArrayType::CreateArray(static_cast<size_t>(width * height), dims, name);
+  std::vector<size_t> dims(1, 4);
+  UInt8ArrayType::Pointer image = UInt8ArrayType::CreateArray(static_cast<size_t>(width * height), dims, name, true);
   PoleFigureConfiguration_t config;
   config.imageDim = width;
   config.numColors = nColors;
@@ -204,14 +203,12 @@ void PoleFigureUtilities::GenerateHexPoleFigures(FloatArrayType* eulers, int lam
 
   // Create an Array to hold the XYZ Coordinates which are the coords on the sphere.
   // this is size for HEX ONLY, <0001> Family
-  QVector<size_t> dims(1, 3);
-  FloatArrayType::Pointer xyz0001 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<0001>_xyzCoords");
+  std::vector<size_t> dims(1, 3);
+  FloatArrayType::Pointer xyz0001 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<0001>_xyzCoords", true);
   // this is size for HEX ONLY, <10-10> Family
-  FloatArrayType::Pointer xyz1010 = FloatArrayType::CreateArray(numOrientations * 6, dims, "TEMP_<1010>_xyzCoords");
+  FloatArrayType::Pointer xyz1010 = FloatArrayType::CreateArray(numOrientations * 6, dims, "TEMP_<1010>_xyzCoords", true);
   // this is size for HEX ONLY, <11-20> Family
-  FloatArrayType::Pointer xyz1120 = FloatArrayType::CreateArray(numOrientations * 6, dims, "TEMP_<1120>_xyzCoords");
-
-
+  FloatArrayType::Pointer xyz1120 = FloatArrayType::CreateArray(numOrientations * 6, dims, "TEMP_<1120>_xyzCoords", true);
 
   float sphereRadius = 1.0f;
 
@@ -233,7 +230,7 @@ void PoleFigureUtilities::GenerateHexPoleFigures(FloatArrayType* eulers, int lam
 
 #if WRITE_LAMBERT_SQUARES
   size_t dims[3] = {lambert->getDimension(), lambert->getDimension(), 1 };
-  float res[3] = {lambert->getStepSize(), lambert->getStepSize(), lambert->getStepSize() };
+  FloatVec3Type res = {lambert->getStepSize(), lambert->getStepSize(), lambert->getStepSize()};
   DoubleArrayType::Pointer north = lambert->getNorthSquare();
   DoubleArrayType::Pointer south = lambert->getSouthSquare();
   VtkRectilinearGridWriter::WriteDataArrayToFile("/tmp/ModifiedLambert_North.vtk", north.get(), dims, res, "double", true);
@@ -266,14 +263,12 @@ void PoleFigureUtilities::GenerateOrthoPoleFigures(FloatArrayType* eulers, int l
 
   // Create an Array to hold the XYZ Coordinates which are the coords on the sphere.
   // this is size for ORTHO ONLY, <100> Family
-  QVector<size_t> dims(1, 3);
-  FloatArrayType::Pointer xyz100 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<100>_xyzCoords");
+  std::vector<size_t> dims(1, 3);
+  FloatArrayType::Pointer xyz100 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<100>_xyzCoords", true);
   // this is size for ORTHO ONLY, <010> Family
-  FloatArrayType::Pointer xyz010 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<010>_xyzCoords");
+  FloatArrayType::Pointer xyz010 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<010>_xyzCoords", true);
   // this is size for ORTHO ONLY, <001> Family
-  FloatArrayType::Pointer xyz001 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<001>_xyzCoords");
-
-
+  FloatArrayType::Pointer xyz001 = FloatArrayType::CreateArray(numOrientations * 2, dims, "TEMP_<001>_xyzCoords", true);
 
   float sphereRadius = 1.0f;
 
@@ -295,7 +290,7 @@ void PoleFigureUtilities::GenerateOrthoPoleFigures(FloatArrayType* eulers, int l
 
 #if WRITE_LAMBERT_SQUARES
   size_t dims[3] = {lambert->getDimension(), lambert->getDimension(), 1 };
-  float res[3] = {lambert->getStepSize(), lambert->getStepSize(), lambert->getStepSize() };
+  FloatVec3Type res = {lambert->getStepSize(), lambert->getStepSize(), lambert->getStepSize()};
   DoubleArrayType::Pointer north = lambert->getNorthSquare();
   DoubleArrayType::Pointer south = lambert->getSouthSquare();
   VtkRectilinearGridWriter::WriteDataArrayToFile("/tmp/ModifiedLambert_North.vtk", north.get(), dims, res, "double", true);

@@ -38,10 +38,6 @@
 #include <iostream>
 #include <limits>
 
-#include <QtCore/QSettings>
-#include <QtGui/QDoubleValidator>
-#include <QtGui/QIntValidator>
-#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
 
@@ -145,7 +141,7 @@ void PrecipitatePhaseWidget::setupGui()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void PrecipitatePhaseWidget::setPhaseIndex(const int& index)
+void PrecipitatePhaseWidget::setPhaseIndex(int index)
 {
   StatsGenWidget::setPhaseIndex(index);
   getFeatureSizeWidget()->setPhaseIndex(index);
@@ -159,7 +155,7 @@ void PrecipitatePhaseWidget::setPhaseIndex(const int& index)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void PrecipitatePhaseWidget::setCrystalStructure(const unsigned int& xtal)
+void PrecipitatePhaseWidget::setCrystalStructure(unsigned int xtal)
 {
   StatsGenWidget::setCrystalStructure(xtal);
   getFeatureSizeWidget()->setCrystalStructure(xtal);
@@ -365,8 +361,8 @@ int PrecipitatePhaseWidget::gatherStatsData(AttributeMatrix::Pointer attrMat, bo
     // Feature Size Distribution
     {
       VectorOfFloatArray data;
-      FloatArrayType::Pointer d1 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::Average);
-      FloatArrayType::Pointer d2 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::StandardDeviation);
+      FloatArrayType::Pointer d1 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::Average, true);
+      FloatArrayType::Pointer d2 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::StandardDeviation, true);
       data.push_back(d1);
       data.push_back(d2);
       d1->setValue(0, avglogdiam);
@@ -512,4 +508,16 @@ QIcon PrecipitatePhaseWidget::getPhaseIcon()
   icon.addFile(QStringLiteral(":/StatsGenerator/icons/Precipitate.png"), QSize(), QIcon::Normal, QIcon::Off);
   icon.addFile(QStringLiteral(":/StatsGenerator/icons/Precipitate_Selected.png"), QSize(), QIcon::Normal, QIcon::On);
   return icon;
+}
+
+// -----------------------------------------------------------------------------
+void PrecipitatePhaseWidget::setPptFraction(float value)
+{
+  m_PptFraction = value;
+}
+
+// -----------------------------------------------------------------------------
+float PrecipitatePhaseWidget::getPptFraction() const
+{
+  return m_PptFraction;
 }

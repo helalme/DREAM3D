@@ -54,7 +54,7 @@ EnsembleInfoFilterParameter::~EnsembleInfoFilterParameter() = default;
 //
 // -----------------------------------------------------------------------------
 EnsembleInfoFilterParameter::Pointer EnsembleInfoFilterParameter::New(const QString& humanLabel, const QString& propertyName, EnsembleInfo defaultValue, Category category,
-                                                                      SetterCallbackType setterCallback, GetterCallbackType getterCallback, QVector<QString> choices, bool showOperators,
+                                                                      const SetterCallbackType& setterCallback, const GetterCallbackType& getterCallback, QVector<QString> choices, bool showOperators,
                                                                       int groupIndex)
 {
   EnsembleInfoFilterParameter::Pointer ptr = EnsembleInfoFilterParameter::New();
@@ -138,4 +138,101 @@ void EnsembleInfoFilterParameter::writeJson(QJsonObject& json)
 
     json[getPropertyName()] = inputsArray;
   }
+}
+
+// -----------------------------------------------------------------------------
+EnsembleInfoFilterParameter::Pointer EnsembleInfoFilterParameter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+EnsembleInfoFilterParameter::Pointer EnsembleInfoFilterParameter::New()
+{
+  Pointer sharedPtr(new(EnsembleInfoFilterParameter));
+  return sharedPtr;
+}
+
+// -----------------------------------------------------------------------------
+QString EnsembleInfoFilterParameter::getNameOfClass() const
+{
+  return QString("EnsembleInfoFilterParameter");
+}
+
+// -----------------------------------------------------------------------------
+QString EnsembleInfoFilterParameter::ClassName()
+{
+  return QString("EnsembleInfoFilterParameter");
+}
+
+// -----------------------------------------------------------------------------
+void EnsembleInfoFilterParameter::setChoices(const QVector<QString>& value)
+{
+  m_Choices = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<QString> EnsembleInfoFilterParameter::getChoices() const
+{
+  return m_Choices;
+}
+
+// -----------------------------------------------------------------------------
+void EnsembleInfoFilterParameter::setShowOperators(bool value)
+{
+  m_ShowOperators = value;
+}
+
+// -----------------------------------------------------------------------------
+bool EnsembleInfoFilterParameter::getShowOperators() const
+{
+  return m_ShowOperators;
+}
+
+// -----------------------------------------------------------------------------
+void EnsembleInfoFilterParameter::setDefaultGeometryTypes(const IGeometry::Types& value)
+{
+  m_DefaultGeometryTypes = value;
+}
+
+// -----------------------------------------------------------------------------
+IGeometry::Types EnsembleInfoFilterParameter::getDefaultGeometryTypes() const
+{
+  return m_DefaultGeometryTypes;
+}
+
+// -----------------------------------------------------------------------------
+void EnsembleInfoFilterParameter::setDefaultAttributeMatrixTypes(const AttributeMatrix::Types& value)
+{
+  m_DefaultAttributeMatrixTypes = value;
+}
+
+// -----------------------------------------------------------------------------
+AttributeMatrix::Types EnsembleInfoFilterParameter::getDefaultAttributeMatrixTypes() const
+{
+  return m_DefaultAttributeMatrixTypes;
+}
+
+// -----------------------------------------------------------------------------
+void EnsembleInfoFilterParameter::setSetterCallback(const EnsembleInfoFilterParameter::SetterCallbackType& value)
+{
+  m_SetterCallback = value;
+}
+
+// -----------------------------------------------------------------------------
+EnsembleInfoFilterParameter::SetterCallbackType EnsembleInfoFilterParameter::getSetterCallback() const
+{
+  return m_SetterCallback;
+}
+
+// -----------------------------------------------------------------------------
+void EnsembleInfoFilterParameter::setGetterCallback(const EnsembleInfoFilterParameter::GetterCallbackType& value)
+{
+  m_GetterCallback = value;
+}
+
+// -----------------------------------------------------------------------------
+EnsembleInfoFilterParameter::GetterCallbackType EnsembleInfoFilterParameter::getGetterCallback() const
+{
+  return m_GetterCallback;
 }

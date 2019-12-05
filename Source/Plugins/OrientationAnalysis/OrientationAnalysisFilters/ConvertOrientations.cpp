@@ -33,18 +33,33 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ConvertOrientations.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
 #include "OrientationLib/OrientationMath/OrientationConverter.hpp"
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -65,7 +80,7 @@ ConvertOrientations::~ConvertOrientations() = default;
 // -----------------------------------------------------------------------------
 void ConvertOrientations::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
@@ -100,7 +115,7 @@ void ConvertOrientations::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Input Orientations", InputOrientationArrayPath, FilterParameter::RequiredArray, ConvertOrientations, req, 0));
   }
 
-  parameters.push_back(SIMPL_NEW_STRING_FP("Output Orientations", OutputOrientationArrayName, FilterParameter::CreatedArray, ConvertOrientations, 0));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Output Orientations", OutputOrientationArrayName, InputOrientationArrayPath, InputOrientationArrayPath, FilterParameter::CreatedArray, ConvertOrientations, 0));
 
   setFilterParameters(parameters);
 }
@@ -130,33 +145,30 @@ void ConvertOrientations::initialize()
 // -----------------------------------------------------------------------------
 void ConvertOrientations::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(getInputType() == getOutputType())
   {
     QString ss = QObject::tr("Input and output orientation representation types must be different");
-    setErrorCondition(-1000);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1000, ss);
   }
 
   if(getInputType() < OrientationConverter<float>::GetMinIndex() || getInputType() > OrientationConverter<float>::GetMaxIndex())
   {
     QString ss = QObject::tr("There was an error with the selection of the input orientation type. The valid values range from 0 to %1").arg(OrientationConverter<float>::GetMaxIndex());
-    setErrorCondition(-1001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1001, ss);
   }
 
   if(getOutputType() < OrientationConverter<float>::GetMinIndex() || getOutputType() > OrientationConverter<float>::GetMaxIndex())
   {
     QString ss = QObject::tr("There was an error with the selection of the output orientation type. The valid values range from 0 to %1").arg(OrientationConverter<float>::GetMaxIndex());
-    setErrorCondition(-1002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1002, ss);
   }
 
   // We need to return NOW because the next lines assume we have and index that is within
   // the valid bounds
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -164,7 +176,7 @@ void ConvertOrientations::dataCheck()
   // Figure out what kind of Array the user selected
   // Get the input data and create the output Data appropriately
   IDataArray::Pointer iDataArrayPtr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, getInputOrientationArrayPath());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -184,8 +196,7 @@ void ConvertOrientations::dataCheck()
                      .arg(numComps)
                      .arg(componentCounts[getInputType()])
                      .arg(sizeNameMappingString);
-    setErrorCondition(-1006);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1006, ss);
   }
 
   DataArrayPath outputArrayPath = getInputOrientationArrayPath();
@@ -194,15 +205,15 @@ void ConvertOrientations::dataCheck()
   FloatArrayType::Pointer fArray = std::dynamic_pointer_cast<FloatArrayType>(iDataArrayPtr);
   if(nullptr != fArray.get())
   {
-    QVector<size_t> outputCDims(1, componentCounts[getOutputType()]);
-    getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, outputArrayPath, 0, outputCDims);
+    std::vector<size_t> outputCDims(1, componentCounts[getOutputType()]);
+    getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, outputArrayPath, 0, outputCDims, "", DataArrayID31);
   }
 
   DoubleArrayType::Pointer dArray = std::dynamic_pointer_cast<DoubleArrayType>(iDataArrayPtr);
   if(nullptr != dArray.get())
   {
-    QVector<size_t> outputCDims(1, componentCounts[getOutputType()]);
-    getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, outputArrayPath, 0, outputCDims);
+    std::vector<size_t> outputCDims(1, componentCounts[getOutputType()]);
+    getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, outputArrayPath, 0, outputCDims, "", DataArrayID32);
   }
 }
 
@@ -222,10 +233,11 @@ void ConvertOrientations::preflight()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-template <typename T> void generateRepresentation(ConvertOrientations* filter, typename DataArray<T>::Pointer inputOrientations, typename DataArray<T>::Pointer outputOrientations)
+template <typename T>
+void generateRepresentation(ConvertOrientations* filter, typename DataArray<T>::Pointer inputOrientations, typename DataArray<T>::Pointer outputOrientations)
 {
-  typedef typename DataArray<T>::Pointer ArrayType;
-  typedef OrientationConverter<T> OCType;
+  using ArrayType = typename DataArray<T>::Pointer;
+  using OCType = OrientationConverter<T>;
   QVector<typename OCType::Pointer> converters(7);
 
   converters[0] = EulerConverter<T>::New();
@@ -236,7 +248,7 @@ template <typename T> void generateRepresentation(ConvertOrientations* filter, t
   converters[5] = HomochoricConverter<T>::New();
   converters[6] = CubochoricConverter<T>::New();
 
-  QVector<typename OCType::OrientationType> ocTypes = OCType::GetOrientationTypes();
+  QVector<OrientationRepresentation::Type> ocTypes = OCType::GetOrientationTypes();
 
   converters[filter->getInputType()]->setInputData(inputOrientations);
   converters[filter->getInputType()]->convertRepresentationTo(ocTypes[filter->getOutputType()]);
@@ -245,16 +257,14 @@ template <typename T> void generateRepresentation(ConvertOrientations* filter, t
   if(nullptr == output.get())
   {
     QString ss = QObject::tr("There was an error converting the input data using convertor %1").arg(converters[filter->getInputType()]->getNameOfClass());
-    filter->setErrorCondition(-1004);
-    filter->notifyErrorMessage(filter->getHumanLabel(), ss, filter->getErrorCondition());
+    filter->setErrorCondition(-1004, ss);
     return;
   }
 
   if(!output->copyIntoArray(outputOrientations))
   {
     QString ss = QObject::tr("There was an error copying the final results into the output array.");
-    filter->setErrorCondition(-1003);
-    filter->notifyErrorMessage(filter->getHumanLabel(), ss, filter->getErrorCondition());
+    filter->setErrorCondition(-1003, ss);
   }
 }
 
@@ -263,10 +273,10 @@ template <typename T> void generateRepresentation(ConvertOrientations* filter, t
 // -----------------------------------------------------------------------------
 void ConvertOrientations::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -280,7 +290,7 @@ void ConvertOrientations::execute()
   if(nullptr != fArray.get())
   {
     QVector<int32_t> componentCounts = OrientationConverter<float>::GetComponentCounts();
-    QVector<size_t> outputCDims(1, componentCounts[getOutputType()]);
+    std::vector<size_t> outputCDims(1, componentCounts[getOutputType()]);
     FloatArrayType::Pointer outData = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, outputArrayPath, outputCDims);
     generateRepresentation<float>(this, fArray, outData);
   }
@@ -289,7 +299,7 @@ void ConvertOrientations::execute()
   if(nullptr != dArray.get())
   {
     QVector<int32_t> componentCounts = OrientationConverter<double>::GetComponentCounts();
-    QVector<size_t> outputCDims(1, componentCounts[getOutputType()]);
+    std::vector<size_t> outputCDims(1, componentCounts[getOutputType()]);
     DoubleArrayType::Pointer outData = getDataContainerArray()->getPrereqArrayFromPath<DataArray<double>, AbstractFilter>(this, outputArrayPath, outputCDims);
     generateRepresentation<double>(this, dArray, outData);
   }
@@ -312,7 +322,7 @@ AbstractFilter::Pointer ConvertOrientations::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertOrientations::getCompiledLibraryName() const
+QString ConvertOrientations::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -320,7 +330,7 @@ const QString ConvertOrientations::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertOrientations::getBrandingString() const
+QString ConvertOrientations::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -328,7 +338,7 @@ const QString ConvertOrientations::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertOrientations::getFilterVersion() const
+QString ConvertOrientations::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -338,7 +348,7 @@ const QString ConvertOrientations::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertOrientations::getGroupName() const
+QString ConvertOrientations::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -346,7 +356,7 @@ const QString ConvertOrientations::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ConvertOrientations::getUuid()
+QUuid ConvertOrientations::getUuid() const
 {
   return QUuid("{e5629880-98c4-5656-82b8-c9fe2b9744de}");
 }
@@ -354,7 +364,7 @@ const QUuid ConvertOrientations::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertOrientations::getSubGroupName() const
+QString ConvertOrientations::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ConversionFilters;
 }
@@ -362,7 +372,84 @@ const QString ConvertOrientations::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertOrientations::getHumanLabel() const
+QString ConvertOrientations::getHumanLabel() const
 {
   return "Convert Orientation Representation";
+}
+
+// -----------------------------------------------------------------------------
+ConvertOrientations::Pointer ConvertOrientations::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ConvertOrientations> ConvertOrientations::New()
+{
+  struct make_shared_enabler : public ConvertOrientations
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertOrientations::getNameOfClass() const
+{
+  return QString("ConvertOrientations");
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertOrientations::ClassName()
+{
+  return QString("ConvertOrientations");
+}
+
+// -----------------------------------------------------------------------------
+void ConvertOrientations::setInputType(int value)
+{
+  m_InputType = value;
+}
+
+// -----------------------------------------------------------------------------
+int ConvertOrientations::getInputType() const
+{
+  return m_InputType;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertOrientations::setOutputType(int value)
+{
+  m_OutputType = value;
+}
+
+// -----------------------------------------------------------------------------
+int ConvertOrientations::getOutputType() const
+{
+  return m_OutputType;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertOrientations::setInputOrientationArrayPath(const DataArrayPath& value)
+{
+  m_InputOrientationArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ConvertOrientations::getInputOrientationArrayPath() const
+{
+  return m_InputOrientationArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertOrientations::setOutputOrientationArrayName(const QString& value)
+{
+  m_OutputOrientationArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertOrientations::getOutputOrientationArrayName() const
+{
+  return m_OutputOrientationArrayName;
 }

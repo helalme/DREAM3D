@@ -33,15 +33,22 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "BadDataNeighborOrientationCheck.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -70,7 +77,7 @@ BadDataNeighborOrientationCheck::~BadDataNeighborOrientationCheck() = default;
 // -----------------------------------------------------------------------------
 void BadDataNeighborOrientationCheck::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Misorientation Tolerance (Degrees)", MisorientationTolerance, FilterParameter::Parameter, BadDataNeighborOrientationCheck));
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Required Number of Neighbors", NumberOfNeighbors, FilterParameter::Parameter, BadDataNeighborOrientationCheck));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
@@ -125,21 +132,21 @@ void BadDataNeighborOrientationCheck::initialize()
 // -----------------------------------------------------------------------------
 void BadDataNeighborOrientationCheck::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QVector<DataArrayPath> dataArrayPaths;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getGoodVoxelsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_GoodVoxelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<bool>, AbstractFilter>(this, getGoodVoxelsArrayPath(),
                                                                                                      cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_GoodVoxelsPtr.lock())                                                                      /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_GoodVoxels = m_GoodVoxelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getGoodVoxelsArrayPath());
   }
@@ -150,7 +157,7 @@ void BadDataNeighborOrientationCheck::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -169,7 +176,7 @@ void BadDataNeighborOrientationCheck::dataCheck()
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -195,10 +202,10 @@ void BadDataNeighborOrientationCheck::preflight()
 // -----------------------------------------------------------------------------
 void BadDataNeighborOrientationCheck::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -209,8 +216,7 @@ void BadDataNeighborOrientationCheck::execute()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_GoodVoxelsArrayPath.getDataContainerName());
   size_t totalPoints = m_GoodVoxelsPtr.lock()->getNumberOfTuples();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -229,9 +235,7 @@ void BadDataNeighborOrientationCheck::execute()
   neighpoints[5] = static_cast<int64_t>(dims[0] * dims[1]);
 
   float w = 10000.0f;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+
   float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
   uint32_t phase1 = 0, phase2 = 0;
 
@@ -275,10 +279,10 @@ void BadDataNeighborOrientationCheck::execute()
         if(good == 1 && m_GoodVoxels[neighbor])
         {
           phase1 = m_CrystalStructures[m_CellPhases[i]];
-          QuaternionMathF::Copy(quats[i], q1);
+          QuatF q1(m_Quats + i * 4); // BEWARE POINTER MATH!!
 
           phase2 = m_CrystalStructures[m_CellPhases[neighbor]];
-          QuaternionMathF::Copy(quats[neighbor], q2);
+          QuatF q2(m_Quats + neighbor * 4); // BEWARE POINTER MATH!!
 
           if(m_CellPhases[i] == m_CellPhases[neighbor] && m_CellPhases[i] > 0)
           {
@@ -342,10 +346,10 @@ void BadDataNeighborOrientationCheck::execute()
             if(good == 1 && !m_GoodVoxels[neighbor])
             {
               phase1 = m_CrystalStructures[m_CellPhases[i]];
-              QuaternionMathF::Copy(quats[i], q1);
+              QuatF q1(m_Quats + i * 4); // BEWARE POINTER MATH!!
 
               phase2 = m_CrystalStructures[m_CellPhases[neighbor]];
-              QuaternionMathF::Copy(quats[neighbor], q2);
+              QuatF q2(m_Quats + neighbor * 4); // BEWARE POINTER MATH!!
 
               if(m_CellPhases[i] == m_CellPhases[neighbor] && m_CellPhases[i] > 0)
               {
@@ -382,7 +386,7 @@ AbstractFilter::Pointer BadDataNeighborOrientationCheck::newFilterInstance(bool 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString BadDataNeighborOrientationCheck::getCompiledLibraryName() const
+QString BadDataNeighborOrientationCheck::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -390,7 +394,7 @@ const QString BadDataNeighborOrientationCheck::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString BadDataNeighborOrientationCheck::getBrandingString() const
+QString BadDataNeighborOrientationCheck::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -398,7 +402,7 @@ const QString BadDataNeighborOrientationCheck::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString BadDataNeighborOrientationCheck::getFilterVersion() const
+QString BadDataNeighborOrientationCheck::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -408,7 +412,7 @@ const QString BadDataNeighborOrientationCheck::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString BadDataNeighborOrientationCheck::getGroupName() const
+QString BadDataNeighborOrientationCheck::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -416,7 +420,7 @@ const QString BadDataNeighborOrientationCheck::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid BadDataNeighborOrientationCheck::getUuid()
+QUuid BadDataNeighborOrientationCheck::getUuid() const
 {
   return QUuid("{f4a7c2df-e9b0-5da9-b745-a862666d6c99}");
 }
@@ -424,7 +428,7 @@ const QUuid BadDataNeighborOrientationCheck::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString BadDataNeighborOrientationCheck::getSubGroupName() const
+QString BadDataNeighborOrientationCheck::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -432,7 +436,108 @@ const QString BadDataNeighborOrientationCheck::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString BadDataNeighborOrientationCheck::getHumanLabel() const
+QString BadDataNeighborOrientationCheck::getHumanLabel() const
 {
   return "Neighbor Orientation Comparison (Bad Data)";
+}
+
+// -----------------------------------------------------------------------------
+BadDataNeighborOrientationCheck::Pointer BadDataNeighborOrientationCheck::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<BadDataNeighborOrientationCheck> BadDataNeighborOrientationCheck::New()
+{
+  struct make_shared_enabler : public BadDataNeighborOrientationCheck
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString BadDataNeighborOrientationCheck::getNameOfClass() const
+{
+  return QString("BadDataNeighborOrientationCheck");
+}
+
+// -----------------------------------------------------------------------------
+QString BadDataNeighborOrientationCheck::ClassName()
+{
+  return QString("BadDataNeighborOrientationCheck");
+}
+
+// -----------------------------------------------------------------------------
+void BadDataNeighborOrientationCheck::setMisorientationTolerance(float value)
+{
+  m_MisorientationTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float BadDataNeighborOrientationCheck::getMisorientationTolerance() const
+{
+  return m_MisorientationTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void BadDataNeighborOrientationCheck::setNumberOfNeighbors(int value)
+{
+  m_NumberOfNeighbors = value;
+}
+
+// -----------------------------------------------------------------------------
+int BadDataNeighborOrientationCheck::getNumberOfNeighbors() const
+{
+  return m_NumberOfNeighbors;
+}
+
+// -----------------------------------------------------------------------------
+void BadDataNeighborOrientationCheck::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath BadDataNeighborOrientationCheck::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void BadDataNeighborOrientationCheck::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath BadDataNeighborOrientationCheck::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void BadDataNeighborOrientationCheck::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath BadDataNeighborOrientationCheck::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void BadDataNeighborOrientationCheck::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath BadDataNeighborOrientationCheck::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
 }

@@ -33,12 +33,18 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "MatchCrystallography.h"
+
+#include <cmath>
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
@@ -46,6 +52,8 @@
 #include "SIMPLib/StatsData/PrecipitateStatsData.h"
 #include "SIMPLib/StatsData/PrimaryStatsData.h"
 #include "SIMPLib/Utilities/TimeUtilities.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationLib/LaueOps/CubicOps.h"
 #include "OrientationLib/LaueOps/HexagonalOps.h"
@@ -57,6 +65,15 @@
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
 
 #include "EbsdLib/EbsdConstants.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -102,7 +119,7 @@ MatchCrystallography::~MatchCrystallography() = default;
 // -----------------------------------------------------------------------------
 void MatchCrystallography::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Maximum Number of Iterations (Swaps)", MaxIterations, FilterParameter::Parameter, MatchCrystallography));
 
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
@@ -165,11 +182,11 @@ void MatchCrystallography::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Number of Features", NumFeaturesArrayPath, FilterParameter::RequiredArray, MatchCrystallography, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Euler Angles", CellEulerAnglesArrayName, FilterParameter::CreatedArray, MatchCrystallography));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Euler Angles", CellEulerAnglesArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, MatchCrystallography));
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Volumes", VolumesArrayName, FilterParameter::CreatedArray, MatchCrystallography));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Average Euler Angles", FeatureEulerAnglesArrayName, FilterParameter::CreatedArray, MatchCrystallography));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Average Quaternions", AvgQuatsArrayName, FilterParameter::CreatedArray, MatchCrystallography));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Volumes", VolumesArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, MatchCrystallography));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Average Euler Angles", FeatureEulerAnglesArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, MatchCrystallography));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Average Quaternions", AvgQuatsArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, MatchCrystallography));
   setFilterParameters(parameters);
 }
 
@@ -223,14 +240,14 @@ void MatchCrystallography::initialize()
 // -----------------------------------------------------------------------------
 void MatchCrystallography::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   // Cell Data
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -241,7 +258,7 @@ void MatchCrystallography::dataCheck()
 
   cDims[0] = 3;
   tempPath.update(getFeatureIdsArrayPath().getDataContainerName(), getFeatureIdsArrayPath().getAttributeMatrixName(), getCellEulerAnglesArrayName());
-  m_CellEulerAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<FloatArrayType, AbstractFilter>(this, tempPath, 0, cDims);
+  m_CellEulerAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<FloatArrayType, AbstractFilter>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_CellEulerAnglesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
@@ -264,8 +281,7 @@ void MatchCrystallography::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   tempPath.update(getFeaturePhasesArrayPath().getDataContainerName(), getFeaturePhasesArrayPath().getAttributeMatrixName(), getVolumesArrayName());
-  m_VolumesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_VolumesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID32);
   if(nullptr != m_VolumesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Volumes = m_VolumesPtr.lock()->getPointer(0);
@@ -282,8 +298,7 @@ void MatchCrystallography::dataCheck()
 
   cDims[0] = 4;
   tempPath.update(getFeaturePhasesArrayPath().getDataContainerName(), getFeaturePhasesArrayPath().getAttributeMatrixName(), getAvgQuatsArrayName());
-  m_AvgQuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                 cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AvgQuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID33);
   if(nullptr != m_AvgQuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
@@ -306,8 +321,7 @@ void MatchCrystallography::dataCheck()
   if(m_StatsDataArray.lock() == nullptr)
   {
     QString ss = QObject::tr("Statistics array is not initialized correctly. The path is %1").arg(getInputStatsArrayPath().serialize());
-    setErrorCondition(-308);
-    notifyErrorMessage(getHumanLabel(), ss, -308);
+    setErrorCondition(-308, ss);
   }
 
   m_CrystalStructuresPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<unsigned int>, AbstractFilter>(this, getCrystalStructuresArrayPath(), cDims);
@@ -351,10 +365,10 @@ void MatchCrystallography::preflight()
 // -----------------------------------------------------------------------------
 void MatchCrystallography::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -363,7 +377,7 @@ void MatchCrystallography::execute()
 
   QString ss;
   ss = QObject::tr("Determining Volumes");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
   determine_volumes();
   if(getCancel())
   {
@@ -371,7 +385,7 @@ void MatchCrystallography::execute()
   }
 
   ss = QObject::tr("Determining Boundary Areas");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
   determine_boundary_areas();
   if(getCancel())
   {
@@ -384,9 +398,9 @@ void MatchCrystallography::execute()
     if(m_PhaseTypes[i] == static_cast<PhaseType::EnumType>(PhaseType::Type::Primary) || m_PhaseTypes[i] == static_cast<PhaseType::EnumType>(PhaseType::Type::Precipitate))
     {
       ss = QObject::tr("Initializing Arrays of Phase %1").arg(i);
-      notifyStatusMessage(getHumanLabel(), "Initializing Arrays");
+      notifyStatusMessage("Initializing Arrays");
       initializeArrays(i);
-      if(getErrorCondition() < 0)
+      if(getErrorCode() < 0)
       {
         return;
       }
@@ -396,9 +410,9 @@ void MatchCrystallography::execute()
       }
 
       ss = QObject::tr("Assigning Eulers to Phase %1").arg(i);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       assign_eulers(i);
-      if(getErrorCondition() < 0)
+      if(getErrorCode() < 0)
       {
         return;
       }
@@ -408,7 +422,7 @@ void MatchCrystallography::execute()
       }
 
       ss = QObject::tr("Measuring Misorientations of Phase %1").arg(i);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       measure_misorientations(i);
       if(getCancel())
       {
@@ -416,7 +430,7 @@ void MatchCrystallography::execute()
       }
 
       ss = QObject::tr("Matching Crystallography of Phase %1").arg(i);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       matchCrystallography(i);
       if(getCancel())
       {
@@ -448,8 +462,7 @@ void MatchCrystallography::initializeArrays(size_t ensem)
                        .arg(ensem)
                        .arg(ensem)
                        .arg(static_cast<PhaseType::EnumType>(m_PhaseTypes[ensem]));
-      setErrorCondition(-666);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-666, ss);
       return;
     }
     m_ActualOdf = pp->getODF();
@@ -466,8 +479,7 @@ void MatchCrystallography::initializeArrays(size_t ensem)
                        .arg(ensem)
                        .arg(ensem)
                        .arg(static_cast<PhaseType::EnumType>(m_PhaseTypes[ensem]));
-      setErrorCondition(-666);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-666, ss);
       return;
     }
     m_ActualOdf = pp->getODF();
@@ -475,15 +487,14 @@ void MatchCrystallography::initializeArrays(size_t ensem)
   }
   else
   {
-    setErrorCondition(-55000);
     QString ss;
     ss = QObject::tr("Improper phase type (%1) for matching crystallography").arg(static_cast<PhaseType::EnumType>(m_PhaseTypes[ensem]));
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-55000, ss);
     return;
   }
 
-  m_SimOdf = FloatArrayType::CreateArray(m_ActualOdf->getSize(), SIMPL::StringConstants::ODF);
-  m_SimMdf = FloatArrayType::CreateArray(m_ActualMdf->getSize(), SIMPL::StringConstants::MisorientationBins);
+  m_SimOdf = FloatArrayType::CreateArray(m_ActualOdf->getSize(), SIMPL::StringConstants::ODF, true);
+  m_SimMdf = FloatArrayType::CreateArray(m_ActualMdf->getSize(), SIMPL::StringConstants::MisorientationBins, true);
   for(size_t j = 0; j < m_SimOdf->getSize(); j++)
   {
     m_SimOdf->setValue(j, 0.0);
@@ -515,11 +526,8 @@ void MatchCrystallography::determine_volumes()
     m_Volumes[m_FeatureIds[i]]++;
   }
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
-  float res_scalar = xRes * yRes * zRes;
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
+  float res_scalar = spacing[0] * spacing[1] * spacing[2];
   for(size_t i = 1; i < totalFeatures; i++)
   {
     m_Volumes[i] = m_Volumes[i] * res_scalar;
@@ -575,7 +583,7 @@ void MatchCrystallography::assign_eulers(size_t ensem)
   SIMPL_RANDOMNG_NEW_SEEDED(m_Seed);
 
   int32_t numbins = 0;
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  // QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
   float random = 0.0f;
   int32_t choose = 0, phase = 0;
 
@@ -606,22 +614,21 @@ void MatchCrystallography::assign_eulers(size_t ensem)
       if(numbins == 0)
       {
         QString ss = QObject::tr("Unkown crystal structure (%1) for phase %2").arg(m_CrystalStructures[phase]).arg(phase);
-        setErrorCondition(-666);
-        notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+        setErrorCondition(-666, ss);
         return;
       }
 
       choose = pick_euler(random, numbins);
 
-      FOrientArrayType eulers = m_OrientationOps[m_CrystalStructures[ensem]]->determineEulerAngles(m_Seed, choose);
+      OrientationD eulers = m_OrientationOps[m_CrystalStructures[ensem]]->determineEulerAngles(m_Seed, choose);
       eulers = m_OrientationOps[m_CrystalStructures[ensem]]->randomizeEulerAngles(eulers);
       m_FeatureEulerAngles[3 * i] = eulers[0];
       m_FeatureEulerAngles[3 * i + 1] = eulers[1];
       m_FeatureEulerAngles[3 * i + 2] = eulers[2];
 
-      FOrientArrayType q(4, 0.0);
-      FOrientTransformsType::eu2qu(FOrientArrayType(&(m_FeatureEulerAngles[3 * i]), 3), q);
-      QuaternionMathF::Copy(q.toQuaternion(), avgQuats[i]);
+      QuatF q(m_AvgQuats + i * 4);
+      OrientationF eu(m_FeatureEulerAngles[3 * i], m_FeatureEulerAngles[3 * i + 1], m_FeatureEulerAngles[3 * i + 2]);
+      q = OrientationTransformation::eu2qu<OrientationF, QuatF>(eu);
       if(!m_SurfaceFeatures[i])
       {
         m_SimOdf->setValue(choose, (m_SimOdf->getValue(choose) + m_Volumes[i] / m_UnbiasedVolume[ensem]));
@@ -655,22 +662,22 @@ int32_t MatchCrystallography::pick_euler(float random, int32_t numbins)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void MatchCrystallography::MC_LoopBody1(int32_t feature, size_t ensem, size_t j, float neighsurfarea, uint32_t sym, QuatF& q1, QuatF& q2)
+void MatchCrystallography::MC_LoopBody1(int32_t feature, size_t ensem, size_t j, float neighsurfarea, uint32_t sym, const QuatF& q1, const QuatF& q2)
 {
-  float w = 0.0f;
-  float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
-  float curmiso1 = 0.0f, curmiso2 = 0.0f, curmiso3 = 0.0f;
+  double w = 0.0f;
+  double n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
+  double curmiso1 = 0.0f, curmiso2 = 0.0f, curmiso3 = 0.0f;
   size_t curmisobin = 0, newmisobin = 0;
 
   curmiso1 = m_MisorientationLists[feature][3 * j];
   curmiso2 = m_MisorientationLists[feature][3 * j + 1];
   curmiso3 = m_MisorientationLists[feature][3 * j + 2];
 
-  FOrientArrayType rod(curmiso1, curmiso2, curmiso3, 0.0f);
-  float mag = sqrt(curmiso1 * curmiso1 + curmiso2 * curmiso2 + curmiso3 * curmiso3);
-  if(mag == 0.0f)
+  OrientationD rod(curmiso1, curmiso2, curmiso3, 0.0);
+  double mag = std::sqrt(curmiso1 * curmiso1 + curmiso2 * curmiso2 + curmiso3 * curmiso3);
+  if(mag == 0.0)
   {
-    rod[3] = std::numeric_limits<float>::infinity();
+    rod[3] = std::numeric_limits<double>::infinity();
   }
   else
   {
@@ -681,9 +688,11 @@ void MatchCrystallography::MC_LoopBody1(int32_t feature, size_t ensem, size_t j,
   }
 
   curmisobin = m_OrientationOps[sym]->getMisoBin(rod);
-  w = m_OrientationOps[sym]->getMisoQuat(q1, q2, n1, n2, n3);
+  QuatType qq1(q1[0], q1[1], q1[2], q1[3]);
+  QuatType qq2(q2[0], q2[1], q2[2], q2[3]);
+  w = m_OrientationOps[sym]->getMisoQuat(qq1, qq2, n1, n2, n3);
 
-  FOrientTransformsType::ax2ro(FOrientArrayType(n1, n2, n3, w), rod);
+  rod = OrientationTransformation::ax2ro<OrientationD, OrientationD>(OrientationD(n1, n2, n3, w));
   newmisobin = m_OrientationOps[sym]->getMisoBin(rod);
   m_MdfChange = m_MdfChange + (((m_ActualMdf->getValue(curmisobin) - m_SimMdf->getValue(curmisobin)) * (m_ActualMdf->getValue(curmisobin) - m_SimMdf->getValue(curmisobin))) -
                                ((m_ActualMdf->getValue(curmisobin) - (m_SimMdf->getValue(curmisobin) - (neighsurfarea / m_TotalSurfaceArea[ensem]))) *
@@ -708,7 +717,7 @@ void MatchCrystallography::MC_LoopBody2(int32_t feature, size_t ensem, size_t j,
   curmiso2 = m_MisorientationLists[feature][3 * j + 1];
   curmiso3 = m_MisorientationLists[feature][3 * j + 2];
 
-  FOrientArrayType rod(curmiso1, curmiso2, curmiso3, 0.0f);
+  OrientationD rod(curmiso1, curmiso2, curmiso3, 0.0f);
   float mag = sqrt(curmiso1 * curmiso1 + curmiso2 * curmiso2 + curmiso3 * curmiso3);
   if(mag == 0.0f)
   {
@@ -725,7 +734,7 @@ void MatchCrystallography::MC_LoopBody2(int32_t feature, size_t ensem, size_t j,
   curmisobin = m_OrientationOps[sym]->getMisoBin(rod);
   w = m_OrientationOps[sym]->getMisoQuat(q1, q2, n1, n2, n3);
 
-  FOrientTransformsType::ax2ro(FOrientArrayType(n1, n2, n3, w), rod);
+  rod = OrientationTransformation::ax2ro<OrientationD, OrientationD>(OrientationD(n1, n2, n3, w));
   newmisobin = m_OrientationOps[sym]->getMisoBin(rod);
   m_MisorientationLists[feature][3 * j] = miso1;
   m_MisorientationLists[feature][3 * j + 1] = miso2;
@@ -757,7 +766,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
 
   QuatF q1;
   QuatF q2;
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  //  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
   float ea1 = 0.0f, ea2 = 0.0f, ea3 = 0.0f;
   float g1ea1 = 0.0f, g1ea2 = 0.0f, g1ea3 = 0.0f, g2ea1 = 0.0f, g2ea2 = 0.0f, g2ea3 = 0.0f;
@@ -790,7 +799,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
       float estimatedTime = (float)(m_MaxIterations - iterations) / timeDiff;
 
       ss += QObject::tr(" || Est. Time Remain: %1 || Iterations/Sec: %2").arg(DREAM3D::convertMillisToHrsMinSecs(estimatedTime)).arg(timeDiff * 1000);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
 
       millis = QDateTime::currentMSecsSinceEpoch();
       lastIteration = iterations;
@@ -848,8 +857,10 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
         ea1 = m_FeatureEulerAngles[3 * selectedfeature1];
         ea2 = m_FeatureEulerAngles[3 * selectedfeature1 + 1];
         ea3 = m_FeatureEulerAngles[3 * selectedfeature1 + 2];
-        FOrientArrayType rod(4, 0.0);
-        FOrientTransformsType::eu2ro(FOrientArrayType(&(m_FeatureEulerAngles[3 * selectedfeature1]), 3), rod);
+        OrientationD rod(4, 0.0);
+
+        OrientationD eu(m_FeatureEulerAngles[3 * selectedfeature1], m_FeatureEulerAngles[3 * selectedfeature1 + 1], m_FeatureEulerAngles[3 * selectedfeature1 + 2]);
+        rod = OrientationTransformation::eu2ro<OrientationD, OrientationD>(eu);
 
         g1odfbin = m_OrientationOps[m_CrystalStructures[ensem]]->getOdfBin(rod);
         random = static_cast<float>(rg.genrand_res53());
@@ -857,11 +868,10 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
 
         choose = pick_euler(random, numbins);
 
-        FOrientArrayType g1ea = m_OrientationOps[m_CrystalStructures[ensem]]->determineEulerAngles(m_Seed, choose);
+        OrientationD g1ea = m_OrientationOps[m_CrystalStructures[ensem]]->determineEulerAngles(m_Seed, choose);
         g1ea = m_OrientationOps[m_CrystalStructures[ensem]]->randomizeEulerAngles(g1ea);
-        FOrientArrayType quat(4, 0.0);
-        FOrientTransformsType::eu2qu(g1ea, quat);
-        q1 = quat.toQuaternion();
+
+        q1 = OrientationTransformation::eu2qu<OrientationD, QuatF>(g1ea);
 
         m_OdfChange = ((m_ActualOdf->getValue(choose) - m_SimOdf->getValue(choose)) * (m_ActualOdf->getValue(choose) - m_SimOdf->getValue(choose))) -
                       ((m_ActualOdf->getValue(choose) - (m_SimOdf->getValue(choose) + (m_Volumes[selectedfeature1] / m_UnbiasedVolume[ensem]))) *
@@ -879,8 +889,9 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
         for(size_t j = 0; j < size; j++)
         {
           int32_t neighbor = neighborlist[selectedfeature1][j];
-          FOrientTransformsType::eu2qu(FOrientArrayType(&(m_FeatureEulerAngles[3 * neighbor]), 3), quat);
-          q1 = quat.toQuaternion();
+          eu = OrientationD(m_FeatureEulerAngles[3 * neighbor], m_FeatureEulerAngles[3 * neighbor + 1], m_FeatureEulerAngles[3 * neighbor + 2]);
+
+          q2 = OrientationTransformation::eu2qu<OrientationD, QuatF>(eu);
           float neighsurfarea = neighborsurfacearealist[selectedfeature1][j];
           MC_LoopBody1(selectedfeature1, ensem, j, neighsurfarea, m_CrystalStructures[ensem], q1, q2);
         }
@@ -892,7 +903,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
           m_FeatureEulerAngles[3 * selectedfeature1] = g1ea1;
           m_FeatureEulerAngles[3 * selectedfeature1 + 1] = g1ea2;
           m_FeatureEulerAngles[3 * selectedfeature1 + 2] = g1ea3;
-          QuaternionMathF::Copy(q1, avgQuats[selectedfeature1]);
+          q1.copyInto(m_AvgQuats + selectedfeature1 * 4, 4);
           m_SimOdf->setValue(choose, (m_SimOdf->getValue(choose) + (m_Volumes[selectedfeature1] / m_UnbiasedVolume[ensem])));
           m_SimOdf->setValue(g1odfbin, (m_SimOdf->getValue(g1odfbin) - (m_Volumes[selectedfeature1] / m_UnbiasedVolume[ensem])));
           size = 0;
@@ -903,9 +914,9 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
           for(size_t j = 0; j < size; j++)
           {
             int neighbor = neighborlist[selectedfeature1][j];
-            FOrientArrayType quat(4);
-            FOrientTransformsType::eu2qu(FOrientArrayType(&(m_FeatureEulerAngles[3 * neighbor]), 3), quat);
-            q2 = quat.toQuaternion();
+            eu = OrientationD(m_FeatureEulerAngles[3 * neighbor], m_FeatureEulerAngles[3 * neighbor + 1], m_FeatureEulerAngles[3 * neighbor + 2]);
+
+            q2 = OrientationTransformation::eu2qu<OrientationD, QuatF>(eu);
             float neighsurfarea = neighborsurfacearealist[selectedfeature1][j];
             MC_LoopBody2(selectedfeature1, ensem, j, neighsurfarea, m_CrystalStructures[ensem], q1, q2);
           }
@@ -974,14 +985,15 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
           g2ea1 = m_FeatureEulerAngles[3 * selectedfeature2];
           g2ea2 = m_FeatureEulerAngles[3 * selectedfeature2 + 1];
           g2ea3 = m_FeatureEulerAngles[3 * selectedfeature2 + 2];
-          QuaternionMathF::Copy(q1, avgQuats[selectedfeature1]);
-          FOrientArrayType rod(4);
-          FOrientTransformsType::eu2ro(FOrientArrayType(&(m_FeatureEulerAngles[3 * selectedfeature1]), 3), rod);
+          q1.copyInto(m_AvgQuats + selectedfeature1 * 4, 4);
+          OrientationD eu(m_FeatureEulerAngles[3 * selectedfeature1], m_FeatureEulerAngles[3 * selectedfeature1 + 1], m_FeatureEulerAngles[3 * selectedfeature1 + 2]);
+          OrientationD rod = OrientationTransformation::eu2ro<OrientationD, OrientationD>(eu);
 
           g1odfbin = m_OrientationOps[m_CrystalStructures[ensem]]->getOdfBin(rod);
-          QuaternionMathF::Copy(q1, avgQuats[selectedfeature2]);
+          q1.copyInto(m_AvgQuats + selectedfeature2 * 4, 4);
 
-          FOrientTransformsType::eu2ro(FOrientArrayType(&(m_FeatureEulerAngles[3 * selectedfeature2]), 3), rod);
+          eu = OrientationD(m_FeatureEulerAngles[3 * selectedfeature2], m_FeatureEulerAngles[3 * selectedfeature2 + 1], m_FeatureEulerAngles[3 * selectedfeature2 + 2]);
+          rod = OrientationTransformation::eu2ro<OrientationD, OrientationD>(eu);
           g2odfbin = m_OrientationOps[m_CrystalStructures[ensem]]->getOdfBin(rod);
 
           m_OdfChange =
@@ -997,9 +1009,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
 
           m_MdfChange = 0;
 
-          FOrientArrayType quat(4);
-          FOrientTransformsType::eu2qu(FOrientArrayType(g2ea1, g2ea2, g2ea3), quat);
-          q1 = quat.toQuaternion();
+          q1 = OrientationTransformation::eu2qu<OrientationD, QuatF>(OrientationD(g2ea1, g2ea2, g2ea3));
 
           size_t size = 0;
           if(!neighborlist[selectedfeature1].empty())
@@ -1009,8 +1019,9 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
           for(size_t j = 0; j < size; j++)
           {
             int32_t neighbor = neighborlist[selectedfeature1][j];
-            FOrientTransformsType::eu2qu(FOrientArrayType(&(m_FeatureEulerAngles[3 * neighbor]), 3), quat);
-            q2 = quat.toQuaternion();
+            eu = OrientationD(m_FeatureEulerAngles[3 * neighbor], m_FeatureEulerAngles[3 * neighbor + 1], m_FeatureEulerAngles[3 * neighbor + 2]);
+
+            QuatF q2 = OrientationTransformation::eu2qu<OrientationD, QuatF>(eu);
             float neighsurfarea = neighborsurfacearealist[selectedfeature1][j];
             if(neighbor != static_cast<int>(selectedfeature2))
             {
@@ -1018,8 +1029,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
             }
           }
 
-          FOrientTransformsType::eu2qu(FOrientArrayType(g1ea1, g1ea2, g1ea3), quat);
-          q1 = quat.toQuaternion();
+          q1 = OrientationTransformation::eu2qu<OrientationD, QuatF>(OrientationD(g1ea1, g1ea2, g1ea3));
           size = 0;
           if(!neighborlist[selectedfeature2].empty())
           {
@@ -1028,9 +1038,8 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
           for(size_t j = 0; j < size; j++)
           {
             size_t neighbor = neighborlist[selectedfeature2][j];
-
-            FOrientTransformsType::eu2qu(FOrientArrayType(&(m_FeatureEulerAngles[3 * neighbor]), 3), quat);
-            q2 = quat.toQuaternion();
+            eu = OrientationD(m_FeatureEulerAngles[3 * neighbor], m_FeatureEulerAngles[3 * neighbor + 1], m_FeatureEulerAngles[3 * neighbor + 2]);
+            QuatF q2 = OrientationTransformation::eu2qu<OrientationD, QuatF>(eu);
             float neighsurfarea = neighborsurfacearealist[selectedfeature2][j];
             if(neighbor != selectedfeature1)
             {
@@ -1052,9 +1061,8 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
             m_SimOdf->setValue(g1odfbin, (m_SimOdf->getValue(g1odfbin) + (m_Volumes[selectedfeature2] / m_UnbiasedVolume[ensem]) - (m_Volumes[selectedfeature1] / m_UnbiasedVolume[ensem])));
             m_SimOdf->setValue(g2odfbin, (m_SimOdf->getValue(g2odfbin) + (m_Volumes[selectedfeature1] / m_UnbiasedVolume[ensem]) - (m_Volumes[selectedfeature2] / m_UnbiasedVolume[ensem])));
 
-            FOrientTransformsType::eu2qu(FOrientArrayType(g1ea1, g1ea2, g1ea3), quat);
-            q1 = quat.toQuaternion();
-            QuaternionMathF::Copy(q1, avgQuats[selectedfeature1]);
+            q1 = OrientationTransformation::eu2qu<OrientationD, QuatF>(OrientationD(g1ea1, g1ea2, g1ea3));
+            q1.copyInto(m_AvgQuats + selectedfeature1 * 4, 4);
             size = 0;
             if(!neighborlist[selectedfeature1].empty())
             {
@@ -1066,8 +1074,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
               ea1 = m_FeatureEulerAngles[3 * neighbor];
               ea2 = m_FeatureEulerAngles[3 * neighbor + 1];
               ea3 = m_FeatureEulerAngles[3 * neighbor + 2];
-              FOrientTransformsType::eu2qu(FOrientArrayType(ea1, ea2, ea3), quat);
-              q2 = quat.toQuaternion();
+              q2 = OrientationTransformation::eu2qu<OrientationD, QuatF>(OrientationD(ea1, ea2, ea3));
               float neighsurfarea = neighborsurfacearealist[selectedfeature1][j];
               if(neighbor != selectedfeature2)
               {
@@ -1075,9 +1082,8 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
               }
             }
 
-            FOrientTransformsType::eu2qu(FOrientArrayType(g1ea1, g1ea2, g1ea3), quat);
-            q1 = quat.toQuaternion();
-            QuaternionMathF::Copy(q1, avgQuats[selectedfeature2]);
+            q1 = OrientationTransformation::eu2qu<OrientationD, QuatF>(OrientationD(g1ea1, g1ea2, g1ea3));
+            q1.copyInto(m_AvgQuats + selectedfeature2 * 4, 4);
             size = 0;
             if(!neighborlist[selectedfeature2].empty())
             {
@@ -1089,8 +1095,7 @@ void MatchCrystallography::matchCrystallography(size_t ensem)
               ea1 = m_FeatureEulerAngles[3 * neighbor];
               ea2 = m_FeatureEulerAngles[3 * neighbor + 1];
               ea3 = m_FeatureEulerAngles[3 * neighbor + 2];
-              FOrientTransformsType::eu2qu(FOrientArrayType(ea1, ea2, ea3), quat);
-              q2 = quat.toQuaternion();
+              q2 = OrientationTransformation::eu2qu<OrientationD, QuatF>(OrientationD(ea1, ea2, ea3));
               float neighsurfarea = neighborsurfacearealist[selectedfeature2][j];
               if(neighbor != selectedfeature1)
               {
@@ -1134,9 +1139,8 @@ void MatchCrystallography::measure_misorientations(size_t ensem)
 
   float w = 0.0f;
   float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+
+  // QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
   uint32_t crys1 = 0;
   int32_t mbin = 0;
@@ -1155,7 +1159,8 @@ void MatchCrystallography::measure_misorientations(size_t ensem)
       {
         m_MisorientationLists[i].assign(neighborlist[i].size() * 3, 0.0f);
       }
-      QuaternionMathF::Copy(avgQuats[i], q1);
+
+      QuatF q1(m_AvgQuats + i * 4);
       crys1 = m_CrystalStructures[ensem];
       size_t size = 0;
       if(!neighborlist[i].empty() && neighborsurfacearealist[i].size() == neighborlist[i].size())
@@ -1169,17 +1174,18 @@ void MatchCrystallography::measure_misorientations(size_t ensem)
         if(m_FeaturePhases[nname] == ensem)
         {
           w = 10000.0f;
-          float neighsurfarea = neighborsurfacearealist[i][j];
-          QuaternionMathF::Copy(avgQuats[nname], q2);
+
+          QuatF q2(m_AvgQuats + nname * 4);
           w = m_OrientationOps[crys1]->getMisoQuat(q1, q2, n1, n2, n3);
-          FOrientArrayType rod(4);
-          FOrientTransformsType::ax2ro(FOrientArrayType(n1, n2, n3, w), rod);
+
+          OrientationD rod = OrientationTransformation::ax2ro<OrientationD, OrientationD>(OrientationD(n1, n2, n3, w));
           m_MisorientationLists[i][3 * j] = rod[0];
           m_MisorientationLists[i][3 * j + 1] = rod[1];
           m_MisorientationLists[i][3 * j + 2] = rod[2];
           mbin = m_OrientationOps[crys1]->getMisoBin(rod);
           if(!m_SurfaceFeatures[i] && (nname > static_cast<int32_t>(i) || m_SurfaceFeatures[nname]))
           {
+            float neighsurfarea = neighborsurfacearealist[i][j];
             m_SimMdf->setValue(mbin, (m_SimMdf->getValue(mbin) + (neighsurfarea / m_TotalSurfaceArea[m_FeaturePhases[i]])));
           }
         }
@@ -1210,7 +1216,7 @@ AbstractFilter::Pointer MatchCrystallography::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MatchCrystallography::getCompiledLibraryName() const
+QString MatchCrystallography::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -1218,7 +1224,7 @@ const QString MatchCrystallography::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MatchCrystallography::getBrandingString() const
+QString MatchCrystallography::getBrandingString() const
 {
   return "SyntheticBuilding";
 }
@@ -1226,7 +1232,7 @@ const QString MatchCrystallography::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MatchCrystallography::getFilterVersion() const
+QString MatchCrystallography::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -1236,7 +1242,7 @@ const QString MatchCrystallography::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MatchCrystallography::getGroupName() const
+QString MatchCrystallography::getGroupName() const
 {
   return SIMPL::FilterGroups::SyntheticBuildingFilters;
 }
@@ -1244,7 +1250,7 @@ const QString MatchCrystallography::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid MatchCrystallography::getUuid()
+QUuid MatchCrystallography::getUuid() const
 {
   return QUuid("{7bfb6e4a-6075-56da-8006-b262d99dff30}");
 }
@@ -1252,7 +1258,7 @@ const QUuid MatchCrystallography::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MatchCrystallography::getSubGroupName() const
+QString MatchCrystallography::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -1260,7 +1266,204 @@ const QString MatchCrystallography::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MatchCrystallography::getHumanLabel() const
+QString MatchCrystallography::getHumanLabel() const
 {
   return "Match Crystallography";
+}
+
+// -----------------------------------------------------------------------------
+MatchCrystallography::Pointer MatchCrystallography::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<MatchCrystallography> MatchCrystallography::New()
+{
+  struct make_shared_enabler : public MatchCrystallography
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString MatchCrystallography::getNameOfClass() const
+{
+  return QString("MatchCrystallography");
+}
+
+// -----------------------------------------------------------------------------
+QString MatchCrystallography::ClassName()
+{
+  return QString("MatchCrystallography");
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setInputStatsArrayPath(const DataArrayPath& value)
+{
+  m_InputStatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getInputStatsArrayPath() const
+{
+  return m_InputStatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setPhaseTypesArrayPath(const DataArrayPath& value)
+{
+  m_PhaseTypesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getPhaseTypesArrayPath() const
+{
+  return m_PhaseTypesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setSurfaceFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getSurfaceFeaturesArrayPath() const
+{
+  return m_SurfaceFeaturesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setNeighborListArrayPath(const DataArrayPath& value)
+{
+  m_NeighborListArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getNeighborListArrayPath() const
+{
+  return m_NeighborListArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setSharedSurfaceAreaListArrayPath(const DataArrayPath& value)
+{
+  m_SharedSurfaceAreaListArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getSharedSurfaceAreaListArrayPath() const
+{
+  return m_SharedSurfaceAreaListArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setNumFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_NumFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MatchCrystallography::getNumFeaturesArrayPath() const
+{
+  return m_NumFeaturesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setCellEulerAnglesArrayName(const QString& value)
+{
+  m_CellEulerAnglesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MatchCrystallography::getCellEulerAnglesArrayName() const
+{
+  return m_CellEulerAnglesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setVolumesArrayName(const QString& value)
+{
+  m_VolumesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MatchCrystallography::getVolumesArrayName() const
+{
+  return m_VolumesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setFeatureEulerAnglesArrayName(const QString& value)
+{
+  m_FeatureEulerAnglesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MatchCrystallography::getFeatureEulerAnglesArrayName() const
+{
+  return m_FeatureEulerAnglesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setAvgQuatsArrayName(const QString& value)
+{
+  m_AvgQuatsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MatchCrystallography::getAvgQuatsArrayName() const
+{
+  return m_AvgQuatsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MatchCrystallography::setMaxIterations(int value)
+{
+  m_MaxIterations = value;
+}
+
+// -----------------------------------------------------------------------------
+int MatchCrystallography::getMaxIterations() const
+{
+  return m_MaxIterations;
 }

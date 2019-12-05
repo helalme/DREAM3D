@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "TriangleDihedralAngleFilter.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -42,14 +44,26 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingConstants.h"
 #include "SurfaceMeshing/SurfaceMeshingVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 /**
  * @brief The CalculateDihedralAnglesImpl class implements a threaded algorithm that computes the minimum dihedral angle
@@ -73,7 +87,7 @@ public:
   void generate(size_t start, size_t end) const
   {
     float* nodes = m_Nodes->getPointer(0);
-    int64_t* triangles = m_Triangles->getPointer(0);
+    MeshIndexType* triangles = m_Triangles->getPointer(0);
 
     float radToDeg = 180.0f / SIMPLib::Constants::k_Pi;
 
@@ -143,7 +157,7 @@ TriangleDihedralAngleFilter::~TriangleDihedralAngleFilter() = default;
 void TriangleDihedralAngleFilter::setupFilterParameters()
 {
   SurfaceMeshFilter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::CreatedArray));
   {
     DataArrayCreationFilterParameter::RequirementType req = DataArrayCreationFilterParameter::CreateRequirement(AttributeMatrix::Type::Face, IGeometry::Type::Triangle);
@@ -174,27 +188,27 @@ void TriangleDihedralAngleFilter::initialize()
 // -----------------------------------------------------------------------------
 void TriangleDihedralAngleFilter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   TriangleGeom::Pointer triangles =
       getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshTriangleDihedralAnglesArrayPath().getDataContainerName());
 
   QVector<IDataArray::Pointer> dataArrays;
 
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(triangles->getTriangles());
   }
 
-  QVector<size_t> cDims(1, 1);
-  m_SurfaceMeshTriangleDihedralAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, getSurfaceMeshTriangleDihedralAnglesArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  std::vector<size_t> cDims(1, 1);
+  m_SurfaceMeshTriangleDihedralAnglesPtr =
+      getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getSurfaceMeshTriangleDihedralAnglesArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_SurfaceMeshTriangleDihedralAnglesPtr.lock())          /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshTriangleDihedralAngles = m_SurfaceMeshTriangleDihedralAnglesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_SurfaceMeshTriangleDihedralAnglesPtr.lock());
   }
@@ -220,10 +234,10 @@ void TriangleDihedralAngleFilter::preflight()
 // -----------------------------------------------------------------------------
 void TriangleDihedralAngleFilter::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -268,7 +282,7 @@ AbstractFilter::Pointer TriangleDihedralAngleFilter::newFilterInstance(bool copy
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleDihedralAngleFilter::getCompiledLibraryName() const
+QString TriangleDihedralAngleFilter::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -276,7 +290,7 @@ const QString TriangleDihedralAngleFilter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleDihedralAngleFilter::getBrandingString() const
+QString TriangleDihedralAngleFilter::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -284,7 +298,7 @@ const QString TriangleDihedralAngleFilter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleDihedralAngleFilter::getFilterVersion() const
+QString TriangleDihedralAngleFilter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -294,7 +308,7 @@ const QString TriangleDihedralAngleFilter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleDihedralAngleFilter::getGroupName() const
+QString TriangleDihedralAngleFilter::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -302,7 +316,7 @@ const QString TriangleDihedralAngleFilter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid TriangleDihedralAngleFilter::getUuid()
+QUuid TriangleDihedralAngleFilter::getUuid() const
 {
   return QUuid("{0541c5eb-1976-5797-9468-be50a93d44e2}");
 }
@@ -310,7 +324,7 @@ const QUuid TriangleDihedralAngleFilter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleDihedralAngleFilter::getSubGroupName() const
+QString TriangleDihedralAngleFilter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MiscFilters;
 }
@@ -318,7 +332,48 @@ const QString TriangleDihedralAngleFilter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleDihedralAngleFilter::getHumanLabel() const
+QString TriangleDihedralAngleFilter::getHumanLabel() const
 {
   return "Find Minimum Triangle Dihedral Angle";
+}
+
+// -----------------------------------------------------------------------------
+TriangleDihedralAngleFilter::Pointer TriangleDihedralAngleFilter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<TriangleDihedralAngleFilter> TriangleDihedralAngleFilter::New()
+{
+  struct make_shared_enabler : public TriangleDihedralAngleFilter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString TriangleDihedralAngleFilter::getNameOfClass() const
+{
+  return QString("TriangleDihedralAngleFilter");
+}
+
+// -----------------------------------------------------------------------------
+QString TriangleDihedralAngleFilter::ClassName()
+{
+  return QString("TriangleDihedralAngleFilter");
+}
+
+// -----------------------------------------------------------------------------
+void TriangleDihedralAngleFilter::setSurfaceMeshTriangleDihedralAnglesArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshTriangleDihedralAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath TriangleDihedralAngleFilter::getSurfaceMeshTriangleDihedralAnglesArrayPath() const
+{
+  return m_SurfaceMeshTriangleDihedralAnglesArrayPath;
 }

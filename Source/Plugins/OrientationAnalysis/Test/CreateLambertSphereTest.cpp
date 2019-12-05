@@ -2,10 +2,12 @@
 // Insert your license & copyright information here
 // -----------------------------------------------------------------------------
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/FilterParameters/JsonFilterParametersReader.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"

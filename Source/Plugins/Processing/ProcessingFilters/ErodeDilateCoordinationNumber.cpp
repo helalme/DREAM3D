@@ -33,9 +33,14 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ErodeDilateCoordinationNumber.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -43,6 +48,8 @@
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -68,7 +75,7 @@ ErodeDilateCoordinationNumber::~ErodeDilateCoordinationNumber() = default;
 // -----------------------------------------------------------------------------
 void ErodeDilateCoordinationNumber::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Coordination Number to Consider", CoordinationNumber, FilterParameter::Parameter, ErodeDilateCoordinationNumber));
   parameters.push_back(SIMPL_NEW_BOOL_FP("Loop Until Gone", Loop, FilterParameter::Parameter, ErodeDilateCoordinationNumber));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
@@ -109,8 +116,8 @@ void ErodeDilateCoordinationNumber::initialize()
 // -----------------------------------------------------------------------------
 void ErodeDilateCoordinationNumber::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
@@ -118,11 +125,10 @@ void ErodeDilateCoordinationNumber::dataCheck()
   if(getCoordinationNumber() < 0 || getCoordinationNumber() > 6)
   {
     QString ss = QObject::tr("The coordination number (%1) must be on the interval [0,6]").arg(getCoordinationNumber());
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5555, ss);
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -149,10 +155,10 @@ void ErodeDilateCoordinationNumber::preflight()
 // -----------------------------------------------------------------------------
 void ErodeDilateCoordinationNumber::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -160,12 +166,11 @@ void ErodeDilateCoordinationNumber::execute()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getFeatureIdsArrayPath().getDataContainerName());
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
 
-  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "Neighbors");
+  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "Neighbors", true);
   m_Neighbors = neighborsPtr->getPointer(0);
   neighborsPtr->initializeWithValue(-1);
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -362,7 +367,7 @@ AbstractFilter::Pointer ErodeDilateCoordinationNumber::newFilterInstance(bool co
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateCoordinationNumber::getCompiledLibraryName() const
+QString ErodeDilateCoordinationNumber::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -370,7 +375,7 @@ const QString ErodeDilateCoordinationNumber::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateCoordinationNumber::getBrandingString() const
+QString ErodeDilateCoordinationNumber::getBrandingString() const
 {
   return "Processing";
 }
@@ -378,7 +383,7 @@ const QString ErodeDilateCoordinationNumber::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateCoordinationNumber::getFilterVersion() const
+QString ErodeDilateCoordinationNumber::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -388,7 +393,7 @@ const QString ErodeDilateCoordinationNumber::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateCoordinationNumber::getGroupName() const
+QString ErodeDilateCoordinationNumber::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -396,7 +401,7 @@ const QString ErodeDilateCoordinationNumber::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ErodeDilateCoordinationNumber::getUuid()
+QUuid ErodeDilateCoordinationNumber::getUuid() const
 {
   return QUuid("{d26e85ff-7e52-53ae-b095-b1d969c9e73c}");
 }
@@ -404,7 +409,7 @@ const QUuid ErodeDilateCoordinationNumber::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateCoordinationNumber::getSubGroupName() const
+QString ErodeDilateCoordinationNumber::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -412,7 +417,84 @@ const QString ErodeDilateCoordinationNumber::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateCoordinationNumber::getHumanLabel() const
+QString ErodeDilateCoordinationNumber::getHumanLabel() const
 {
   return "Smooth Bad Data (Coordination Number)";
+}
+
+// -----------------------------------------------------------------------------
+ErodeDilateCoordinationNumber::Pointer ErodeDilateCoordinationNumber::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ErodeDilateCoordinationNumber> ErodeDilateCoordinationNumber::New()
+{
+  struct make_shared_enabler : public ErodeDilateCoordinationNumber
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ErodeDilateCoordinationNumber::getNameOfClass() const
+{
+  return QString("ErodeDilateCoordinationNumber");
+}
+
+// -----------------------------------------------------------------------------
+QString ErodeDilateCoordinationNumber::ClassName()
+{
+  return QString("ErodeDilateCoordinationNumber");
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateCoordinationNumber::setLoop(bool value)
+{
+  m_Loop = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ErodeDilateCoordinationNumber::getLoop() const
+{
+  return m_Loop;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateCoordinationNumber::setCoordinationNumber(int value)
+{
+  m_CoordinationNumber = value;
+}
+
+// -----------------------------------------------------------------------------
+int ErodeDilateCoordinationNumber::getCoordinationNumber() const
+{
+  return m_CoordinationNumber;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateCoordinationNumber::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ErodeDilateCoordinationNumber::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateCoordinationNumber::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> ErodeDilateCoordinationNumber::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

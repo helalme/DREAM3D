@@ -2,15 +2,9 @@
  * Your License or Copyright can go here
  */
 
+#include <memory>
+
 #include "GenerateQuaternionConjugate.h"
-
-#include "SIMPLib/Common/Constants.h"
-#include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
-#include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
-#include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
-
-#include "OrientationAnalysis/OrientationAnalysisConstants.h"
-#include "OrientationAnalysis/OrientationAnalysisVersion.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
 #include <tbb/blocked_range.h>
@@ -18,6 +12,25 @@
 #include <tbb/partitioner.h>
 #include <tbb/task_scheduler_init.h>
 #endif
+
+#include <QtCore/QTextStream>
+
+#include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
+#include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
+#include "OrientationAnalysis/OrientationAnalysisConstants.h"
+#include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 class GenerateQuaternionConjugateImpl
 {
@@ -82,8 +95,8 @@ GenerateQuaternionConjugate::~GenerateQuaternionConjugate() = default;
 // -----------------------------------------------------------------------------
 void GenerateQuaternionConjugate::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -92,10 +105,10 @@ void GenerateQuaternionConjugate::initialize()
 // -----------------------------------------------------------------------------
 void GenerateQuaternionConjugate::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   DataArraySelectionFilterParameter::RequirementType dasReq;
-  QVector<QVector<size_t>> comp;
-  comp.push_back(QVector<size_t>(1, 4));
+  std::vector<std::vector<size_t>> comp;
+  comp.push_back(std::vector<size_t>(1, 4));
   dasReq.componentDimensions = comp;
   dasReq.daTypes = { SIMPL::TypeNames::Float };
   parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Quaternion Array", QuaternionDataArrayPath, FilterParameter::Parameter, GenerateQuaternionConjugate, dasReq));
@@ -110,10 +123,10 @@ void GenerateQuaternionConjugate::setupFilterParameters()
 // -----------------------------------------------------------------------------
 void GenerateQuaternionConjugate::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   cDims[0] = 4;
   m_QuaternionsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getQuaternionDataArrayPath(), cDims);
   if(nullptr != m_QuaternionsPtr.lock())
@@ -122,8 +135,7 @@ void GenerateQuaternionConjugate::dataCheck()
   }
 
   cDims[0] = 4;
-  m_OutputQuaternionsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-      this, getOutputDataArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_OutputQuaternionsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getOutputDataArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_OutputQuaternionsPtr.lock())
   {
     m_OutputQuaternions = m_OutputQuaternionsPtr.lock()->getPointer(0);
@@ -160,7 +172,7 @@ void GenerateQuaternionConjugate::execute()
 {
   initialize();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -207,7 +219,7 @@ AbstractFilter::Pointer GenerateQuaternionConjugate::newFilterInstance(bool copy
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateQuaternionConjugate::getCompiledLibraryName() const
+QString GenerateQuaternionConjugate::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -215,7 +227,7 @@ const QString GenerateQuaternionConjugate::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateQuaternionConjugate::getBrandingString() const
+QString GenerateQuaternionConjugate::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -223,7 +235,7 @@ const QString GenerateQuaternionConjugate::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateQuaternionConjugate::getFilterVersion() const
+QString GenerateQuaternionConjugate::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -234,7 +246,7 @@ const QString GenerateQuaternionConjugate::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateQuaternionConjugate::getGroupName() const
+QString GenerateQuaternionConjugate::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -242,7 +254,7 @@ const QString GenerateQuaternionConjugate::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateQuaternionConjugate::getSubGroupName() const
+QString GenerateQuaternionConjugate::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -250,7 +262,7 @@ const QString GenerateQuaternionConjugate::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateQuaternionConjugate::getHumanLabel() const
+QString GenerateQuaternionConjugate::getHumanLabel() const
 {
   return "Generate Quaternion Conjugate";
 }
@@ -258,7 +270,72 @@ const QString GenerateQuaternionConjugate::getHumanLabel() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GenerateQuaternionConjugate::getUuid()
+QUuid GenerateQuaternionConjugate::getUuid() const
 {
   return QUuid("{630d7486-75ea-5e04-874c-894460cd7c4d}");
+}
+
+// -----------------------------------------------------------------------------
+GenerateQuaternionConjugate::Pointer GenerateQuaternionConjugate::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GenerateQuaternionConjugate> GenerateQuaternionConjugate::New()
+{
+  struct make_shared_enabler : public GenerateQuaternionConjugate
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateQuaternionConjugate::getNameOfClass() const
+{
+  return QString("_SUPERGenerateQuaternionConjugate");
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateQuaternionConjugate::ClassName()
+{
+  return QString("_SUPERGenerateQuaternionConjugate");
+}
+
+// -----------------------------------------------------------------------------
+void GenerateQuaternionConjugate::setQuaternionDataArrayPath(const DataArrayPath& value)
+{
+  m_QuaternionDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateQuaternionConjugate::getQuaternionDataArrayPath() const
+{
+  return m_QuaternionDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateQuaternionConjugate::setOutputDataArrayPath(const DataArrayPath& value)
+{
+  m_OutputDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateQuaternionConjugate::getOutputDataArrayPath() const
+{
+  return m_OutputDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateQuaternionConjugate::setDeleteOriginalData(bool value)
+{
+  m_DeleteOriginalData = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GenerateQuaternionConjugate::getDeleteOriginalData() const
+{
+  return m_DeleteOriginalData;
 }

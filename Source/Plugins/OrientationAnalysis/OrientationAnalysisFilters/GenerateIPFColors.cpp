@@ -1,55 +1,57 @@
 /* ============================================================================
-* Copyright (c) 2009-2016 BlueQuartz Software, LLC
-*
-* Redistribution and use in source and binary forms, with or without modification,
-* are permitted provided that the following conditions are met:
-*
-* Redistributions of source code must retain the above copyright notice, this
-* list of conditions and the following disclaimer.
-*
-* Redistributions in binary form must reproduce the above copyright notice, this
-* list of conditions and the following disclaimer in the documentation and/or
-* other materials provided with the distribution.
-*
-* Neither the name of BlueQuartz Software, the US Air Force, nor the names of its
-* contributors may be used to endorse or promote products derived from this software
-* without specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
-* USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*
-* The code contained herein was partially funded by the followig contracts:
-*    United States Air Force Prime Contract FA8650-07-D-5800
-*    United States Air Force Prime Contract FA8650-10-D-5210
-*    United States Prime Contract Navy N00173-07-C-2068
-*
-* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+ * Copyright (c) 2009-2016 BlueQuartz Software, LLC
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or
+ * other materials provided with the distribution.
+ *
+ * Neither the name of BlueQuartz Software, the US Air Force, nor the names of its
+ * contributors may be used to endorse or promote products derived from this software
+ * without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+ * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * The code contained herein was partially funded by the followig contracts:
+ *    United States Air Force Prime Contract FA8650-07-D-5800
+ *    United States Air Force Prime Contract FA8650-10-D-5210
+ *    United States Prime Contract Navy N00173-07-C-2068
+ *
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+
+#include <memory>
 
 #include "GenerateIPFColors.h"
 
-#ifdef SIMPL_USE_PARALLEL_ALGORITHMS
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
-#include <tbb/partitioner.h>
-#include <tbb/task_scheduler_init.h>
-#endif
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/Common/SIMPLRange.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatVec3FilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Utilities/ColorTable.h"
+#include "SIMPLib/Utilities/ParallelDataAlgorithm.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "OrientationLib/LaueOps/LaueOps.h"
 
@@ -58,6 +60,11 @@
 
 #include "EbsdLib/EbsdConstants.h"
 
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID31 = 31
+};
+
 /**
  * @brief The GenerateIPFColorsImpl class implements a threaded algorithm that computes the IPF
  * colors for each element in a geometry
@@ -65,7 +72,7 @@
 class GenerateIPFColorsImpl
 {
 public:
-  GenerateIPFColorsImpl(GenerateIPFColors* filter, FloatVec3_t referenceDir, float* eulers, int32_t* phases, uint32_t* crystalStructures, int32_t numPhases, bool* goodVoxels, uint8_t* colors)
+  GenerateIPFColorsImpl(GenerateIPFColors* filter, FloatVec3Type referenceDir, float* eulers, int32_t* phases, uint32_t* crystalStructures, int32_t numPhases, bool* goodVoxels, uint8_t* colors)
   : m_Filter(filter)
   , m_ReferenceDir(referenceDir)
   , m_CellEulerAngles(eulers)
@@ -82,7 +89,7 @@ public:
   void convert(size_t start, size_t end) const
   {
     QVector<LaueOps::Pointer> ops = LaueOps::getOrientationOpsQVector();
-    double refDir[3] = {m_ReferenceDir.x, m_ReferenceDir.y, m_ReferenceDir.z};
+    double refDir[3] = {m_ReferenceDir[0], m_ReferenceDir[1], m_ReferenceDir[2]};
     double dEuler[3] = {0.0, 0.0, 0.0};
     SIMPL::Rgb argb = 0x00000000;
     int32_t phase = 0;
@@ -121,15 +128,14 @@ public:
     }
   }
 
-#ifdef SIMPL_USE_PARALLEL_ALGORITHMS
-  void operator()(const tbb::blocked_range<size_t>& r) const
+  void operator()(const SIMPLRange& range) const
   {
-    convert(r.begin(), r.end());
+    convert(range.min(), range.max());
   }
-#endif
+
 private:
   GenerateIPFColors* m_Filter = nullptr;
-  FloatVec3_t m_ReferenceDir;
+  FloatVec3Type m_ReferenceDir;
   float* m_CellEulerAngles;
   int32_t* m_CellPhases;
   unsigned int* m_CrystalStructures;
@@ -149,10 +155,9 @@ GenerateIPFColors::GenerateIPFColors()
 , m_GoodVoxelsArrayPath("", "", "")
 , m_CellIPFColorsArrayName(SIMPL::CellData::IPFColor)
 {
-  m_ReferenceDir.x = 0.0f;
-  m_ReferenceDir.y = 0.0f;
-  m_ReferenceDir.z = 1.0f;
-
+  m_ReferenceDir[0] = 0.0f;
+  m_ReferenceDir[1] = 0.0f;
+  m_ReferenceDir[2] = 1.0f;
 }
 
 // -----------------------------------------------------------------------------
@@ -165,7 +170,7 @@ GenerateIPFColors::~GenerateIPFColors() = default;
 // -----------------------------------------------------------------------------
 void GenerateIPFColors::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Reference Direction", ReferenceDir, FilterParameter::Parameter, GenerateIPFColors));
 
   QStringList linkedProps("GoodVoxelsArrayPath");
@@ -184,7 +189,7 @@ void GenerateIPFColors::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Crystal Structures", CrystalStructuresArrayPath, FilterParameter::RequiredArray, GenerateIPFColors, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("IPF Colors", CellIPFColorsArrayName, FilterParameter::CreatedArray, GenerateIPFColors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("IPF Colors", CellIPFColorsArrayName, CellEulerAnglesArrayPath, CellEulerAnglesArrayPath, FilterParameter::CreatedArray, GenerateIPFColors));
   setFilterParameters(parameters);
 }
 
@@ -217,20 +222,20 @@ void GenerateIPFColors::initialize()
 // -----------------------------------------------------------------------------
 void GenerateIPFColors::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   QVector<DataArrayPath> dataArraypaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CellPhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getCellPhasesArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellPhasesPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArraypaths.push_back(getCellPhasesArrayPath());
   }
@@ -242,7 +247,7 @@ void GenerateIPFColors::dataCheck()
   {
     m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArraypaths.push_back(getCellEulerAnglesArrayPath());
   }
@@ -258,7 +263,7 @@ void GenerateIPFColors::dataCheck()
   cDims[0] = 3;
   tempPath.update(m_CellEulerAnglesArrayPath.getDataContainerName(), getCellEulerAnglesArrayPath().getAttributeMatrixName(), getCellIPFColorsArrayName());
   m_CellIPFColorsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint8_t>, AbstractFilter, uint8_t>(
-      this, tempPath, 0, cDims);                 /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, cDims, "", DataArrayID31); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellIPFColorsPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellIPFColors = m_CellIPFColorsPtr.lock()->getPointer(0);
@@ -274,7 +279,7 @@ void GenerateIPFColors::dataCheck()
     {
       m_GoodVoxels = m_GoodVoxelsPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArraypaths.push_back(getGoodVoxelsArrayPath());
     }
@@ -306,10 +311,10 @@ void GenerateIPFColors::preflight()
 void GenerateIPFColors::execute()
 {
   initialize();
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -320,35 +325,21 @@ void GenerateIPFColors::execute()
   int32_t numPhases = static_cast<int32_t>(m_CrystalStructuresPtr.lock()->getNumberOfTuples());
 
   // Make sure we are dealing with a unit 1 vector.
-  FloatVec3_t normRefDir = m_ReferenceDir; // Make a copy of the reference Direction
-  MatrixMath::Normalize3x1(normRefDir.x, normRefDir.y, normRefDir.z);
+  FloatVec3Type normRefDir = m_ReferenceDir; // Make a copy of the reference Direction
+  MatrixMath::Normalize3x1(normRefDir[0], normRefDir[1], normRefDir[2]);
 
-#ifdef SIMPL_USE_PARALLEL_ALGORITHMS
-  tbb::task_scheduler_init init;
-  bool doParallel = true;
-#endif
-
-#ifdef SIMPL_USE_PARALLEL_ALGORITHMS
-  if(doParallel)
-  {
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, totalPoints),
-                      GenerateIPFColorsImpl(this, normRefDir, m_CellEulerAngles, m_CellPhases, m_CrystalStructures, numPhases, m_GoodVoxels, m_CellIPFColors), tbb::auto_partitioner());
-  }
-  else
-#endif
-  {
-    GenerateIPFColorsImpl serial(this, normRefDir, m_CellEulerAngles, m_CellPhases, m_CrystalStructures, numPhases, m_GoodVoxels, m_CellIPFColors);
-    serial.convert(0, totalPoints);
-  }
+  // Allow data-based parallelization
+  ParallelDataAlgorithm dataAlg;
+  dataAlg.setRange(0, totalPoints);
+  dataAlg.execute(GenerateIPFColorsImpl(this, normRefDir, m_CellEulerAngles, m_CellPhases, m_CrystalStructures, numPhases, m_GoodVoxels, m_CellIPFColors));
 
   if(m_PhaseWarningCount > 0)
   {
-    setErrorCondition(-48000);
     QString ss = QObject::tr("The Ensemble Phase information only references %2 phase(s) but %1 cell(s) had a phase value greater than %2. \
 This indicates a problem with the input cell phase data. DREAM.3D will give INCORRECT RESULTS.")
                      .arg(m_PhaseWarningCount)
                      .arg(numPhases - 1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-48000, ss);
   }
 
 
@@ -378,7 +369,7 @@ AbstractFilter::Pointer GenerateIPFColors::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateIPFColors::getCompiledLibraryName() const
+QString GenerateIPFColors::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -386,7 +377,7 @@ const QString GenerateIPFColors::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateIPFColors::getBrandingString() const
+QString GenerateIPFColors::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -394,7 +385,7 @@ const QString GenerateIPFColors::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateIPFColors::getFilterVersion() const
+QString GenerateIPFColors::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -404,7 +395,7 @@ const QString GenerateIPFColors::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateIPFColors::getGroupName() const
+QString GenerateIPFColors::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -412,7 +403,7 @@ const QString GenerateIPFColors::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GenerateIPFColors::getUuid()
+QUuid GenerateIPFColors::getUuid() const
 {
   return QUuid("{a50e6532-8075-5de5-ab63-945feb0de7f7}");
 }
@@ -420,7 +411,7 @@ const QUuid GenerateIPFColors::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateIPFColors::getSubGroupName() const
+QString GenerateIPFColors::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -428,7 +419,120 @@ const QString GenerateIPFColors::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateIPFColors::getHumanLabel() const
+QString GenerateIPFColors::getHumanLabel() const
 {
   return "Generate IPF Colors";
+}
+
+// -----------------------------------------------------------------------------
+GenerateIPFColors::Pointer GenerateIPFColors::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GenerateIPFColors> GenerateIPFColors::New()
+{
+  struct make_shared_enabler : public GenerateIPFColors
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateIPFColors::getNameOfClass() const
+{
+  return QString("GenerateIPFColors");
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateIPFColors::ClassName()
+{
+  return QString("GenerateIPFColors");
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setReferenceDir(const FloatVec3Type& value)
+{
+  m_ReferenceDir = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type GenerateIPFColors::getReferenceDir() const
+{
+  return m_ReferenceDir;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateIPFColors::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setCellEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_CellEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateIPFColors::getCellEulerAnglesArrayPath() const
+{
+  return m_CellEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateIPFColors::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setUseGoodVoxels(bool value)
+{
+  m_UseGoodVoxels = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GenerateIPFColors::getUseGoodVoxels() const
+{
+  return m_UseGoodVoxels;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateIPFColors::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateIPFColors::setCellIPFColorsArrayName(const QString& value)
+{
+  m_CellIPFColorsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateIPFColors::getCellIPFColorsArrayName() const
+{
+  return m_CellIPFColorsArrayName;
 }

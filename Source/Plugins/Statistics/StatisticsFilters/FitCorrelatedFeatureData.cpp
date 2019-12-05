@@ -33,9 +33,14 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FitCorrelatedFeatureData.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
@@ -43,6 +48,8 @@
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Statistics/DistributionAnalysisOps/BetaOps.h"
 #include "Statistics/DistributionAnalysisOps/LogNormalOps.h"
@@ -73,7 +80,7 @@ FitCorrelatedFeatureData::~FitCorrelatedFeatureData() = default;
 // -----------------------------------------------------------------------------
 void FitCorrelatedFeatureData::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
@@ -148,10 +155,10 @@ void FitCorrelatedFeatureData::initialize()
 // -----------------------------------------------------------------------------
 void FitCorrelatedFeatureData::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   m_FeaturePhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeaturePhasesArrayPath(),
                                                                                                            dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeaturePhasesPtr.lock())                                                                        /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -161,13 +168,11 @@ void FitCorrelatedFeatureData::dataCheck()
 
   if(m_SelectedFeatureArrayPath.isEmpty())
   {
-    setErrorCondition(-11000);
-    notifyErrorMessage(getHumanLabel(), "An array from the Volume DataContainer must be selected.", getErrorCondition());
+    setErrorCondition(-11000, "An array from the Volume DataContainer must be selected.");
   }
   if(m_CorrelatedFeatureArrayPath.isEmpty())
   {
-    setErrorCondition(-11000);
-    notifyErrorMessage(getHumanLabel(), "An array from the Volume DataContainer must be selected.", getErrorCondition());
+    setErrorCondition(-11000, "An array from the Volume DataContainer must be selected.");
   }
 
   int numComp = 0;
@@ -316,7 +321,7 @@ template <typename T> Int32ArrayType::Pointer binData(typename DataArray<T>::Poi
   T* fPtr = featureArray->getPointer(0);
   size_t numfeatures = featureArray->getNumberOfTuples();
 
-  typename DataArray<int32_t>::Pointer binArray = DataArray<int32_t>::CreateArray(numfeatures, "binIds");
+  typename DataArray<int32_t>::Pointer binArray = DataArray<int32_t>::CreateArray(numfeatures, "binIds", true);
   int32_t* bPtr = binArray->getPointer(0);
 
   float max = -100000000.0;
@@ -349,10 +354,10 @@ template <typename T> Int32ArrayType::Pointer binData(typename DataArray<T>::Poi
 // -----------------------------------------------------------------------------
 void FitCorrelatedFeatureData::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -366,16 +371,14 @@ void FitCorrelatedFeatureData::execute()
   if(nullptr == inputData.get())
   {
     ss = QObject::tr("Selected array '%1' does not exist in the Voxel Data Container. Was it spelled correctly?").arg(m_SelectedFeatureArrayPath.getDataArrayName());
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
   IDataArray::Pointer correlatedData = m->getAttributeMatrix(m_CorrelatedFeatureArrayPath.getAttributeMatrixName())->getAttributeArray(m_CorrelatedFeatureArrayPath.getDataArrayName());
   if(nullptr == correlatedData.get())
   {
     ss = QObject::tr("Selected array '%1' does not exist in the Voxel Data Container. Was it spelled correctly?").arg(m_CorrelatedFeatureArrayPath.getDataArrayName());
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
 
@@ -488,7 +491,7 @@ AbstractFilter::Pointer FitCorrelatedFeatureData::newFilterInstance(bool copyFil
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FitCorrelatedFeatureData::getCompiledLibraryName() const
+QString FitCorrelatedFeatureData::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -496,7 +499,7 @@ const QString FitCorrelatedFeatureData::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FitCorrelatedFeatureData::getBrandingString() const
+QString FitCorrelatedFeatureData::getBrandingString() const
 {
   return "Statistics";
 }
@@ -504,7 +507,7 @@ const QString FitCorrelatedFeatureData::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FitCorrelatedFeatureData::getFilterVersion() const
+QString FitCorrelatedFeatureData::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -515,7 +518,7 @@ const QString FitCorrelatedFeatureData::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FitCorrelatedFeatureData::getGroupName() const
+QString FitCorrelatedFeatureData::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -523,7 +526,7 @@ const QString FitCorrelatedFeatureData::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FitCorrelatedFeatureData::getUuid()
+QUuid FitCorrelatedFeatureData::getUuid() const
 {
   return QUuid("{d9fb65ac-e75e-581b-8ebc-0129d797b546}");
 }
@@ -531,7 +534,7 @@ const QUuid FitCorrelatedFeatureData::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FitCorrelatedFeatureData::getSubGroupName() const
+QString FitCorrelatedFeatureData::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::EnsembleStatsFilters;
 }
@@ -539,7 +542,132 @@ const QString FitCorrelatedFeatureData::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FitCorrelatedFeatureData::getHumanLabel() const
+QString FitCorrelatedFeatureData::getHumanLabel() const
 {
   return "Fit Correlated Distributions To Feature Data";
+}
+
+// -----------------------------------------------------------------------------
+FitCorrelatedFeatureData::Pointer FitCorrelatedFeatureData::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FitCorrelatedFeatureData> FitCorrelatedFeatureData::New()
+{
+  struct make_shared_enabler : public FitCorrelatedFeatureData
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FitCorrelatedFeatureData::getNameOfClass() const
+{
+  return QString("FitCorrelatedFeatureData");
+}
+
+// -----------------------------------------------------------------------------
+QString FitCorrelatedFeatureData::ClassName()
+{
+  return QString("FitCorrelatedFeatureData");
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setSelectedFeatureArrayPath(const DataArrayPath& value)
+{
+  m_SelectedFeatureArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FitCorrelatedFeatureData::getSelectedFeatureArrayPath() const
+{
+  return m_SelectedFeatureArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setCorrelatedFeatureArrayPath(const DataArrayPath& value)
+{
+  m_CorrelatedFeatureArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FitCorrelatedFeatureData::getCorrelatedFeatureArrayPath() const
+{
+  return m_CorrelatedFeatureArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setDistributionType(unsigned int value)
+{
+  m_DistributionType = value;
+}
+
+// -----------------------------------------------------------------------------
+unsigned int FitCorrelatedFeatureData::getDistributionType() const
+{
+  return m_DistributionType;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setNumberOfCorrelatedBins(int value)
+{
+  m_NumberOfCorrelatedBins = value;
+}
+
+// -----------------------------------------------------------------------------
+int FitCorrelatedFeatureData::getNumberOfCorrelatedBins() const
+{
+  return m_NumberOfCorrelatedBins;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setRemoveBiasedFeatures(bool value)
+{
+  m_RemoveBiasedFeatures = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FitCorrelatedFeatureData::getRemoveBiasedFeatures() const
+{
+  return m_RemoveBiasedFeatures;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FitCorrelatedFeatureData::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setBiasedFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_BiasedFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FitCorrelatedFeatureData::getBiasedFeaturesArrayPath() const
+{
+  return m_BiasedFeaturesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FitCorrelatedFeatureData::setNewEnsembleArrayArrayPath(const DataArrayPath& value)
+{
+  m_NewEnsembleArrayArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FitCorrelatedFeatureData::getNewEnsembleArrayArrayPath() const
+{
+  return m_NewEnsembleArrayArrayPath;
 }

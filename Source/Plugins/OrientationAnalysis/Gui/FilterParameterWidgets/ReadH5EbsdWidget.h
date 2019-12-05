@@ -36,15 +36,11 @@
 
 #pragma once
 
-#include <QtCore/QObject>
-#include <QtCore/QUrl>
 
-#include <QtWidgets/QFileDialog>
 
 // Needed for AxisAngle_t
 #include "EbsdLib/EbsdConstants.h"
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/FilterParameters/AxisAngleInput.h"
 #include "SVWidgetsLib/SVWidgetsLib.h"
 #include "SVWidgetsLib/FilterParameterWidgets/FilterParameterWidget.h"
@@ -169,8 +165,7 @@ class ReadH5EbsdWidget : public FilterParameterWidget, private Ui::ReadH5EbsdWid
     AxisAngleInput_t m_EulerTransformation;
 
     QAction* m_ShowFileAction = nullptr;
-    QString  m_CurrentlyValidPath = "";
-    QString  m_CurrentText = "";
+    QString m_CurrentText = "";
     bool     m_DidCausePreflight = false;
     bool m_NewFileLoaded;
     bool m_Version4Warning;

@@ -33,11 +33,14 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
+
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -48,6 +51,9 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "SurfaceMeshingTestFileLocations.h"
@@ -59,7 +65,24 @@ public:
   FindTriangleGeomShapesTest() = default;
   ~FindTriangleGeomShapesTest() = default;
 
-  SIMPL_TYPE_MACRO(FindTriangleGeomShapesTest)
+  /**
+   * @brief Returns the name of the class for FindTriangleGeomShapesTest
+   */
+  /**
+   * @brief Returns the name of the class for FindTriangleGeomShapesTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("FindTriangleGeomShapesTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for FindTriangleGeomShapesTest
+   */
+  QString ClassName()
+  {
+    return QString("FindTriangleGeomShapesTest");
+  }
 
   FindTriangleGeomShapesTest(const FindTriangleGeomShapesTest&) = delete;            // Copy Constructor Not Implemented
   FindTriangleGeomShapesTest(FindTriangleGeomShapesTest&&) = delete;                 // Move Constructor Not Implemented
@@ -142,21 +165,21 @@ public:
     DataContainerArray::Pointer dca = DataContainerArray::New();
 
     DataContainer::Pointer idc = DataContainer::New(SIMPL::Defaults::ImageDataContainerName);
-    dca->addDataContainer(idc);
+    dca->addOrReplaceDataContainer(idc);
 
     ImageGeom::Pointer image = ImageGeom::CreateGeometry(SIMPL::Geometry::ImageGeometry);
     size_t dims[3] = {256, 128, 64};
     image->setDimensions(dims);
     idc->setGeometry(image);
 
-    QVector<size_t> tDims = {256, 128, 64};
+    std::vector<size_t> tDims = {256, 128, 64};
     AttributeMatrix::Pointer attrMat = AttributeMatrix::New(tDims, SIMPL::Defaults::CellAttributeMatrixName, AttributeMatrix::Type::Cell);
-    idc->addAttributeMatrix(SIMPL::Defaults::CellAttributeMatrixName, attrMat);
+    idc->addOrReplaceAttributeMatrix(attrMat);
 
-    QVector<size_t> cDims(1, 1);
-    Int32ArrayType::Pointer featureIds = Int32ArrayType::CreateArray(tDims, cDims, SIMPL::CellData::FeatureIds);
+    std::vector<size_t> cDims(1, 1);
+    Int32ArrayType::Pointer featureIds = Int32ArrayType::CreateArray(tDims, cDims, SIMPL::CellData::FeatureIds, true);
     featureIds->initializeWithValue(1);
-    attrMat->addAttributeArray(SIMPL::CellData::FeatureIds, featureIds);
+    attrMat->insertOrAssign(featureIds);
 
     FilterManager* fm = FilterManager::Instance();
     bool propWasSet = true;
@@ -178,7 +201,7 @@ public:
       qDebug() << "Unable to set property FeatureIdsArrayPath";
     }
     meshFilter->execute();
-    int32_t err = meshFilter->getErrorCondition();
+    int32_t err = meshFilter->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, 0);
 
     //##################################################################################################################
@@ -204,7 +227,7 @@ public:
       qDebug() << "Unable to set property FeatureAttributeMatrixName";
     }
     centroidsFilter->execute();
-    err = centroidsFilter->getErrorCondition();
+    err = centroidsFilter->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, 0);
 
     //##################################################################################################################
@@ -230,7 +253,7 @@ public:
       qDebug() << "Unable to set property FeatureAttributeMatrixName";
     }
     sizesFilter->execute();
-    err = sizesFilter->getErrorCondition();
+    err = sizesFilter->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, 0);
 
     //##################################################################################################################
@@ -270,7 +293,7 @@ public:
       qDebug() << "Unable to set property VolumesArrayPath";
     }
     shapesFilter->execute();
-    err = shapesFilter->getErrorCondition();
+    err = shapesFilter->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, 0);
 
     //##################################################################################################################
@@ -287,7 +310,7 @@ public:
       qDebug() << "Unable to set property OutputFile";
     }
     writer->execute();
-    err = writer->getErrorCondition();
+    err = writer->getErrorCode();
     DREAM3D_REQUIRED(err, >=, 0)
 
     AttributeMatrix::Pointer faceFeatAttrMat = dca->getDataContainer(SIMPL::Defaults::TriangleDataContainerName)->getAttributeMatrix(SIMPL::Defaults::FaceFeatureAttributeMatrixName);
@@ -336,4 +359,6 @@ public:
 
     DREAM3D_REGISTER_TEST(RemoveTestFiles())
   }
+
+private:
 };

@@ -1,5 +1,5 @@
 /* ============================================================================
-* Copyright (c) 2009-2016 BlueQuartz Software, LLC
+* Copyright (c) 2009-2019 BlueQuartz Software, LLC
 *
 * Redistribution and use in source and binary forms, with or without modification,
 * are permitted provided that the following conditions are met:
@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ReadCtfData.h"
 
 #include <QtCore/QDateTime>
@@ -40,17 +42,33 @@
 
 #include "EbsdLib/HKL/CtfFields.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
+#include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
-
-#include "EbsdLib/HKL/CtfFields.h"
+#include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+#include "ChangeAngleRepresentation.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+  AttributeMatrixID22 = 22,
+
+  DataContainerID = 1
+};
 
 /**
  * @brief The ReadCtfDataPrivate class is a private implementation of the ReadCtfData class
@@ -82,7 +100,9 @@ ReadCtfDataPrivate::ReadCtfDataPrivate(ReadCtfData* ptr)
 //
 // -----------------------------------------------------------------------------
 ReadCtfData::ReadCtfData()
-: m_DataContainerName(SIMPL::Defaults::ImageDataContainerName)
+: m_DegreesToRadians(true)
+, m_EdaxHexagonalAlignment(true)
+, m_DataContainerName(SIMPL::Defaults::ImageDataContainerName)
 , m_CellEnsembleAttributeMatrixName(SIMPL::Defaults::CellEnsembleAttributeMatrixName)
 , m_CellAttributeMatrixName(SIMPL::Defaults::CellAttributeMatrixName)
 , m_FileWasRead(false)
@@ -103,22 +123,62 @@ ReadCtfData::~ReadCtfData() = default;
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-SIMPL_PIMPL_PROPERTY_DEF(ReadCtfData, Ctf_Private_Data, Data)
-SIMPL_PIMPL_PROPERTY_DEF(ReadCtfData, QString, InputFile_Cache)
-SIMPL_PIMPL_PROPERTY_DEF(ReadCtfData, QDateTime, TimeStamp_Cache)
+// -----------------------------------------------------------------------------
+void ReadCtfData::setData(const Ctf_Private_Data& value)
+{
+  Q_D(ReadCtfData);
+  d->m_Data = value;
+}
+
+// -----------------------------------------------------------------------------
+Ctf_Private_Data ReadCtfData::getData() const
+{
+  Q_D(const ReadCtfData);
+  return d->m_Data;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setInputFile_Cache(const QString& value)
+{
+  Q_D(ReadCtfData);
+  d->m_InputFile_Cache = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getInputFile_Cache() const
+{
+  Q_D(const ReadCtfData);
+  return d->m_InputFile_Cache;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setTimeStamp_Cache(const QDateTime& value)
+{
+  Q_D(ReadCtfData);
+  d->m_TimeStamp_Cache = value;
+}
+
+// -----------------------------------------------------------------------------
+QDateTime ReadCtfData::getTimeStamp_Cache() const
+{
+  Q_D(const ReadCtfData);
+  return d->m_TimeStamp_Cache;
+}
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
 void ReadCtfData::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input File", InputFile, FilterParameter::Parameter, ReadCtfData, "*.ctf"));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", DataContainerName, FilterParameter::CreatedArray, ReadCtfData));
+  parameters.push_back(SIMPL_NEW_BOOL_FP("Convert Eulers to Radians", DegreesToRadians, FilterParameter::Parameter, ReadCtfData));
+  parameters.push_back(SIMPL_NEW_BOOL_FP("Convert Hexagonal X-Axis to Edax Standard", EdaxHexagonalAlignment, FilterParameter::Parameter, ReadCtfData));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", DataContainerName, FilterParameter::CreatedArray, ReadCtfData));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Attribute Matrix", CellAttributeMatrixName, FilterParameter::CreatedArray, ReadCtfData));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Attribute Matrix", CellAttributeMatrixName, DataContainerName, FilterParameter::CreatedArray, ReadCtfData));
   parameters.push_back(SeparatorFilterParameter::New("Cell Ensemble Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Ensemble Attribute Matrix", CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, ReadCtfData));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Ensemble Attribute Matrix", CellEnsembleAttributeMatrixName, DataContainerName, FilterParameter::CreatedArray, ReadCtfData));
   setFilterParameters(parameters);
 }
 
@@ -128,7 +188,9 @@ void ReadCtfData::setupFilterParameters()
 void ReadCtfData::readFilterParameters(AbstractFilterParametersReader* reader, int index)
 {
   reader->openFilterGroup(this, index);
-  setDataContainerName(reader->readString("DataContainerName", getDataContainerName()));
+  setDegreesToRadians(reader->readValue("DegreesToRadians", getDegreesToRadians()));
+  setEdaxHexagonalAlignment(reader->readValue("EdaxHexagonalAlignment", getEdaxHexagonalAlignment()));
+  setDataContainerName(reader->readDataArrayPath("DataContainerName", getDataContainerName()));
   setCellAttributeMatrixName(reader->readString("CellAttributeMatrixName", getCellAttributeMatrixName()));
   setCellEnsembleAttributeMatrixName(reader->readString("CellEnsembleAttributeMatrixName", getCellEnsembleAttributeMatrixName()));
   setInputFile(reader->readString("InputFile", getInputFile()));
@@ -150,12 +212,12 @@ void ReadCtfData::dataCheck()
   // Reset FileWasRead flag
   m_FileWasRead = false;
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
-  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getDataContainerName(), DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -163,16 +225,16 @@ void ReadCtfData::dataCheck()
   ImageGeom::Pointer image = ImageGeom::CreateGeometry(SIMPL::Geometry::ImageGeometry);
   m->setGeometry(image);
 
-  QVector<size_t> tDims(3, 0);
-  AttributeMatrix::Pointer cellAttrMat = m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell);
-  if(getErrorCondition() < 0)
+  std::vector<size_t> tDims(3, 0);
+  AttributeMatrix::Pointer cellAttrMat = m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell, AttributeMatrixID21);
+  if(getErrorCode() < 0)
   {
     return;
   }
   tDims.resize(1);
   tDims[0] = 0;
-  AttributeMatrix::Pointer cellEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble);
-  if(getErrorCondition() < 0)
+  AttributeMatrix::Pointer cellEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble, AttributeMatrixID22);
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -181,90 +243,87 @@ void ReadCtfData::dataCheck()
   if(!fi.exists())
   {
     QString ss = QObject::tr("The input file does not exist: '%1'").arg(getInputFile());
-    setErrorCondition(-388);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-388, ss);
   }
 
   if(m_InputFile.isEmpty() && m_Manufacturer == Ebsd::OEM::Unknown)
   {
     QString ss = QObject::tr("The input file must be set");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, -1);
+    setErrorCondition(-1, ss);
   }
 
   if(!m_InputFile.isEmpty()) // User set a filename, so lets check it
   {
-    QVector<size_t> tDims(3, 0);
+    std::vector<size_t> tDims(3, 0);
 
-    QString ext = fi.suffix();
+    QString ext = fi.suffix().toLower();
     QVector<QString> names;
-    if(ext.compare(Ebsd::Ctf::FileExt) == 0)
+    if(ext == Ebsd::Ctf::FileExt)
     {
       std::shared_ptr<CtfReader> reader(new CtfReader());
-      readDataFile(reader.get(), m, tDims, CTF_HEADER_ONLY);
+      readDataFile(reader.get(), m.get(), tDims, CTF_HEADER_ONLY);
 
       // Update the size of the Cell Attribute Matrix now that the dimensions of the volume are known
       cellAttrMat->resizeAttributeArrays(tDims);
       CtfFields ctffeatures;
       names = ctffeatures.getFilterFeatures<QVector<QString>>();
-      QVector<size_t> cDims(1, 1);
-      for(qint32 i = 0; i < names.size(); ++i)
+      std::vector<size_t> cDims(1, 1);
+      for(const auto& name : names)
       {
-        if(reader->getPointerType(names[i]) == Ebsd::Int32)
+        if(reader->getPointerType(name) == Ebsd::Int32)
         {
-          cellAttrMat->createAndAddAttributeArray<DataArray<int32_t>, AbstractFilter, int32_t>(this, names[i], 0, cDims);
+          cellAttrMat->createAndAddAttributeArray<DataArray<int32_t>, AbstractFilter, int32_t>(this, name, 0, cDims);
         }
-        else if(reader->getPointerType(names[i]) == Ebsd::Float)
+        else if(reader->getPointerType(name) == Ebsd::Float)
         {
-          cellAttrMat->createAndAddAttributeArray<DataArray<float>, AbstractFilter, float>(this, names[i], 0, cDims);
+          cellAttrMat->createAndAddAttributeArray<DataArray<float>, AbstractFilter, float>(this, name, 0, cDims);
         }
       }
     }
     else
     {
-      setErrorCondition(-997);
       QString ss = QObject::tr("The file extension '%1' was not recognized. The reader only recognizes the .ctf file extension").arg(ext);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-997, ss);
       return;
     }
 
-    QVector<size_t> cDims(1, 3);
-    tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), Ebsd::CtfFile::EulerAngles);
+    std::vector<size_t> cDims(1, 3);
+    tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), Ebsd::CtfFile::EulerAngles);
     m_CellEulerAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-        this, tempPath, 0, cDims);                   /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
-    if(nullptr != m_CellEulerAnglesPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
+        this, tempPath, 0, cDims);             /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+    if(nullptr != m_CellEulerAnglesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
     {
       m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
 
     cDims[0] = 1;
-    tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), Ebsd::CtfFile::Phases);
+    tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), Ebsd::CtfFile::Phases);
     m_CellPhasesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-        this, tempPath, 0, cDims);              /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
-    if(nullptr != m_CellPhasesPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
+        this, tempPath, 0, cDims);        /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+    if(nullptr != m_CellPhasesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
     {
       m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-    tempPath.update(getDataContainerName(), getCellEnsembleAttributeMatrixName(), Ebsd::CtfFile::CrystalStructures);
-    m_CrystalStructuresPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter, uint32_t>(
-        this, tempPath, Ebsd::CrystalStructure::UnknownCrystalStructure, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
-    if(nullptr != m_CrystalStructuresPtr.lock())                                 /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
+    tempPath.update(getDataContainerName().getDataContainerName(), getCellEnsembleAttributeMatrixName(), Ebsd::CtfFile::CrystalStructures);
+    m_CrystalStructuresPtr =
+        getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter, uint32_t>(this, tempPath, Ebsd::CrystalStructure::UnknownCrystalStructure, cDims);
+    if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
     {
       m_CrystalStructures = m_CrystalStructuresPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
 
     cDims[0] = 6;
-    tempPath.update(getDataContainerName(), getCellEnsembleAttributeMatrixName(), Ebsd::CtfFile::LatticeConstants);
+    tempPath.update(getDataContainerName().getDataContainerName(), getCellEnsembleAttributeMatrixName(), Ebsd::CtfFile::LatticeConstants);
     m_LatticeConstantsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-        this, tempPath, 0.0, cDims);                  /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
-    if(nullptr != m_LatticeConstantsPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
+        this, tempPath, 0.0, cDims);            /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+    if(nullptr != m_LatticeConstantsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
     {
       m_LatticeConstants = m_LatticeConstantsPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-    StringDataArray::Pointer materialNames = StringDataArray::CreateArray(cellEnsembleAttrMat->getNumberOfTuples(), Ebsd::CtfFile::MaterialName);
-    cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::MaterialName, materialNames);
+    StringDataArray::Pointer materialNames = StringDataArray::CreateArray(cellEnsembleAttrMat->getNumberOfTuples(), Ebsd::CtfFile::MaterialName, true);
+    cellEnsembleAttrMat->insertOrAssign(materialNames);
   }
 }
 
@@ -294,7 +353,7 @@ void ReadCtfData::flushCache()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void ReadCtfData::readDataFile(CtfReader* reader, DataContainer::Pointer m, QVector<size_t>& tDims, CTF_READ_FLAG flag)
+void ReadCtfData::readDataFile(CtfReader* reader, DataContainer* m, std::vector<size_t>& tDims, CTF_READ_FLAG flag)
 {
   QFileInfo fi(m_InputFile);
   QDateTime timeStamp(fi.lastModified());
@@ -314,23 +373,21 @@ void ReadCtfData::readDataFile(CtfReader* reader, DataContainer::Pointer m, QVec
       int32_t err = reader->readHeaderOnly();
       if(err < 0)
       {
-        setErrorCondition(err);
-        notifyErrorMessage(getHumanLabel(), "CtfReader could not read the .ctf file header.", getErrorCondition());
-        notifyErrorMessage(getHumanLabel(), reader->getErrorMessage(), err);
+        setErrorCondition(err, "CtfReader could not read the .ctf file header.");
+        setErrorCondition(err, reader->getErrorMessage());
         m_FileWasRead = false;
         return;
       }
 
-        m_FileWasRead = true;
+      m_FileWasRead = true;
     }
     else
     {
       int32_t err = reader->readFile();
       if(err < 0)
       {
-        setErrorCondition(err);
-        notifyErrorMessage(getHumanLabel(), reader->getErrorMessage(), err);
-        notifyErrorMessage(getHumanLabel(), "CtfReader could not read the .ctf file.", getErrorCondition());
+        setErrorCondition(err, reader->getErrorMessage());
+        setErrorCondition(getErrorCode(), "CtfReader could not read the .ctf file.");
         return;
       }
     }
@@ -342,20 +399,20 @@ void ReadCtfData::readDataFile(CtfReader* reader, DataContainer::Pointer m, QVec
     // Set Cache with values from the file
     {
       Ctf_Private_Data data;
-      data.dims = tDims;
-      data.resolution.push_back(reader->getXStep());
-      data.resolution.push_back(reader->getYStep());
+      data.dims = SizeVec3Type(tDims[0], tDims[1], tDims[2]);
+      data.resolution[0] = (reader->getXStep());
+      data.resolution[1] = (reader->getYStep());
       if(reader->getZStep() != 0.0f)
       {
-        data.resolution.push_back(reader->getZStep());
+        data.resolution[2] = (reader->getZStep());
       }
       else
       {
-        data.resolution.push_back(zStep);
+        data.resolution[2] = (zStep);
       }
-      data.origin.push_back(xOrigin);
-      data.origin.push_back(yOrigin);
-      data.origin.push_back(zOrigin);
+      data.origin[0] = (xOrigin);
+      data.origin[1] = (yOrigin);
+      data.origin[2] = (zOrigin);
       data.phases = reader->getPhaseVector();
       setData(data);
 
@@ -376,9 +433,9 @@ void ReadCtfData::readDataFile(CtfReader* reader, DataContainer::Pointer m, QVec
     tDims[0] = getData().dims[0];
     tDims[1] = getData().dims[1];
     tDims[2] = getData().dims[2];
-    m->getGeometryAs<ImageGeom>()->setDimensions(tDims[0], tDims[1], tDims[2]);
-    m->getGeometryAs<ImageGeom>()->setResolution(getData().resolution[0], getData().resolution[1], getData().resolution[2]);
-    m->getGeometryAs<ImageGeom>()->setOrigin(getData().origin[0], getData().origin[1], getData().origin[2]);
+    m->getGeometryAs<ImageGeom>()->setDimensions(SizeVec3Type(tDims[0], tDims[1], tDims[2]));
+    m->getGeometryAs<ImageGeom>()->setSpacing(getData().resolution);
+    m->getGeometryAs<ImageGeom>()->setOrigin(getData().origin);
   }
 
   if(flag == CTF_FULL_FILE)
@@ -395,15 +452,14 @@ int32_t ReadCtfData::loadMaterialInfo(CtfReader* reader)
   QVector<CtfPhase::Pointer> phases = getData().phases;
   if(phases.empty())
   {
-    setErrorCondition(reader->getErrorCode());
-    notifyErrorMessage(getHumanLabel(), reader->getErrorMessage(), getErrorCondition());
-    return getErrorCondition();
+    setErrorCondition(reader->getErrorCode(), reader->getErrorMessage());
+    return getErrorCode();
   }
 
-  DataArray<uint32_t>::Pointer crystalStructures = DataArray<uint32_t>::CreateArray(phases.size() + 1, Ebsd::CtfFile::CrystalStructures);
+  DataArray<uint32_t>::Pointer crystalStructures = DataArray<uint32_t>::CreateArray(phases.size() + 1, Ebsd::CtfFile::CrystalStructures, true);
   StringDataArray::Pointer materialNames = StringDataArray::CreateArray(phases.size() + 1, getMaterialNameArrayName());
-  QVector<size_t> cDims(1, 6);
-  FloatArrayType::Pointer latticeConstants = FloatArrayType::CreateArray(phases.size() + 1, cDims, Ebsd::CtfFile::LatticeConstants);
+  std::vector<size_t> cDims(1, 6);
+  FloatArrayType::Pointer latticeConstants = FloatArrayType::CreateArray(phases.size() + 1, cDims, Ebsd::CtfFile::LatticeConstants, true);
 
   // Initialize the zero'th element to unknowns. The other elements will
   // be filled in based on values from the data file
@@ -443,12 +499,12 @@ int32_t ReadCtfData::loadMaterialInfo(CtfReader* reader)
   }
 
   // Resize the AttributeMatrix based on the size of the crystal structures array
-  QVector<size_t> tDims(1, crystalStructures->getNumberOfTuples());
+  std::vector<size_t> tDims(1, crystalStructures->getNumberOfTuples());
   attrMatrix->resizeAttributeArrays(tDims);
   // Now add the attributeArray to the AttributeMatrix
-  attrMatrix->addAttributeArray(Ebsd::CtfFile::CrystalStructures, crystalStructures);
-  attrMatrix->addAttributeArray(Ebsd::CtfFile::MaterialName, materialNames);
-  attrMatrix->addAttributeArray(Ebsd::CtfFile::LatticeConstants, latticeConstants);
+  attrMatrix->insertOrAssign(crystalStructures);
+  attrMatrix->insertOrAssign(materialNames);
+  attrMatrix->insertOrAssign(latticeConstants);
 
   // Now reset the internal ensemble array references to these new arrays
   m_CrystalStructuresPtr = crystalStructures;
@@ -468,7 +524,7 @@ int32_t ReadCtfData::loadMaterialInfo(CtfReader* reader)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void ReadCtfData::copyRawEbsdData(CtfReader* reader, QVector<size_t>& tDims, QVector<size_t>& cDims)
+void ReadCtfData::copyRawEbsdData(CtfReader* reader, std::vector<size_t>& tDims, std::vector<size_t>& cDims)
 {
   float* f1 = nullptr;
   float* f2 = nullptr;
@@ -491,15 +547,15 @@ void ReadCtfData::copyRawEbsdData(CtfReader* reader, QVector<size_t>& tDims, QVe
   ebsdAttrMat->resizeAttributeArrays(tDims);
   {
     /* Take from H5CtfVolumeReader.cpp
-    * For HKL OIM Files if there is a single phase then the value of the phase
-    * data is one (1). If there are 2 or more phases then the lowest value
-    * of phase is also one (1). However, if there are "zero solutions" in the data
-    * then those points are assigned a phase of zero.  Since those points can be identified
-    * by other methods, the phase of these points should be changed to one since in the rest
-    * of the reconstruction code we follow the convention that the lowest value is One (1)
-    * even if there is only a single phase. The next if statement converts all zeros to ones
-    * if there is a single phase in the OIM data.
-    */
+     * For HKL OIM Files if there is a single phase then the value of the phase
+     * data is one (1). If there are 2 or more phases then the lowest value
+     * of phase is also one (1). However, if there are "zero solutions" in the data
+     * then those points are assigned a phase of zero.  Since those points can be identified
+     * by other methods, the phase of these points should be changed to one since in the rest
+     * of the reconstruction code we follow the convention that the lowest value is One (1)
+     * even if there is only a single phase. The next if statement converts all zeros to ones
+     * if there is a single phase in the OIM data.
+     */
     phasePtr = reinterpret_cast<int32_t*>(reader->getPointerByName(Ebsd::Ctf::Phase));
     for(size_t i = 0; i < totalPoints; i++)
     {
@@ -508,17 +564,17 @@ void ReadCtfData::copyRawEbsdData(CtfReader* reader, QVector<size_t>& tDims, QVe
         phasePtr[i] = 1;
       }
     }
-    iArray = Int32ArrayType::CreateArray(totalPoints, SIMPL::CellData::Phases);
+    iArray = Int32ArrayType::CreateArray(totalPoints, SIMPL::CellData::Phases, true);
     ::memcpy(iArray->getPointer(0), phasePtr, sizeof(int32_t) * totalPoints);
-    ebsdAttrMat->addAttributeArray(SIMPL::CellData::Phases, iArray);
+    ebsdAttrMat->insertOrAssign(iArray);
   }
   {
     //  radianconversion = M_PI / 180.0;
     f1 = reinterpret_cast<float*>(reader->getPointerByName(Ebsd::Ctf::Euler1));
     f2 = reinterpret_cast<float*>(reader->getPointerByName(Ebsd::Ctf::Euler2));
     f3 = reinterpret_cast<float*>(reader->getPointerByName(Ebsd::Ctf::Euler3));
-    QVector<size_t> dims(1, 3);
-    fArray = FloatArrayType::CreateArray(totalPoints, dims, SIMPL::CellData::EulerAngles);
+    std::vector<size_t> dims(1, 3);
+    fArray = FloatArrayType::CreateArray(totalPoints, dims, SIMPL::CellData::EulerAngles, true);
     float* cellEulerAngles = fArray->getPointer(0);
     int32_t* cellPhases = iArray->getPointer(0);
 
@@ -527,61 +583,68 @@ void ReadCtfData::copyRawEbsdData(CtfReader* reader, QVector<size_t>& tDims, QVe
       cellEulerAngles[3 * i] = f1[i];
       cellEulerAngles[3 * i + 1] = f2[i];
       cellEulerAngles[3 * i + 2] = f3[i];
-      if(m_CrystalStructures[cellPhases[i]] == Ebsd::CrystalStructure::Hexagonal_High)
+      if(m_CrystalStructures[cellPhases[i]] == Ebsd::CrystalStructure::Hexagonal_High && m_EdaxHexagonalAlignment)
       {
-        cellEulerAngles[3 * i + 2] = cellEulerAngles[3 * i + 2] + (30.0);
+        cellEulerAngles[3 * i + 2] = cellEulerAngles[3 * i + 2] + (30.0); // See the documentation for this correction factor
+      }
+      // Now convert to radians if requested by the user
+      if(m_DegreesToRadians)
+      {
+        cellEulerAngles[3 * i] = cellEulerAngles[3 * i] * SIMPLib::Constants::k_PiOver180;
+        cellEulerAngles[3 * i + 1] = cellEulerAngles[3 * i + 1] * SIMPLib::Constants::k_PiOver180;
+        cellEulerAngles[3 * i + 2] = cellEulerAngles[3 * i + 2] * SIMPLib::Constants::k_PiOver180;
       }
     }
-    ebsdAttrMat->addAttributeArray(SIMPL::CellData::EulerAngles, fArray);
+    ebsdAttrMat->insertOrAssign(fArray);
   }
 
   {
     phasePtr = reinterpret_cast<int32_t*>(reader->getPointerByName(Ebsd::Ctf::Bands));
-    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::Bands);
+    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::Bands, true);
     ::memcpy(iArray->getPointer(0), phasePtr, sizeof(int32_t) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::Bands, iArray);
+    ebsdAttrMat->insertOrAssign(iArray);
   }
 
   {
     phasePtr = reinterpret_cast<int32_t*>(reader->getPointerByName(Ebsd::Ctf::Error));
-    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::Error);
+    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::Error, true);
     ::memcpy(iArray->getPointer(0), phasePtr, sizeof(int32_t) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::Error, iArray);
+    ebsdAttrMat->insertOrAssign(iArray);
   }
 
   {
     f1 = reinterpret_cast<float*>(reader->getPointerByName(Ebsd::Ctf::MAD));
-    fArray = FloatArrayType::CreateArray(totalPoints, Ebsd::Ctf::MAD);
+    fArray = FloatArrayType::CreateArray(totalPoints, Ebsd::Ctf::MAD, true);
     ::memcpy(fArray->getPointer(0), f1, sizeof(float) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::MAD, fArray);
+    ebsdAttrMat->insertOrAssign(fArray);
   }
 
   {
     phasePtr = reinterpret_cast<int32_t*>(reader->getPointerByName(Ebsd::Ctf::BC));
-    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::BC);
+    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::BC, true);
     ::memcpy(iArray->getPointer(0), phasePtr, sizeof(int32_t) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::BC, iArray);
+    ebsdAttrMat->insertOrAssign(iArray);
   }
 
   {
     phasePtr = reinterpret_cast<int32_t*>(reader->getPointerByName(Ebsd::Ctf::BS));
-    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::BS);
+    iArray = Int32ArrayType::CreateArray(totalPoints, Ebsd::Ctf::BS, true);
     ::memcpy(iArray->getPointer(0), phasePtr, sizeof(int32_t) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::BS, iArray);
+    ebsdAttrMat->insertOrAssign(iArray);
   }
 
   {
     f1 = reinterpret_cast<float*>(reader->getPointerByName(Ebsd::Ctf::X));
-    fArray = FloatArrayType::CreateArray(tDims, cDims, Ebsd::Ctf::X);
+    fArray = FloatArrayType::CreateArray(tDims, cDims, Ebsd::Ctf::X, true);
     ::memcpy(fArray->getPointer(0), f1, sizeof(float) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::X, fArray);
+    ebsdAttrMat->insertOrAssign(fArray);
   }
 
   {
     f1 = reinterpret_cast<float*>(reader->getPointerByName(Ebsd::Ctf::Y));
-    fArray = FloatArrayType::CreateArray(tDims, cDims, Ebsd::Ctf::Y);
+    fArray = FloatArrayType::CreateArray(tDims, cDims, Ebsd::Ctf::Y, true);
     ::memcpy(fArray->getPointer(0), f1, sizeof(float) * totalPoints);
-    ebsdAttrMat->addAttributeArray(Ebsd::Ctf::Y, fArray);
+    ebsdAttrMat->insertOrAssign(fArray);
   }
 }
 
@@ -590,23 +653,23 @@ void ReadCtfData::copyRawEbsdData(CtfReader* reader, QVector<size_t>& tDims, QVe
 // -----------------------------------------------------------------------------
 void ReadCtfData::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   std::shared_ptr<CtfReader> reader(new CtfReader());
-  QVector<size_t> tDims(3, 0);
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> tDims(3, 0);
+  std::vector<size_t> cDims(1, 1);
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getDataContainerName());
   AttributeMatrix::Pointer ebsdAttrMat = m->getAttributeMatrix(getCellAttributeMatrixName());
   ebsdAttrMat->setType(AttributeMatrix::Type::Cell);
 
-  readDataFile(reader.get(), m, tDims, CTF_FULL_FILE);
-  if(getErrorCondition() < 0)
+  readDataFile(reader.get(), m.get(), tDims, CTF_FULL_FILE);
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -624,8 +687,6 @@ void ReadCtfData::execute()
       setInputFile_Cache(m_InputFile);
     }
   }
-
-
 }
 
 // -----------------------------------------------------------------------------
@@ -645,7 +706,7 @@ AbstractFilter::Pointer ReadCtfData::newFilterInstance(bool copyFilterParameters
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadCtfData::getCompiledLibraryName() const
+QString ReadCtfData::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -653,7 +714,7 @@ const QString ReadCtfData::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadCtfData::getBrandingString() const
+QString ReadCtfData::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -661,7 +722,7 @@ const QString ReadCtfData::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadCtfData::getFilterVersion() const
+QString ReadCtfData::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -671,7 +732,7 @@ const QString ReadCtfData::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadCtfData::getGroupName() const
+QString ReadCtfData::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -679,7 +740,7 @@ const QString ReadCtfData::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ReadCtfData::getUuid()
+QUuid ReadCtfData::getUuid() const
 {
   return QUuid("{d1df969c-0428-53c3-b61d-99ea2bb6da28}");
 }
@@ -687,7 +748,7 @@ const QUuid ReadCtfData::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadCtfData::getSubGroupName() const
+QString ReadCtfData::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -695,7 +756,168 @@ const QString ReadCtfData::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadCtfData::getHumanLabel() const
+QString ReadCtfData::getHumanLabel() const
 {
   return "Import Oxford Instr. EBSD Data (.ctf)";
+}
+
+// -----------------------------------------------------------------------------
+ReadCtfData::Pointer ReadCtfData::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ReadCtfData> ReadCtfData::New()
+{
+  struct make_shared_enabler : public ReadCtfData
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getNameOfClass() const
+{
+  return QString("ReadCtfData");
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::ClassName()
+{
+  return QString("ReadCtfData");
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setDegreesToRadians(bool value)
+{
+  m_DegreesToRadians = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ReadCtfData::getDegreesToRadians() const
+{
+  return m_DegreesToRadians;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setEdaxHexagonalAlignment(bool value)
+{
+  m_EdaxHexagonalAlignment = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ReadCtfData::getEdaxHexagonalAlignment() const
+{
+  return m_EdaxHexagonalAlignment;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setDataContainerName(const DataArrayPath& value)
+{
+  m_DataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ReadCtfData::getDataContainerName() const
+{
+  return m_DataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setCellEnsembleAttributeMatrixName(const QString& value)
+{
+  m_CellEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getCellEnsembleAttributeMatrixName() const
+{
+  return m_CellEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setCellAttributeMatrixName(const QString& value)
+{
+  m_CellAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getCellAttributeMatrixName() const
+{
+  return m_CellAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setFileWasRead(bool value)
+{
+  m_FileWasRead = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ReadCtfData::getFileWasRead() const
+{
+  return m_FileWasRead;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setPhaseNameArrayName(const QString& value)
+{
+  m_PhaseNameArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getPhaseNameArrayName() const
+{
+  return m_PhaseNameArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setMaterialNameArrayName(const QString& value)
+{
+  m_MaterialNameArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getMaterialNameArrayName() const
+{
+  return m_MaterialNameArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadCtfData::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setRefFrameZDir(uint32_t value)
+{
+  m_RefFrameZDir = value;
+}
+
+// -----------------------------------------------------------------------------
+uint32_t ReadCtfData::getRefFrameZDir() const
+{
+  return m_RefFrameZDir;
+}
+
+// -----------------------------------------------------------------------------
+void ReadCtfData::setManufacturer(const Ebsd::OEM& value)
+{
+  m_Manufacturer = value;
+}
+
+// -----------------------------------------------------------------------------
+Ebsd::OEM ReadCtfData::getManufacturer() const
+{
+  return m_Manufacturer;
 }

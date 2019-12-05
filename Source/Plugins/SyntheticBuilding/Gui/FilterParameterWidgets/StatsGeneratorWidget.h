@@ -35,15 +35,15 @@
 
 #pragma once
 
+#include <memory>
+
 #include <vector>
 
-#include <QtCore/QObject>
 
-#include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMessageBox>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/FilterParameters/FilterParameter.h"
+#include "SIMPLib/DataContainers/AttributeMatrix.h"
 
 #include "SVWidgetsLib/FilterParameterWidgets/FilterParameterWidget.h"
 #include "SVWidgetsLib/SVWidgetsLib.h"
@@ -103,13 +103,6 @@ protected:
    * @brief Initializes some of the GUI elements with selections or other GUI related items
    */
   void setupGui();
-
-  /**
-   * @brief Verifies that a path exists on the file system.
-   * @param outFilePath The file path to check
-   * @param lineEdit The QLineEdit object to modify visuals of (Usually by placing a red line around the QLineEdit widget)
-   */
-  bool verifyPathExists(const QString& outFilePath, QLineEdit* lineEdit);
 
   /**
    * @brief Verifies that a parent path exists on the file system.

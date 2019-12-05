@@ -33,11 +33,18 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "LosAlamosFFTWriter.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
@@ -72,7 +79,7 @@ LosAlamosFFTWriter::~LosAlamosFFTWriter() = default;
 void LosAlamosFFTWriter::setupFilterParameters()
 {
   FileWriter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output File", OutputFile, FilterParameter::Parameter, LosAlamosFFTWriter, "*.txt", "FFT Format"));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
@@ -115,8 +122,8 @@ void LosAlamosFFTWriter::initialize()
 // -----------------------------------------------------------------------------
 void LosAlamosFFTWriter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
@@ -124,14 +131,14 @@ void LosAlamosFFTWriter::dataCheck()
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeatureIdsArrayPath());
   }
@@ -142,7 +149,7 @@ void LosAlamosFFTWriter::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -154,7 +161,7 @@ void LosAlamosFFTWriter::dataCheck()
   {
     m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellEulerAnglesArrayPath());
   }
@@ -188,23 +195,20 @@ int32_t LosAlamosFFTWriter::writeHeader()
 // -----------------------------------------------------------------------------
 int32_t LosAlamosFFTWriter::writeFile()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
-    return getErrorCondition();
+    return getErrorCode();
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getFeatureIdsArrayPath().getDataContainerName());
 
   int32_t err = 0;
-  size_t dims[3] = {0, 0, 0};
-  std::tie(dims[0], dims[1], dims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
-  float res[3] = {0.0f, 0.0f, 0.0f};
-  m->getGeometryAs<ImageGeom>()->getResolution(res);
-  float origin[3] = {0.0f, 0.0f, 0.0f};
-  m->getGeometryAs<ImageGeom>()->getOrigin(origin);
+  SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+  //  FloatVec3Type res = m->getGeometryAs<ImageGeom>()->getSpacing();
+  //  FloatVec3Type origin = m->getGeometryAs<ImageGeom>()->getOrigin();
 
   // Make sure any directory path is also available as the user may have just typed
   // in a path without actually creating the full path
@@ -213,8 +217,7 @@ int32_t LosAlamosFFTWriter::writeFile()
   if(!parentPath.mkpath("."))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(parentPath.absolutePath());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return -1;
   }
 
@@ -222,8 +225,7 @@ int32_t LosAlamosFFTWriter::writeFile()
   if(nullptr == f)
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getOutputFile());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return -1;
   }
 
@@ -270,7 +272,7 @@ AbstractFilter::Pointer LosAlamosFFTWriter::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LosAlamosFFTWriter::getCompiledLibraryName() const
+QString LosAlamosFFTWriter::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -278,7 +280,7 @@ const QString LosAlamosFFTWriter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LosAlamosFFTWriter::getBrandingString() const
+QString LosAlamosFFTWriter::getBrandingString() const
 {
   return "IO";
 }
@@ -286,7 +288,7 @@ const QString LosAlamosFFTWriter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LosAlamosFFTWriter::getFilterVersion() const
+QString LosAlamosFFTWriter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -296,7 +298,7 @@ const QString LosAlamosFFTWriter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LosAlamosFFTWriter::getGroupName() const
+QString LosAlamosFFTWriter::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -304,7 +306,7 @@ const QString LosAlamosFFTWriter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid LosAlamosFFTWriter::getUuid()
+QUuid LosAlamosFFTWriter::getUuid() const
 {
   return QUuid("{158ebe9e-f772-57e2-ac1b-71ff213cf890}");
 }
@@ -312,7 +314,7 @@ const QUuid LosAlamosFFTWriter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LosAlamosFFTWriter::getSubGroupName() const
+QString LosAlamosFFTWriter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -320,7 +322,72 @@ const QString LosAlamosFFTWriter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LosAlamosFFTWriter::getHumanLabel() const
+QString LosAlamosFFTWriter::getHumanLabel() const
 {
   return "Export Los Alamos FFT File";
+}
+
+// -----------------------------------------------------------------------------
+LosAlamosFFTWriter::Pointer LosAlamosFFTWriter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<LosAlamosFFTWriter> LosAlamosFFTWriter::New()
+{
+  struct make_shared_enabler : public LosAlamosFFTWriter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString LosAlamosFFTWriter::getNameOfClass() const
+{
+  return QString("LosAlamosFFTWriter");
+}
+
+// -----------------------------------------------------------------------------
+QString LosAlamosFFTWriter::ClassName()
+{
+  return QString("LosAlamosFFTWriter");
+}
+
+// -----------------------------------------------------------------------------
+void LosAlamosFFTWriter::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath LosAlamosFFTWriter::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void LosAlamosFFTWriter::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath LosAlamosFFTWriter::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void LosAlamosFFTWriter::setCellEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_CellEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath LosAlamosFFTWriter::getCellEulerAnglesArrayPath() const
+{
+  return m_CellEulerAnglesArrayPath;
 }

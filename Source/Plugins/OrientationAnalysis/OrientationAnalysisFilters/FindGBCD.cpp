@@ -33,8 +33,27 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindGBCD.h"
 #include <utility>
+
+#include <QtCore/QDateTime>
+
+#include <QtCore/QTextStream>
+
+#include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
+#include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/FloatFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
+#include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/Geometry/TriangleGeom.h"
+#include "SIMPLib/Utilities/TimeUtilities.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
 #include <tbb/blocked_range.h>
@@ -43,23 +62,22 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
-#include <QtCore/QDateTime>
-
-#include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
-#include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
-#include "SIMPLib/FilterParameters/FloatFilterParameter.h"
-#include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
-#include "SIMPLib/FilterParameters/StringFilterParameter.h"
-#include "SIMPLib/Geometry/ImageGeom.h"
-#include "SIMPLib/Geometry/TriangleGeom.h"
-#include "SIMPLib/Utilities/TimeUtilities.h"
-
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 #include "OrientationLib/LaueOps/LaueOps.h"
-#include "OrientationLib/OrientationMath/OrientationArray.hpp"
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 /**
  * @brief The CalculateGBCDImpl class implements a threaded algorithm that calculates the
@@ -186,12 +204,9 @@ public:
             g2ea[m] = eulers[3 * feature2 + m];
           }
 
-          FOrientArrayType om(9, 0.0f);
-          FOrientTransformsType::eu2om(FOrientArrayType(g1ea, 3), om);
-          om.toGMatrix(g1);
+          OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g1ea, 3)).toGMatrix(g1);
 
-          FOrientTransformsType::eu2om(FOrientArrayType(g2ea, 3), om);
-          om.toGMatrix(g2);
+          OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g2ea, 3)).toGMatrix(g2);
 
           int32_t nsym = m_OrientationOps[cryst]->getNumSymOps();
           for(j = 0; j < nsym; j++)
@@ -221,10 +236,10 @@ public:
               // calculate delta g
               MatrixMath::Multiply3x3with3x3(g1s, g2t, dg);
               // translate matrix to euler angles
-              FOrientArrayType om(dg);
+              OrientationF om(dg);
 
-              FOrientArrayType eu(euler_mis, 3);
-              FOrientTransformsType::om2eu(om, eu);
+              OrientationF eu(euler_mis, 3);
+              eu = OrientationTransformation::om2eu<OrientationF, OrientationF>(om);
 
               if(euler_mis[0] < SIMPLib::Constants::k_PiOver2 && euler_mis[1] < SIMPLib::Constants::k_PiOver2 && euler_mis[2] < SIMPLib::Constants::k_PiOver2)
               {
@@ -382,8 +397,8 @@ FindGBCD::~FindGBCD() = default;
 // -----------------------------------------------------------------------------
 void FindGBCD::setupFilterParameters()
 {
-  FilterParameterVector parameters;
-  parameters.push_back(SIMPL_NEW_FLOAT_FP("GBCD Resolution (Degrees)", GBCDRes, FilterParameter::Parameter, FindGBCD));
+  FilterParameterVectorType parameters;
+  parameters.push_back(SIMPL_NEW_FLOAT_FP("GBCD Spacing (Degrees)", GBCDRes, FilterParameter::Parameter, FindGBCD));
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateRequirement(SIMPL::TypeNames::Int32, 2, AttributeMatrix::Type::Face, IGeometry::Type::Triangle);
@@ -418,8 +433,8 @@ void FindGBCD::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Crystal Structures", CrystalStructuresArrayPath, FilterParameter::RequiredArray, FindGBCD, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Face Ensemble Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Ensemble Attribute Matrix", FaceEnsembleAttributeMatrixName, FilterParameter::CreatedArray, FindGBCD));
-  parameters.push_back(SIMPL_NEW_STRING_FP("GBCD", GBCDArrayName, FilterParameter::CreatedArray, FindGBCD));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Face Ensemble Attribute Matrix", FaceEnsembleAttributeMatrixName, SurfaceMeshFaceLabelsArrayPath, FilterParameter::CreatedArray, FindGBCD));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("GBCD", GBCDArrayName, SurfaceMeshFaceLabelsArrayPath, FaceEnsembleAttributeMatrixName, FilterParameter::CreatedArray, FindGBCD));
   setFilterParameters(parameters);
 }
 
@@ -464,8 +479,8 @@ void FindGBCD::initialize()
 // -----------------------------------------------------------------------------
 void FindGBCD::dataCheckSurfaceMesh()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   DataArrayPath tempPath;
@@ -473,15 +488,15 @@ void FindGBCD::dataCheckSurfaceMesh()
   getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath().getDataContainerName());
 
   DataContainer::Pointer sm = getDataContainerArray()->getPrereqDataContainer(this, m_SurfaceMeshFaceLabelsArrayPath.getDataContainerName(), false);
-  if(getErrorCondition() < 0 || nullptr == sm.get())
+  if(getErrorCode() < 0 || nullptr == sm.get())
   {
     return;
   }
 
-  QVector<size_t> tDims(1, m_CrystalStructuresPtr.lock()->getNumberOfTuples());
-  sm->createNonPrereqAttributeMatrix(this, getFaceEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::FaceEnsemble);
+  std::vector<size_t> tDims(1, m_CrystalStructuresPtr.lock()->getNumberOfTuples());
+  sm->createNonPrereqAttributeMatrix(this, getFaceEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::FaceEnsemble, AttributeMatrixID21);
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -516,8 +531,7 @@ void FindGBCD::dataCheckSurfaceMesh()
   cDims[5] = 2;
 
   tempPath.update(m_SurfaceMeshFaceLabelsArrayPath.getDataContainerName(), getFaceEnsembleAttributeMatrixName(), getGBCDArrayName());
-  m_GBCDPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, tempPath, 0,
-                                                                                                               cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_GBCDPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_GBCDPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_GBCD = m_GBCDPtr.lock()->getPointer(0);
@@ -529,12 +543,12 @@ void FindGBCD::dataCheckSurfaceMesh()
 // -----------------------------------------------------------------------------
 void FindGBCD::dataCheckVoxel()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureEulerAnglesArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 3);
+  std::vector<size_t> cDims(1, 3);
   m_FeatureEulerAnglesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getFeatureEulerAnglesArrayPath(),
                                                                                                               cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureEulerAnglesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -568,7 +582,7 @@ void FindGBCD::preflight()
   emit updateFilterParameters(this);
   dataCheckVoxel();
   // order here matters...because we are going to use the size of the crystal structures out of the dataCheckVoxel to size the faceAttrMat in dataCheckSurfaceMesh
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataCheckSurfaceMesh();
   }
@@ -581,16 +595,16 @@ void FindGBCD::preflight()
 // -----------------------------------------------------------------------------
 void FindGBCD::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheckVoxel();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
   // order here matters...because we are going to use the size of the crystal structures out of the dataCheckVoxel to size the faceAttrMat in dataCheckSurfaceMesh
   dataCheckSurfaceMesh();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -621,7 +635,7 @@ void FindGBCD::execute()
   int32_t hemisphere = 0;
 
   // create an array to hold the total face area for each phase and initialize the array to 0.0
-  DoubleArrayType::Pointer totalFaceAreaPtr = DoubleArrayType::CreateArray(totalPhases, "totalFaceArea");
+  DoubleArrayType::Pointer totalFaceAreaPtr = DoubleArrayType::CreateArray(totalPhases, "totalFaceArea", true);
   totalFaceAreaPtr->initializeWithValue(0.0);
   double* totalFaceArea = totalFaceAreaPtr->getPointer(0);
 
@@ -661,7 +675,7 @@ void FindGBCD::execute()
       estimatedTime = (float)(totalFaces - i) / timeDiff;
       ss = ss + QObject::tr(" || Est. Time Remain: %1").arg(DREAM3D::convertMillisToHrsMinSecs(estimatedTime));
       millis = QDateTime::currentMSecsSinceEpoch();
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
     }
 
     if(getCancel())
@@ -697,7 +711,7 @@ void FindGBCD::execute()
   }
 
   ss = QObject::tr("Starting GBCD Normalization");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 
   for(int32_t i = 0; i < totalPhases; i++)
   {
@@ -717,16 +731,16 @@ void FindGBCD::execute()
 // -----------------------------------------------------------------------------
 void FindGBCD::sizeGBCD(size_t faceChunkSize, size_t numMisoReps)
 {
-  m_GbcdDeltasArray = FloatArrayType::CreateArray(5, "GBCDDeltas");
+  m_GbcdDeltasArray = FloatArrayType::CreateArray(5, "GBCDDeltas", true);
   m_GbcdDeltasArray->initializeWithZeros();
-  m_GbcdLimitsArray = FloatArrayType::CreateArray(10, "GBCDLimits");
+  m_GbcdLimitsArray = FloatArrayType::CreateArray(10, "GBCDLimits", true);
   m_GbcdLimitsArray->initializeWithZeros();
-  m_GbcdSizesArray = Int32ArrayType::CreateArray(5, "GBCDSizes");
+  m_GbcdSizesArray = Int32ArrayType::CreateArray(5, "GBCDSizes", true);
   m_GbcdSizesArray->initializeWithZeros();
-  QVector<size_t> cDims(1, numMisoReps);
-  m_GbcdBinsArray = Int32ArrayType::CreateArray(faceChunkSize, cDims, "GBCDBins");
+  std::vector<size_t> cDims(1, numMisoReps);
+  m_GbcdBinsArray = Int32ArrayType::CreateArray(faceChunkSize, cDims, "GBCDBins", true);
   m_GbcdBinsArray->initializeWithZeros();
-  m_GbcdHemiCheckArray = BoolArrayType::CreateArray(faceChunkSize, cDims, "GBCDHemiCheck");
+  m_GbcdHemiCheckArray = BoolArrayType::CreateArray(faceChunkSize, cDims, "GBCDHemiCheck", true);
   m_GbcdHemiCheckArray->initializeWithValue(false);
 
   m_GbcdDeltas = m_GbcdDeltasArray->getPointer(0);
@@ -800,7 +814,7 @@ AbstractFilter::Pointer FindGBCD::newFilterInstance(bool copyFilterParameters) c
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCD::getCompiledLibraryName() const
+QString FindGBCD::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -808,7 +822,7 @@ const QString FindGBCD::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCD::getBrandingString() const
+QString FindGBCD::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -816,7 +830,7 @@ const QString FindGBCD::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCD::getFilterVersion() const
+QString FindGBCD::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -826,7 +840,7 @@ const QString FindGBCD::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCD::getGroupName() const
+QString FindGBCD::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -834,7 +848,7 @@ const QString FindGBCD::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindGBCD::getUuid()
+QUuid FindGBCD::getUuid() const
 {
   return QUuid("{6e97ff50-48bf-5403-a049-1d271bd72df9}");
 }
@@ -842,7 +856,7 @@ const QUuid FindGBCD::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCD::getSubGroupName() const
+QString FindGBCD::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -850,7 +864,156 @@ const QString FindGBCD::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCD::getHumanLabel() const
+QString FindGBCD::getHumanLabel() const
 {
   return "Find GBCD";
+}
+
+// -----------------------------------------------------------------------------
+FindGBCD::Pointer FindGBCD::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindGBCD> FindGBCD::New()
+{
+  struct make_shared_enabler : public FindGBCD
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCD::getNameOfClass() const
+{
+  return QString("FindGBCD");
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCD::ClassName()
+{
+  return QString("FindGBCD");
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setFaceEnsembleAttributeMatrixName(const QString& value)
+{
+  m_FaceEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCD::getFaceEnsembleAttributeMatrixName() const
+{
+  return m_FaceEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setGBCDRes(float value)
+{
+  m_GBCDRes = value;
+}
+
+// -----------------------------------------------------------------------------
+float FindGBCD::getGBCDRes() const
+{
+  return m_GBCDRes;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCD::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setSurfaceMeshFaceNormalsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceNormalsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCD::getSurfaceMeshFaceNormalsArrayPath() const
+{
+  return m_SurfaceMeshFaceNormalsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setSurfaceMeshFaceAreasArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceAreasArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCD::getSurfaceMeshFaceAreasArrayPath() const
+{
+  return m_SurfaceMeshFaceAreasArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setFeatureEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_FeatureEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCD::getFeatureEulerAnglesArrayPath() const
+{
+  return m_FeatureEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCD::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCD::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setGBCDArrayName(const QString& value)
+{
+  m_GBCDArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCD::getGBCDArrayName() const
+{
+  return m_GBCDArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCD::setGBCDArrayNames(const QVector<ComparisonInput_t>& value)
+{
+  m_GBCDArrayNames = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<ComparisonInput_t> FindGBCD::getGBCDArrayNames() const
+{
+  return m_GBCDArrayNames;
 }

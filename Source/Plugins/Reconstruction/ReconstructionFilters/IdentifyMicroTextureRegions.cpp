@@ -33,11 +33,12 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "IdentifyMicroTextureRegions.h"
 
 #include <chrono>
 
-#include <QtCore/QDateTime>
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
 #include <tbb/atomic.h>
@@ -48,7 +49,10 @@
 #include <tbb/tick_count.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
@@ -56,6 +60,8 @@
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/GeometryMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationLib/LaueOps/LaueOps.h"
 
@@ -66,6 +72,20 @@
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+  AttributeMatrixID22 = 22,
+
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+  DataArrayID35 = 35,
+
+  DataContainerID = 1
+};
 
 /**
  * @brief The FindPatchMisalignmentsImpl class implements a threaded algorithm that determines the misorientations
@@ -100,9 +120,9 @@ public:
     int64_t xDim = (2 * m_CritDim[0]) + 1;
     int64_t yDim = (2 * m_CritDim[1]) + 1;
     int64_t zDim = (2 * m_CritDim[2]) + 1;
-    QVector<size_t> tDims(1, xDim * yDim * zDim);
-    QVector<size_t> cDims(1, 3);
-    FloatArrayType::Pointer cAxisLocsPtr = FloatArrayType::CreateArray(tDims, cDims, "_INTERNAL_USE_ONLY_cAxisLocs");
+    std::vector<size_t> tDims(1, xDim * yDim * zDim);
+    std::vector<size_t> cDims(1, 3);
+    FloatArrayType::Pointer cAxisLocsPtr = FloatArrayType::CreateArray(tDims, cDims, "_INTERNAL_USE_ONLY_cAxisLocs", true);
     cAxisLocsPtr->initializeWithValue(0);
     float* cAxisLocs = cAxisLocsPtr->getPointer(0);
     std::vector<int64_t> goodCounts;
@@ -192,7 +212,7 @@ public:
         MatrixMath::Normalize3x1(avgCAxis);
         if(avgCAxis[2] < 0)
         {
-          MatrixMath::Multiply3x1withConstant(avgCAxis, -1);
+          MatrixMath::Multiply3x1withConstant(avgCAxis, -1.0f);
         }
         m_AvgCAxis[3 * iter] = avgCAxis[0];
         m_AvgCAxis[3 * iter + 1] = avgCAxis[1];
@@ -250,7 +270,7 @@ IdentifyMicroTextureRegions::~IdentifyMicroTextureRegions() = default;
 // -----------------------------------------------------------------------------
 void IdentifyMicroTextureRegions::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_FLOAT_FP("C-Axis Alignment Tolerance (Degrees)", CAxisTolerance, FilterParameter::Parameter, IdentifyMicroTextureRegions));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Minimum MicroTextured Region Size (Diameter)", MinMTRSize, FilterParameter::Parameter, IdentifyMicroTextureRegions));
@@ -299,8 +319,8 @@ void IdentifyMicroTextureRegions::readFilterParameters(AbstractFilterParametersR
 // -----------------------------------------------------------------------------
 void IdentifyMicroTextureRegions::updateFeatureInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_ActivePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -322,8 +342,8 @@ void IdentifyMicroTextureRegions::initialize()
 // -----------------------------------------------------------------------------
 void IdentifyMicroTextureRegions::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   DataArrayPath tempPath;
@@ -331,15 +351,15 @@ void IdentifyMicroTextureRegions::dataCheck()
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getCAxisLocationsArrayPath().getDataContainerName());
 
   DataContainer::Pointer m = getDataContainerArray()->getPrereqDataContainer(this, getCAxisLocationsArrayPath().getDataContainerName(), false);
-  if(getErrorCondition() < 0 || nullptr == m.get())
+  if(getErrorCode() < 0 || nullptr == m.get())
   {
     return;
   }
 
-  QVector<size_t> tDims(1, 0);
-  m->createNonPrereqAttributeMatrix(this, getNewCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature);
+  std::vector<size_t> tDims(1, 0);
+  m->createNonPrereqAttributeMatrix(this, getNewCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature, AttributeMatrixID21);
 
-  QVector<size_t> cDims(1, 3);
+  std::vector<size_t> cDims(1, 3);
 
   QVector<DataArrayPath> dataArrayPaths;
 
@@ -350,7 +370,7 @@ void IdentifyMicroTextureRegions::dataCheck()
   {
     m_CAxisLocations = m_CAxisLocationsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCAxisLocationsArrayPath());
   }
@@ -362,14 +382,13 @@ void IdentifyMicroTextureRegions::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
 
   tempPath.update(m_CAxisLocationsArrayPath.getDataContainerName(), getCAxisLocationsArrayPath().getAttributeMatrixName(), getMTRIdsArrayName());
-  m_MTRIdsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0,
-                                                                                                                   cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_MTRIdsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_MTRIdsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_MTRIds = m_MTRIdsPtr.lock()->getPointer(0);
@@ -377,8 +396,7 @@ void IdentifyMicroTextureRegions::dataCheck()
 
   // New Feature Data
   tempPath.update(m_CAxisLocationsArrayPath.getDataContainerName(), getNewCellFeatureAttributeMatrixName(), getActiveArrayName());
-  m_ActivePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, true,
-                                                                                                             cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_ActivePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, true, cDims, "", DataArrayID32);
   if(nullptr != m_ActivePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Active = m_ActivePtr.lock()->getPointer(0);
@@ -413,13 +431,13 @@ void IdentifyMicroTextureRegions::preflight()
 // -----------------------------------------------------------------------------
 void IdentifyMicroTextureRegions::randomizeFeatureIds(int64_t totalPoints, int64_t totalFeatures)
 {
-  notifyStatusMessage(getHumanLabel(), "Randomizing Feature Ids");
+  notifyStatusMessage("Randomizing Feature Ids");
   // Generate an even distribution of numbers between the min and max range
   const int32_t rangeMin = 1;
   const int32_t rangeMax = totalFeatures - 1;
   initializeVoxelSeedGenerator(rangeMin, rangeMax);
 
-  DataArray<int32_t>::Pointer rndNumbers = DataArray<int32_t>::CreateArray(totalFeatures, "_INTERNAL_USE_ONLY_NewFeatureIds");
+  DataArray<int32_t>::Pointer rndNumbers = DataArray<int32_t>::CreateArray(totalFeatures, "_INTERNAL_USE_ONLY_NewFeatureIds", true);
 
   int32_t* gid = rndNumbers->getPointer(0);
   gid[0] = 0;
@@ -475,10 +493,10 @@ void IdentifyMicroTextureRegions::initializeVoxelSeedGenerator(const int32_t ran
 // -----------------------------------------------------------------------------
 void IdentifyMicroTextureRegions::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -487,87 +505,76 @@ void IdentifyMicroTextureRegions::execute()
   int64_t totalPoints = static_cast<int64_t>(m_MTRIdsPtr.lock()->getNumberOfTuples());
 
   // calculate dimensions of DIC-like grid
-  size_t dcDims[3] = {0, 0, 0};
-  float xRes = 0.0f, yRes = 0.0f, zRes = 0.0f;
-  float origin[3] = {0.0f, 0.0f, 0.0f};
-  std::tie(dcDims[0], dcDims[1], dcDims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
-  m->getGeometryAs<ImageGeom>()->getResolution(xRes, yRes, zRes);
-  m->getGeometryAs<ImageGeom>()->getOrigin(origin);
+  SizeVec3Type dcDims = m->getGeometryAs<ImageGeom>()->getDimensions();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
+  FloatVec3Type origin = m->getGeometryAs<ImageGeom>()->getOrigin();
 
   // Find number of original cells in radius of patch
   int64_t critDim[3] = {0, 0, 0};
-  critDim[0] = static_cast<int64_t>(m_MinMTRSize / (4.0f * xRes));
-  critDim[1] = static_cast<int64_t>(m_MinMTRSize / (4.0f * yRes));
-  critDim[2] = static_cast<int64_t>(m_MinMTRSize / (4.0f * zRes));
+  critDim[0] = static_cast<int64_t>(m_MinMTRSize / (4.0f * spacing[0]));
+  critDim[1] = static_cast<int64_t>(m_MinMTRSize / (4.0f * spacing[1]));
+  critDim[2] = static_cast<int64_t>(m_MinMTRSize / (4.0f * spacing[2]));
 
   // Find physical distance of patch steps
-  FloatVec3_t critRes;
-  critRes.x = static_cast<float>(critDim[0]) * xRes;
-  critRes.y = static_cast<float>(critDim[1]) * yRes;
-  critRes.z = static_cast<float>(critDim[2]) * zRes;
+  FloatVec3Type critRes;
+  critRes[0] = static_cast<float>(critDim[0]) * spacing[0];
+  critRes[1] = static_cast<float>(critDim[1]) * spacing[1];
+  critRes[2] = static_cast<float>(critDim[2]) * spacing[2];
 
   // Find number of patch steps in each dimension
-  int64_t newDimX = static_cast<int64_t>(dcDims[0] / critDim[0]);
-  int64_t newDimY = static_cast<int64_t>(dcDims[1] / critDim[1]);
-  int64_t newDimZ = static_cast<int64_t>(dcDims[2] / critDim[2]);
+  using Int64Vec3Type = IVec3<int64_t>;
+  Int64Vec3Type newDim(static_cast<int64_t>(dcDims[0] / critDim[0]), static_cast<int64_t>(dcDims[1] / critDim[1]), static_cast<int64_t>(dcDims[2] / critDim[2]));
+
   if(dcDims[0] == 1)
   {
-    newDimX = 1, critDim[0] = 0;
+    newDim[0] = 1, critDim[0] = 0;
   }
   if(dcDims[1] == 1)
   {
-    newDimY = 1, critDim[1] = 0;
+    newDim[1] = 1, critDim[1] = 0;
   }
   if(dcDims[2] == 1)
   {
-    newDimZ = 1, critDim[2] = 0;
+    newDim[2] = 1, critDim[2] = 0;
   }
 
   // Store the original and patch dimensions for passing into the parallel algo below
-  int64_t origDims[3] = {0, 0, 0};
-  origDims[0] = dcDims[0];
-  origDims[1] = dcDims[1];
-  origDims[2] = dcDims[2];
-  int64_t newDims[3] = {0, 0, 0};
-  newDims[0] = newDimX;
-  newDims[1] = newDimY;
-  newDims[2] = newDimZ;
-  size_t totalPatches = static_cast<size_t>(newDimX * newDimY * newDimZ);
+  Int64Vec3Type origDims(dcDims[0], dcDims[1], dcDims[2]);
+  Int64Vec3Type newDims = newDim;
+  size_t totalPatches = static_cast<size_t>(newDim[0] * newDim[1] * newDim[2]);
 
   // Create temporary DataContainer and AttributeMatrix for holding the patch data
-  DataContainer::Pointer tmpDC = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, "_INTERNAL_USE_ONLY_PatchDataContainer(Temp)");
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer tmpDC = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, "_INTERNAL_USE_ONLY_PatchDataContainer(Temp)", DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
-  tmpDC->getGeometryAs<ImageGeom>()->setDimensions(static_cast<size_t>(newDimX), static_cast<size_t>(newDimY), static_cast<size_t>(newDimZ));
-  tmpDC->getGeometryAs<ImageGeom>()->setResolution(critRes.x, critRes.y, critRes.z);
-  tmpDC->getGeometryAs<ImageGeom>()->setOrigin(origin[0], origin[1], origin[2]);
+  tmpDC->getGeometryAs<ImageGeom>()->setDimensions(SizeVec3Type(static_cast<size_t>(newDim[0]), static_cast<size_t>(newDim[1]), static_cast<size_t>(newDim[2])));
+  tmpDC->getGeometryAs<ImageGeom>()->setSpacing(critRes);
+  tmpDC->getGeometryAs<ImageGeom>()->setOrigin(origin);
 
-  QVector<size_t> tDims(3, 0);
-  tDims[0] = newDimX;
-  tDims[1] = newDimY;
-  tDims[2] = newDimZ;
-  tmpDC->createNonPrereqAttributeMatrix(this, "_INTERNAL_USE_ONLY_PatchAM(Temp)", tDims, AttributeMatrix::Type::Cell);
-  if(getErrorCondition() < 0)
+  std::vector<size_t> tDims;
+  tDims[0] = newDim[0];
+  tDims[1] = newDim[1];
+  tDims[2] = newDim[2];
+  tmpDC->createNonPrereqAttributeMatrix(this, "_INTERNAL_USE_ONLY_PatchAM(Temp)", tDims, AttributeMatrix::Type::Cell, AttributeMatrixID22);
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataArrayPath tempPath;
   tDims[0] = totalPatches;
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   tempPath.update("_INTERNAL_USE_ONLY_PatchDataContainer(Temp)", "_INTERNAL_USE_ONLY_PatchAM(Temp)", "_INTERNAL_USE_ONLY_InMTR");
-  m_InMTRPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, false,
-                                                                                                            cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_InMTRPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, false, cDims, "", DataArrayID33);
   if(nullptr != m_InMTRPtr.lock())                                                                                  /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_InMTR = m_InMTRPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   tempPath.update("_INTERNAL_USE_ONLY_PatchDataContainer(Temp)", "_INTERNAL_USE_ONLY_PatchAM(Temp)", "_INTERNAL_USE_ONLY_VolFrac");
-  m_VolFracPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_VolFracPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID34);
   if(nullptr != m_VolFracPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_VolFrac = m_VolFracPtr.lock()->getPointer(0);
@@ -575,8 +582,7 @@ void IdentifyMicroTextureRegions::execute()
 
   cDims[0] = 3;
   tempPath.update("_INTERNAL_USE_ONLY_PatchDataContainer(Temp)", "_INTERNAL_USE_ONLY_PatchAM(Temp)", "_INTERNAL_USE_ONLY_AvgCAxis");
-  m_AvgCAxisPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                 cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AvgCAxisPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID35);
   if(nullptr != m_AvgCAxisPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgCAxis = m_AvgCAxisPtr.lock()->getPointer(0);
@@ -594,14 +600,15 @@ void IdentifyMicroTextureRegions::execute()
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
   if(doParallel)
   {
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, totalPatches),
-                      FindPatchMisalignmentsImpl(newDims, origDims, m_CAxisLocations, m_CellPhases, m_CrystalStructures, m_VolFrac, m_AvgCAxis, m_InMTR, critDim, m_MinVolFrac, m_CAxisToleranceRad),
-                      tbb::auto_partitioner());
+    tbb::parallel_for(
+        tbb::blocked_range<size_t>(0, totalPatches),
+        FindPatchMisalignmentsImpl(newDims.data(), origDims.data(), m_CAxisLocations, m_CellPhases, m_CrystalStructures, m_VolFrac, m_AvgCAxis, m_InMTR, critDim, m_MinVolFrac, m_CAxisToleranceRad),
+        tbb::auto_partitioner());
   }
   else
 #endif
   {
-    FindPatchMisalignmentsImpl serial(newDims, origDims, m_CAxisLocations, m_CellPhases, m_CrystalStructures, m_VolFrac, m_AvgCAxis, m_InMTR, critDim, m_MinVolFrac, m_CAxisToleranceRad);
+    FindPatchMisalignmentsImpl serial(newDims.data(), origDims.data(), m_CAxisLocations, m_CellPhases, m_CrystalStructures, m_VolFrac, m_AvgCAxis, m_InMTR, critDim, m_MinVolFrac, m_CAxisToleranceRad);
     serial.convert(0, totalPatches);
   }
 
@@ -759,7 +766,7 @@ AbstractFilter::Pointer IdentifyMicroTextureRegions::newFilterInstance(bool copy
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifyMicroTextureRegions::getCompiledLibraryName() const
+QString IdentifyMicroTextureRegions::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -767,7 +774,7 @@ const QString IdentifyMicroTextureRegions::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifyMicroTextureRegions::getBrandingString() const
+QString IdentifyMicroTextureRegions::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -775,7 +782,7 @@ const QString IdentifyMicroTextureRegions::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifyMicroTextureRegions::getFilterVersion() const
+QString IdentifyMicroTextureRegions::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -785,7 +792,7 @@ const QString IdentifyMicroTextureRegions::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifyMicroTextureRegions::getGroupName() const
+QString IdentifyMicroTextureRegions::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -793,7 +800,7 @@ const QString IdentifyMicroTextureRegions::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid IdentifyMicroTextureRegions::getUuid()
+QUuid IdentifyMicroTextureRegions::getUuid() const
 {
   return QUuid("{00717d6b-004e-5e1f-9acc-ee2920ddc29b}");
 }
@@ -801,7 +808,7 @@ const QUuid IdentifyMicroTextureRegions::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifyMicroTextureRegions::getSubGroupName() const
+QString IdentifyMicroTextureRegions::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GroupingFilters;
 }
@@ -809,7 +816,156 @@ const QString IdentifyMicroTextureRegions::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString IdentifyMicroTextureRegions::getHumanLabel() const
+QString IdentifyMicroTextureRegions::getHumanLabel() const
 {
   return "Identify MicroTexture Patches (C-Axis Misalignment)";
+}
+
+// -----------------------------------------------------------------------------
+IdentifyMicroTextureRegions::Pointer IdentifyMicroTextureRegions::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<IdentifyMicroTextureRegions> IdentifyMicroTextureRegions::New()
+{
+  struct make_shared_enabler : public IdentifyMicroTextureRegions
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifyMicroTextureRegions::getNameOfClass() const
+{
+  return QString("IdentifyMicroTextureRegions");
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifyMicroTextureRegions::ClassName()
+{
+  return QString("IdentifyMicroTextureRegions");
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setNewCellFeatureAttributeMatrixName(const QString& value)
+{
+  m_NewCellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifyMicroTextureRegions::getNewCellFeatureAttributeMatrixName() const
+{
+  return m_NewCellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setCAxisTolerance(float value)
+{
+  m_CAxisTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float IdentifyMicroTextureRegions::getCAxisTolerance() const
+{
+  return m_CAxisTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setMinMTRSize(float value)
+{
+  m_MinMTRSize = value;
+}
+
+// -----------------------------------------------------------------------------
+float IdentifyMicroTextureRegions::getMinMTRSize() const
+{
+  return m_MinMTRSize;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setMinVolFrac(float value)
+{
+  m_MinVolFrac = value;
+}
+
+// -----------------------------------------------------------------------------
+float IdentifyMicroTextureRegions::getMinVolFrac() const
+{
+  return m_MinVolFrac;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setRandomizeMTRIds(bool value)
+{
+  m_RandomizeMTRIds = value;
+}
+
+// -----------------------------------------------------------------------------
+bool IdentifyMicroTextureRegions::getRandomizeMTRIds() const
+{
+  return m_RandomizeMTRIds;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setCAxisLocationsArrayPath(const DataArrayPath& value)
+{
+  m_CAxisLocationsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath IdentifyMicroTextureRegions::getCAxisLocationsArrayPath() const
+{
+  return m_CAxisLocationsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath IdentifyMicroTextureRegions::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath IdentifyMicroTextureRegions::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setMTRIdsArrayName(const QString& value)
+{
+  m_MTRIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifyMicroTextureRegions::getMTRIdsArrayName() const
+{
+  return m_MTRIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void IdentifyMicroTextureRegions::setActiveArrayName(const QString& value)
+{
+  m_ActiveArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString IdentifyMicroTextureRegions::getActiveArrayName() const
+{
+  return m_ActiveArrayName;
 }

@@ -33,18 +33,25 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "AlignSectionsList.h"
 
 #include <fstream>
 
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataContainerSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
@@ -71,7 +78,7 @@ void AlignSectionsList::setupFilterParameters()
 {
   // getting the current parameters that were set by the parent and adding to it before resetting it
   AlignSections::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input File", InputFile, FilterParameter::Parameter, AlignSectionsList, "*.txt"));
   parameters.push_back(SIMPL_NEW_BOOL_FP("DREAM3D Alignment File Format", DREAM3DAlignmentFile, FilterParameter::Parameter, AlignSectionsList));
 
@@ -105,12 +112,12 @@ void AlignSectionsList::initialize()
 // -----------------------------------------------------------------------------
 void AlignSectionsList::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   QString ss;
 
   AlignSections::dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -119,23 +126,20 @@ void AlignSectionsList::dataCheck()
   if(m_InputFile.isEmpty())
   {
     ss = QObject::tr("The input file must be set for property %1").arg("InputFile");
-    setErrorCondition(-15000);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-15000, ss);
   }
   if(!fi.exists())
   {
     ss = QObject::tr("The input file does not exist: '%1'").arg(getInputFile());
-    setErrorCondition(-15001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-15001, ss);
   }
 
   DataContainer::Pointer dc = getDataContainerArray()->getPrereqDataContainer(this, getDataContainerName(), false);
   ImageGeom::Pointer geom = dc->getGeometryAs<ImageGeom>();
   if(nullptr == geom.get())
   {
-    QString ss = QObject::tr("DataContainer '%1' does not have an ImageGeometry").arg(getDataContainerName());
-    setErrorCondition(-15002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    QString ss = QObject::tr("DataContainer '%1' does not have an ImageGeometry").arg(getDataContainerName().getDataContainerName());
+    setErrorCondition(-15002, ss);
     return;
   }
   Q_UNUSED(dc)
@@ -163,8 +167,7 @@ void AlignSectionsList::find_shifts(std::vector<int64_t>& xshifts, std::vector<i
 
   ImageGeom::Pointer geom = m->getGeometryAs<ImageGeom>();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = geom->getDimensions();
+  SizeVec3Type udims = geom->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -207,10 +210,10 @@ void AlignSectionsList::find_shifts(std::vector<int64_t>& xshifts, std::vector<i
 // -----------------------------------------------------------------------------
 void AlignSectionsList::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -236,7 +239,7 @@ AbstractFilter::Pointer AlignSectionsList::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsList::getCompiledLibraryName() const
+QString AlignSectionsList::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -244,7 +247,7 @@ const QString AlignSectionsList::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsList::getBrandingString() const
+QString AlignSectionsList::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -252,7 +255,7 @@ const QString AlignSectionsList::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsList::getFilterVersion() const
+QString AlignSectionsList::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -262,7 +265,7 @@ const QString AlignSectionsList::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsList::getGroupName() const
+QString AlignSectionsList::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -270,7 +273,7 @@ const QString AlignSectionsList::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AlignSectionsList::getUuid()
+QUuid AlignSectionsList::getUuid() const
 {
   return QUuid("{accf8f6c-0551-5da3-9a3d-e4be41c3985c}");
 }
@@ -278,7 +281,7 @@ const QUuid AlignSectionsList::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsList::getSubGroupName() const
+QString AlignSectionsList::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::AlignmentFilters;
 }
@@ -286,7 +289,60 @@ const QString AlignSectionsList::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsList::getHumanLabel() const
+QString AlignSectionsList::getHumanLabel() const
 {
   return "Align Sections (List)";
+}
+
+// -----------------------------------------------------------------------------
+AlignSectionsList::Pointer AlignSectionsList::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AlignSectionsList> AlignSectionsList::New()
+{
+  struct make_shared_enabler : public AlignSectionsList
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsList::getNameOfClass() const
+{
+  return QString("AlignSectionsList");
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsList::ClassName()
+{
+  return QString("AlignSectionsList");
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsList::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsList::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsList::setDREAM3DAlignmentFile(bool value)
+{
+  m_DREAM3DAlignmentFile = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AlignSectionsList::getDREAM3DAlignmentFile() const
+{
+  return m_DREAM3DAlignmentFile;
 }

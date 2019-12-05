@@ -40,9 +40,7 @@
 #include <QtCore/QModelIndex>
 #include <QtGui/QDoubleValidator>
 #include <QtGui/QPainter>
-#include <QtWidgets/QComboBox>
 #include <QtWidgets/QLineEdit>
-#include <QtWidgets/QStyleOptionViewItemV4>
 #include <QtWidgets/QStyledItemDelegate>
 
 #include "SVWidgetsLib/QtSupport/QtSColorComboPicker.h"
@@ -60,7 +58,7 @@ class SGBetaItemDelegate : public QStyledItemDelegate
   Q_OBJECT
 
 public:
-  explicit SGBetaItemDelegate(QObject* parent = 0)
+  explicit SGBetaItemDelegate(QObject* parent = nullptr)
   : QStyledItemDelegate(parent)
   {
   }

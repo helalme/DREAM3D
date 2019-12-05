@@ -41,15 +41,12 @@
 #include <iostream>
 
 //-- Qt Includes
-#include <QtConcurrent/QtConcurrentMap>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
-#include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QVector>
 
-#include <QtGui/QCloseEvent>
 #include <QtWidgets/QAbstractItemDelegate>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QMessageBox>
@@ -555,8 +552,8 @@ void StatsGenODFWidget::calculateODF()
   int lamberSize = m_PFLambertSize->value();
   int numColors = 16;
 
-  QVector<size_t> dims(1, 3);
-  FloatArrayType::Pointer eulers = FloatArrayType::CreateArray(npoints, dims, "Eulers");
+  std::vector<size_t> dims(1, 3);
+  FloatArrayType::Pointer eulers = FloatArrayType::CreateArray(npoints, dims, "Eulers", true);
   PoleFigureConfiguration_t config;
   config.eulers = eulers.get();
   config.imageDim = imageSize;
@@ -1001,4 +998,28 @@ void StatsGenODFWidget::on_savePoleFigureImage_clicked()
 
   QImage image = m_PoleFigureLabel->pixmap()->toImage();
   image.save(file);
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenODFWidget::setEnableAxisDecorations(bool value)
+{
+  m_EnableAxisDecorations = value;
+}
+
+// -----------------------------------------------------------------------------
+bool StatsGenODFWidget::getEnableAxisDecorations() const
+{
+  return m_EnableAxisDecorations;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenODFWidget::setInitializing(bool value)
+{
+  m_Initializing = value;
+}
+
+// -----------------------------------------------------------------------------
+bool StatsGenODFWidget::getInitializing() const
+{
+  return m_Initializing;
 }

@@ -25,13 +25,13 @@ Not Applicable
 
 | Kind | Default Name | Type | Component Dimensions | Description |
 |------|--------------|-------------|---------|-----|
-| **Attribute Array** | Quaternion Input | float | (3)(3) |  |
+| **Attribute Array** | Quaternion Input | float | (4) |  |
 
 ## Created Objects ##
 
 | Kind | Default Name | Type | Component Dimensions | Description |
 |------|--------------|-------------|---------|-----|
-| **Attribute Array** | Quaternion Ouput | float | (3)(3) |  |
+| **Attribute Array** | Quaternion Ouput | float | (4) |  |
 
 
 ## Example Pipelines ##

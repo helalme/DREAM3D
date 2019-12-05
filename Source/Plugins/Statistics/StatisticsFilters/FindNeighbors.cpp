@@ -33,21 +33,37 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindNeighbors.h"
 
 #include <QtCore/QDateTime>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -78,7 +94,7 @@ FindNeighbors::~FindNeighbors() = default;
 // -----------------------------------------------------------------------------
 void FindNeighbors::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   QStringList linkedProps("BoundaryCellsArrayName");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Store Boundary Cells Array", StoreBoundaryCells, FilterParameter::Parameter, FindNeighbors, linkedProps));
   linkedProps.clear();
@@ -97,12 +113,12 @@ void FindNeighbors::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_AM_SELECTION_FP("Cell Feature Attribute Matrix", CellFeatureAttributeMatrixPath, FilterParameter::RequiredArray, FindNeighbors, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Boundary Cells", BoundaryCellsArrayName, FilterParameter::CreatedArray, FindNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Boundary Cells", BoundaryCellsArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, FindNeighbors));
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Number of Neighbors", NumNeighborsArrayName, FilterParameter::CreatedArray, FindNeighbors));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Neighbor List", NeighborListArrayName, FilterParameter::CreatedArray, FindNeighbors));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Shared Surface Area List", SharedSurfaceAreaListArrayName, FilterParameter::CreatedArray, FindNeighbors));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Surface Features", SurfaceFeaturesArrayName, FilterParameter::CreatedArray, FindNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Number of Neighbors", NumNeighborsArrayName, CellFeatureAttributeMatrixPath, CellFeatureAttributeMatrixPath, FilterParameter::CreatedArray, FindNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Neighbor List", NeighborListArrayName, CellFeatureAttributeMatrixPath, CellFeatureAttributeMatrixPath, FilterParameter::CreatedArray, FindNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Shared Surface Area List", SharedSurfaceAreaListArrayName, CellFeatureAttributeMatrixPath, CellFeatureAttributeMatrixPath, FilterParameter::CreatedArray, FindNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Surface Features", SurfaceFeaturesArrayName, CellFeatureAttributeMatrixPath, CellFeatureAttributeMatrixPath, FilterParameter::CreatedArray, FindNeighbors));
   setFilterParameters(parameters);
 }
 
@@ -138,14 +154,14 @@ void FindNeighbors::initialize()
 // -----------------------------------------------------------------------------
 void FindNeighbors::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -190,13 +206,17 @@ void FindNeighbors::dataCheck()
   // because we are just creating an empty NeighborList object.
   // Now we are going to get a "Pointer" to the NeighborList object out of the DataContainer
   tempPath.update(getCellFeatureAttributeMatrixPath().getDataContainerName(), getCellFeatureAttributeMatrixPath().getAttributeMatrixName(), getNeighborListArrayName());
-  m_NeighborList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_NeighborList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID31);
+  if(getErrorCode() < 0)
+  {
+    return;
+  }
+  m_NeighborList.lock()->setNumNeighborsArrayName(getNumNeighborsArrayName());
 
   // And we do the same for the SharedSurfaceArea list
   tempPath.update(getCellFeatureAttributeMatrixPath().getDataContainerName(), getCellFeatureAttributeMatrixPath().getAttributeMatrixName(), getSharedSurfaceAreaListArrayName());
-  m_SharedSurfaceAreaList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_SharedSurfaceAreaList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID32);
+  m_SharedSurfaceAreaList.lock()->setNumNeighborsArrayName(getNumNeighborsArrayName());
 }
 
 // -----------------------------------------------------------------------------
@@ -217,10 +237,10 @@ void FindNeighbors::preflight()
 // -----------------------------------------------------------------------------
 void FindNeighbors::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -229,8 +249,7 @@ void FindNeighbors::execute()
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
   size_t totalFeatures = m_NumNeighborsPtr.lock()->getNumberOfTuples();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -267,7 +286,7 @@ void FindNeighbors::execute()
     if(currentMillis - millis > 1000)
     {
       QString ss = QObject::tr("Finding Neighbors || Initializing Neighbor Lists || %1% Complete").arg((static_cast<float>(i) / totalFeatures) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       millis = QDateTime::currentMSecsSinceEpoch();
     }
 
@@ -291,7 +310,7 @@ void FindNeighbors::execute()
     if(currentMillis - millis > 1000)
     {
       QString ss = QObject::tr("Finding Neighbors || Determining Neighbor Lists || %1% Complete").arg((static_cast<float>(j) / totalPoints) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       millis = QDateTime::currentMSecsSinceEpoch();
     }
 
@@ -366,10 +385,7 @@ void FindNeighbors::execute()
     }
   }
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
   // We do this to create new set of NeighborList objects
   for(size_t i = 1; i < totalFeatures; i++)
@@ -378,7 +394,7 @@ void FindNeighbors::execute()
     if(currentMillis - millis > 1000)
     {
       QString ss = QObject::tr("Finding Neighbors || Calculating Surface Areas || %1% Complete").arg(((float)i / totalFeatures) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       millis = QDateTime::currentMSecsSinceEpoch();
     }
 
@@ -408,7 +424,7 @@ void FindNeighbors::execute()
     {
       int32_t neigh = iter.key();    // get the neighbor feature
       int32_t number = iter.value(); // get the number of voxels
-      float area = float(number) * xRes * yRes;
+      float area = float(number) * spacing[0] * spacing[1];
 
       // Push the neighbor feature id back onto the list so we stay synced up
       neighborlist[i].push_back(neigh);
@@ -444,7 +460,7 @@ AbstractFilter::Pointer FindNeighbors::newFilterInstance(bool copyFilterParamete
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNeighbors::getCompiledLibraryName() const
+QString FindNeighbors::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -452,7 +468,7 @@ const QString FindNeighbors::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNeighbors::getBrandingString() const
+QString FindNeighbors::getBrandingString() const
 {
   return "Statistics";
 }
@@ -460,7 +476,7 @@ const QString FindNeighbors::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNeighbors::getFilterVersion() const
+QString FindNeighbors::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -470,7 +486,7 @@ const QString FindNeighbors::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNeighbors::getGroupName() const
+QString FindNeighbors::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -478,7 +494,7 @@ const QString FindNeighbors::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindNeighbors::getUuid()
+QUuid FindNeighbors::getUuid() const
 {
   return QUuid("{97cf66f8-7a9b-5ec2-83eb-f8c4c8a17bac}");
 }
@@ -486,7 +502,7 @@ const QUuid FindNeighbors::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNeighbors::getSubGroupName() const
+QString FindNeighbors::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -494,7 +510,144 @@ const QString FindNeighbors::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindNeighbors::getHumanLabel() const
+QString FindNeighbors::getHumanLabel() const
 {
   return "Find Feature Neighbors";
+}
+
+// -----------------------------------------------------------------------------
+FindNeighbors::Pointer FindNeighbors::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindNeighbors> FindNeighbors::New()
+{
+  struct make_shared_enabler : public FindNeighbors
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::getNameOfClass() const
+{
+  return QString("FindNeighbors");
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::ClassName()
+{
+  return QString("FindNeighbors");
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setCellFeatureAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_CellFeatureAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindNeighbors::getCellFeatureAttributeMatrixPath() const
+{
+  return m_CellFeatureAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setSharedSurfaceAreaListArrayName(const QString& value)
+{
+  m_SharedSurfaceAreaListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::getSharedSurfaceAreaListArrayName() const
+{
+  return m_SharedSurfaceAreaListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setNeighborListArrayName(const QString& value)
+{
+  m_NeighborListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::getNeighborListArrayName() const
+{
+  return m_NeighborListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindNeighbors::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setBoundaryCellsArrayName(const QString& value)
+{
+  m_BoundaryCellsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::getBoundaryCellsArrayName() const
+{
+  return m_BoundaryCellsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setNumNeighborsArrayName(const QString& value)
+{
+  m_NumNeighborsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::getNumNeighborsArrayName() const
+{
+  return m_NumNeighborsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setSurfaceFeaturesArrayName(const QString& value)
+{
+  m_SurfaceFeaturesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindNeighbors::getSurfaceFeaturesArrayName() const
+{
+  return m_SurfaceFeaturesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setStoreBoundaryCells(bool value)
+{
+  m_StoreBoundaryCells = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindNeighbors::getStoreBoundaryCells() const
+{
+  return m_StoreBoundaryCells;
+}
+
+// -----------------------------------------------------------------------------
+void FindNeighbors::setStoreSurfaceFeatures(bool value)
+{
+  m_StoreSurfaceFeatures = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindNeighbors::getStoreSurfaceFeatures() const
+{
+  return m_StoreSurfaceFeatures;
 }

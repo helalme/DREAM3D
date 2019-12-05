@@ -38,7 +38,6 @@
 #include "SGAbstractTableModel.h"
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
-#include <QtGui/QColor>
 
 class QAbstractItemDelegate;
 
@@ -63,7 +62,7 @@ public:
     ColumnCount
   };
 
-  SGLogNormalTableModel(QObject* parent = 0);
+  SGLogNormalTableModel(QObject* parent = nullptr);
   virtual ~SGLogNormalTableModel();
 
   Qt::ItemFlags flags(const QModelIndex& index) const;

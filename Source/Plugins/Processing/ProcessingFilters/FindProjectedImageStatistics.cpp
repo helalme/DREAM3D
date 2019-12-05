@@ -1,37 +1,39 @@
 /* ============================================================================
-* Copyright (c) 2009-2016 BlueQuartz Software, LLC
-*
-* Redistribution and use in source and binary forms, with or without modification,
-* are permitted provided that the following conditions are met:
-*
-* Redistributions of source code must retain the above copyright notice, this
-* list of conditions and the following disclaimer.
-*
-* Redistributions in binary form must reproduce the above copyright notice, this
-* list of conditions and the following disclaimer in the documentation and/or
-* other materials provided with the distribution.
-*
-* Neither the name of BlueQuartz Software, the US Air Force, nor the names of its
-* contributors may be used to endorse or promote products derived from this software
-* without specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
-* USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*
-* The code contained herein was partially funded by the followig contracts:
-*    United States Air Force Prime Contract FA8650-07-D-5800
-*    United States Air Force Prime Contract FA8650-10-D-5210
-*    United States Prime Contract Navy N00173-07-C-2068
-*
-* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+ * Copyright (c) 2009-2016 BlueQuartz Software, LLC
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or
+ * other materials provided with the distribution.
+ *
+ * Neither the name of BlueQuartz Software, the US Air Force, nor the names of its
+ * contributors may be used to endorse or promote products derived from this software
+ * without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+ * USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * The code contained herein was partially funded by the followig contracts:
+ *    United States Air Force Prime Contract FA8650-07-D-5800
+ *    United States Air Force Prime Contract FA8650-10-D-5210
+ *    United States Prime Contract Navy N00173-07-C-2068
+ *
+ * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+
+#include <memory>
 
 #include "FindProjectedImageStatistics.h"
 
@@ -42,15 +44,21 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Common/TemplateHelpers.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -59,7 +67,8 @@
  * @brief The CalcProjectedStatsImpl class implements a templated threaded algorithm for
  * determining the projected image statistics of a given volume.
  */
-template <typename T> class CalcProjectedStatsImpl
+template <typename T>
+class CalcProjectedStatsImpl
 {
 
 public:
@@ -165,7 +174,7 @@ FindProjectedImageStatistics::~FindProjectedImageStatistics() = default;
 // -----------------------------------------------------------------------------
 void FindProjectedImageStatistics::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
     parameter->setHumanLabel("Plane of Interest");
@@ -200,11 +209,11 @@ void FindProjectedImageStatistics::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Attribute Array to Quantify", SelectedArrayPath, FilterParameter::RequiredArray, FindProjectedImageStatistics, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Projected Image Min", ProjectedImageMinArrayName, FilterParameter::CreatedArray, FindProjectedImageStatistics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Projected Image Max", ProjectedImageMaxArrayName, FilterParameter::CreatedArray, FindProjectedImageStatistics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Projected Image Avg", ProjectedImageAvgArrayName, FilterParameter::CreatedArray, FindProjectedImageStatistics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Projected Image Std", ProjectedImageStdArrayName, FilterParameter::CreatedArray, FindProjectedImageStatistics));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Projected Image Var", ProjectedImageVarArrayName, FilterParameter::CreatedArray, FindProjectedImageStatistics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Projected Image Min", ProjectedImageMinArrayName, SelectedArrayPath, SelectedArrayPath, FilterParameter::CreatedArray, FindProjectedImageStatistics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Projected Image Max", ProjectedImageMaxArrayName, SelectedArrayPath, SelectedArrayPath, FilterParameter::CreatedArray, FindProjectedImageStatistics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Projected Image Avg", ProjectedImageAvgArrayName, SelectedArrayPath, SelectedArrayPath, FilterParameter::CreatedArray, FindProjectedImageStatistics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Projected Image Std", ProjectedImageStdArrayName, SelectedArrayPath, SelectedArrayPath, FilterParameter::CreatedArray, FindProjectedImageStatistics));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Projected Image Var", ProjectedImageVarArrayName, SelectedArrayPath, SelectedArrayPath, FilterParameter::CreatedArray, FindProjectedImageStatistics));
   setFilterParameters(parameters);
 }
 
@@ -234,8 +243,8 @@ void FindProjectedImageStatistics::initialize()
 // -----------------------------------------------------------------------------
 void FindProjectedImageStatistics::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataArrayPath tempPath;
 
@@ -245,12 +254,11 @@ void FindProjectedImageStatistics::dataCheck()
     if(TemplateHelpers::CanDynamicCast<BoolArrayType>()(m_InDataPtr.lock()))
     {
       QString ss = QObject::tr("Selected array cannot be of type bool.  The path is %1").arg(getSelectedArrayPath().serialize());
-      setErrorCondition(-11001);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-11001, ss);
     }
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   tempPath.update(getSelectedArrayPath().getDataContainerName(), getSelectedArrayPath().getAttributeMatrixName(), getProjectedImageMinArrayName());
   m_ProjectedImageMinPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
       this, tempPath, 0, cDims);                     /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -261,8 +269,8 @@ void FindProjectedImageStatistics::dataCheck()
 
   tempPath.update(getSelectedArrayPath().getDataContainerName(), getSelectedArrayPath().getAttributeMatrixName(), getProjectedImageMaxArrayName());
   m_ProjectedImageMaxPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-      this, tempPath, 0, cDims);                     /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
-  if(nullptr != m_ProjectedImageMaxPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
+      this, tempPath, 0, cDims);               /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  if(nullptr != m_ProjectedImageMaxPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_ProjectedImageMax = m_ProjectedImageMaxPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
@@ -292,15 +300,14 @@ void FindProjectedImageStatistics::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getSelectedArrayPath().getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   if(image->getXPoints() <= 1 || image->getYPoints() <= 1 || image->getZPoints() <= 1)
   {
-    setErrorCondition(-999);
-    notifyErrorMessage(getHumanLabel(), "The Image Geometry is not 3D and cannot be run through this Filter", getErrorCondition());
+    setErrorCondition(-999, "The Image Geometry is not 3D and cannot be run through this Filter");
   }
 }
 
@@ -322,10 +329,10 @@ void FindProjectedImageStatistics::preflight()
 // -----------------------------------------------------------------------------
 void FindProjectedImageStatistics::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -337,24 +344,23 @@ void FindProjectedImageStatistics::execute()
   bool doParallel = true;
 #endif
 
-  size_t xP = 0, yP = 0, zP = 0;
-  std::tie(xP, yP, zP) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type geoDims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
-  Int32ArrayType::Pointer startingPoints = Int32ArrayType::CreateArray(0, "_INTERNAL_USE_ONLY_startingPoints");
+  Int32ArrayType::Pointer startingPoints = Int32ArrayType::CreateArray(0, "_INTERNAL_USE_ONLY_startingPoints", true);
   int32_t* startPoints = nullptr;
   size_t stride = 0, yStride = 0;
   size_t count = 0;
   size_t depth = 0;
   if(m_Plane == 0)
   {
-    startingPoints->resize(xP * yP);
+    startingPoints->resizeTuples(geoDims[0] * geoDims[1]);
     startPoints = startingPoints->getPointer(0);
-    stride = xP * yP;
-    depth = zP;
-    for(size_t i = 0; i < yP; i++)
+    stride = geoDims[0] * geoDims[1];
+    depth = geoDims[2];
+    for(size_t i = 0; i < geoDims[1]; i++)
     {
-      yStride = i * xP;
-      for(size_t j = 0; j < xP; j++)
+      yStride = i * geoDims[0];
+      for(size_t j = 0; j < geoDims[0]; j++)
       {
         startPoints[count] = yStride + j;
         count++;
@@ -363,14 +369,14 @@ void FindProjectedImageStatistics::execute()
   }
   if(m_Plane == 1)
   {
-    startingPoints->resize(xP * zP);
+    startingPoints->resizeTuples(geoDims[0] * geoDims[2]);
     startPoints = startingPoints->getPointer(0);
-    stride = xP;
-    depth = yP;
-    for(size_t i = 0; i < zP; i++)
+    stride = geoDims[0];
+    depth = geoDims[1];
+    for(size_t i = 0; i < geoDims[2]; i++)
     {
-      yStride = i * xP * yP;
-      for(size_t j = 0; j < xP; j++)
+      yStride = i * geoDims[0] * geoDims[1];
+      for(size_t j = 0; j < geoDims[0]; j++)
       {
         startPoints[count] = yStride + j;
         count++;
@@ -379,16 +385,16 @@ void FindProjectedImageStatistics::execute()
   }
   if(m_Plane == 2)
   {
-    startingPoints->resize(yP * zP);
+    startingPoints->resizeTuples(geoDims[1] * geoDims[2]);
     startPoints = startingPoints->getPointer(0);
     stride = 1;
-    depth = xP;
-    for(size_t i = 0; i < zP; i++)
+    depth = geoDims[0];
+    for(size_t i = 0; i < geoDims[2]; i++)
     {
-      yStride = i * xP * yP;
-      for(size_t j = 0; j < yP; j++)
+      yStride = i * geoDims[0] * geoDims[1];
+      for(size_t j = 0; j < geoDims[1]; j++)
       {
-        startPoints[count] = yStride + (j * xP);
+        startPoints[count] = yStride + (j * geoDims[0]);
         count++;
       }
     }
@@ -397,8 +403,7 @@ void FindProjectedImageStatistics::execute()
   if(nullptr == startPoints)
   {
     QString ss = QObject::tr("Unable to establish starting location for supplied plane. The plane is %1").arg(m_Plane);
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
 
@@ -585,8 +590,7 @@ void FindProjectedImageStatistics::execute()
   else
   {
     QString ss = QObject::tr("Selected array is of unsupported type. The type is %1").arg(m_InDataPtr.lock()->getTypeAsString());
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
 
@@ -608,7 +612,7 @@ AbstractFilter::Pointer FindProjectedImageStatistics::newFilterInstance(bool cop
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindProjectedImageStatistics::getCompiledLibraryName() const
+QString FindProjectedImageStatistics::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -616,7 +620,7 @@ const QString FindProjectedImageStatistics::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindProjectedImageStatistics::getBrandingString() const
+QString FindProjectedImageStatistics::getBrandingString() const
 {
   return "Processing";
 }
@@ -624,7 +628,7 @@ const QString FindProjectedImageStatistics::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindProjectedImageStatistics::getFilterVersion() const
+QString FindProjectedImageStatistics::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -635,7 +639,7 @@ const QString FindProjectedImageStatistics::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindProjectedImageStatistics::getGroupName() const
+QString FindProjectedImageStatistics::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -643,7 +647,7 @@ const QString FindProjectedImageStatistics::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindProjectedImageStatistics::getUuid()
+QUuid FindProjectedImageStatistics::getUuid() const
 {
   return QUuid("{577dfdf6-02f8-5284-b45b-e31f5392a191}");
 }
@@ -651,7 +655,7 @@ const QUuid FindProjectedImageStatistics::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindProjectedImageStatistics::getSubGroupName() const
+QString FindProjectedImageStatistics::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ImageFilters;
 }
@@ -659,7 +663,120 @@ const QString FindProjectedImageStatistics::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindProjectedImageStatistics::getHumanLabel() const
+QString FindProjectedImageStatistics::getHumanLabel() const
 {
   return "Find Projected Image Statistics";
+}
+
+// -----------------------------------------------------------------------------
+FindProjectedImageStatistics::Pointer FindProjectedImageStatistics::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindProjectedImageStatistics> FindProjectedImageStatistics::New()
+{
+  struct make_shared_enabler : public FindProjectedImageStatistics
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::getNameOfClass() const
+{
+  return QString("FindProjectedImageStatistics");
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::ClassName()
+{
+  return QString("FindProjectedImageStatistics");
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setSelectedArrayPath(const DataArrayPath& value)
+{
+  m_SelectedArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindProjectedImageStatistics::getSelectedArrayPath() const
+{
+  return m_SelectedArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setPlane(unsigned int value)
+{
+  m_Plane = value;
+}
+
+// -----------------------------------------------------------------------------
+unsigned int FindProjectedImageStatistics::getPlane() const
+{
+  return m_Plane;
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setProjectedImageMinArrayName(const QString& value)
+{
+  m_ProjectedImageMinArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::getProjectedImageMinArrayName() const
+{
+  return m_ProjectedImageMinArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setProjectedImageMaxArrayName(const QString& value)
+{
+  m_ProjectedImageMaxArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::getProjectedImageMaxArrayName() const
+{
+  return m_ProjectedImageMaxArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setProjectedImageAvgArrayName(const QString& value)
+{
+  m_ProjectedImageAvgArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::getProjectedImageAvgArrayName() const
+{
+  return m_ProjectedImageAvgArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setProjectedImageStdArrayName(const QString& value)
+{
+  m_ProjectedImageStdArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::getProjectedImageStdArrayName() const
+{
+  return m_ProjectedImageStdArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindProjectedImageStatistics::setProjectedImageVarArrayName(const QString& value)
+{
+  m_ProjectedImageVarArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindProjectedImageStatistics::getProjectedImageVarArrayName() const
+{
+  return m_ProjectedImageVarArrayName;
 }

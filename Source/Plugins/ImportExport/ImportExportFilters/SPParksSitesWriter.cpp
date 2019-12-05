@@ -33,13 +33,19 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SPParksSitesWriter.h"
 #include <fstream>
 
 #include <QtCore/QDateTime>
-#include <QtCore/QDir>
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
@@ -70,7 +76,7 @@ SPParksSitesWriter::~SPParksSitesWriter() = default;
 void SPParksSitesWriter::setupFilterParameters()
 {
   FileWriter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output File", OutputFile, FilterParameter::Parameter, SPParksSitesWriter, "*.spparks", "SPParks Sites File"));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
@@ -103,14 +109,14 @@ void SPParksSitesWriter::initialize()
 // -----------------------------------------------------------------------------
 void SPParksSitesWriter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   FileSystemPathHelper::CheckOutputFile(this, "Output SPPARKS File", getOutputFile(), true);
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -137,18 +143,17 @@ void SPParksSitesWriter::preflight()
 // -----------------------------------------------------------------------------
 int32_t SPParksSitesWriter::writeHeader()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
-    return getErrorCondition();
+    return getErrorCode();
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   size_t totalpoints = m->getGeometryAs<ImageGeom>()->getNumberOfElements();
 
@@ -157,9 +162,8 @@ int32_t SPParksSitesWriter::writeHeader()
   if(!outfile)
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
-    return getErrorCondition();
+    setErrorCondition(-100, ss);
+    return getErrorCode();
   }
 
   outfile << "-"
@@ -189,18 +193,17 @@ int32_t SPParksSitesWriter::writeHeader()
 // -----------------------------------------------------------------------------
 int32_t SPParksSitesWriter::writeFile()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
-    return getErrorCondition();
+    return getErrorCode();
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  // SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   size_t totalpoints = m->getGeometryAs<ImageGeom>()->getNumberOfElements();
 
@@ -209,9 +212,8 @@ int32_t SPParksSitesWriter::writeFile()
   if(!outfile)
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
-    return getErrorCondition();
+    setErrorCondition(-100, ss);
+    return getErrorCode();
   }
 
   qint64 millis = QDateTime::currentMSecsSinceEpoch();
@@ -236,11 +238,11 @@ int32_t SPParksSitesWriter::writeFile()
       if(currentMillis - millis > 1000)
       {
         buf.clear();
-        ss << getMessagePrefix() << " " << static_cast<int>((float)(k) / (float)(totalpoints)*100) << " % Completed ";
+        ss << static_cast<int>((float)(k) / (float)(totalpoints)*100) << " % Completed ";
         timeDiff = ((float)k / (float)(currentMillis - startMillis));
         estimatedTime = (float)(totalpoints - k) / timeDiff;
         ss << " || Est. Time Remain: " << DREAM3D::convertMillisToHrsMinSecs(estimatedTime);
-        notifyStatusMessage(getHumanLabel(), buf);
+        notifyStatusMessage(buf);
         millis = QDateTime::currentMSecsSinceEpoch();
       }
     }
@@ -274,7 +276,7 @@ AbstractFilter::Pointer SPParksSitesWriter::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksSitesWriter::getCompiledLibraryName() const
+QString SPParksSitesWriter::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -282,7 +284,7 @@ const QString SPParksSitesWriter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksSitesWriter::getBrandingString() const
+QString SPParksSitesWriter::getBrandingString() const
 {
   return "IO";
 }
@@ -290,7 +292,7 @@ const QString SPParksSitesWriter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksSitesWriter::getFilterVersion() const
+QString SPParksSitesWriter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -300,7 +302,7 @@ const QString SPParksSitesWriter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksSitesWriter::getGroupName() const
+QString SPParksSitesWriter::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -308,7 +310,7 @@ const QString SPParksSitesWriter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SPParksSitesWriter::getUuid()
+QUuid SPParksSitesWriter::getUuid() const
 {
   return QUuid("{bcf2f246-610f-5575-a434-241d04114b9f}");
 }
@@ -316,7 +318,7 @@ const QUuid SPParksSitesWriter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksSitesWriter::getSubGroupName() const
+QString SPParksSitesWriter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -324,7 +326,48 @@ const QString SPParksSitesWriter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SPParksSitesWriter::getHumanLabel() const
+QString SPParksSitesWriter::getHumanLabel() const
 {
   return "Export SPParks Sites File";
+}
+
+// -----------------------------------------------------------------------------
+SPParksSitesWriter::Pointer SPParksSitesWriter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SPParksSitesWriter> SPParksSitesWriter::New()
+{
+  struct make_shared_enabler : public SPParksSitesWriter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksSitesWriter::getNameOfClass() const
+{
+  return QString("SPParksSitesWriter");
+}
+
+// -----------------------------------------------------------------------------
+QString SPParksSitesWriter::ClassName()
+{
+  return QString("SPParksSitesWriter");
+}
+
+// -----------------------------------------------------------------------------
+void SPParksSitesWriter::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath SPParksSitesWriter::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
 }

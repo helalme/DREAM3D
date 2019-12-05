@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "YSChoiAbaqusReader.h"
 
 // C Includes
@@ -41,21 +43,27 @@
 // C++ Includes
 #include <iomanip>
 
+#include <QtCore/QDebug>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
-#include <QtCore/QMap>
 #include <QtCore/QString>
-#include <QtCore/QtDebug>
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/MatrixMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -65,6 +73,24 @@
 #define DIMS "DIMENSIONS"
 #define RES "SPACING"
 #define LOOKUP "LOOKUP_TABLE"
+
+using QuatF = Quaternion<float>;
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+  AttributeMatrixID22 = 22,
+  AttributeMatrixID23 = 23,
+
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+  DataArrayID35 = 35,
+  DataArrayID36 = 36,
+
+  DataContainerID = 1
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -96,7 +122,7 @@ YSChoiAbaqusReader::~YSChoiAbaqusReader() = default;
 void YSChoiAbaqusReader::setupFilterParameters()
 {
   FileReader::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input File", InputFile, FilterParameter::Parameter, YSChoiAbaqusReader));
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input Feature Orientation File", InputFeatureInfoFile, FilterParameter::Parameter, YSChoiAbaqusReader));
@@ -121,7 +147,7 @@ void YSChoiAbaqusReader::setupFilterParameters()
 void YSChoiAbaqusReader::readFilterParameters(AbstractFilterParametersReader* reader, int index)
 {
   reader->openFilterGroup(this, index);
-  setDataContainerName(reader->readString("DataContainerName", getDataContainerName()));
+  setDataContainerName(reader->readDataArrayPath("DataContainerName", getDataContainerName()));
   setCellAttributeMatrixName(reader->readString("CellAttributeMatrixName", getCellAttributeMatrixName()));
   setCellFeatureAttributeMatrixName(reader->readString("CellFeatureAttributeMatrixName", getCellFeatureAttributeMatrixName()));
   setCellEnsembleAttributeMatrixName(reader->readString("CellEnsembleAttributeMatrixName", getCellEnsembleAttributeMatrixName()));
@@ -142,8 +168,8 @@ void YSChoiAbaqusReader::readFilterParameters(AbstractFilterParametersReader* re
 // -----------------------------------------------------------------------------
 void YSChoiAbaqusReader::updateCellInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_CellEulerAnglesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -168,8 +194,8 @@ void YSChoiAbaqusReader::updateCellInstancePointers()
 // -----------------------------------------------------------------------------
 void YSChoiAbaqusReader::updateFeatureInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_AvgQuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -186,8 +212,8 @@ void YSChoiAbaqusReader::updateFeatureInstancePointers()
 // -----------------------------------------------------------------------------
 void YSChoiAbaqusReader::updateEnsembleInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -208,11 +234,11 @@ void YSChoiAbaqusReader::initialize()
 void YSChoiAbaqusReader::dataCheck()
 {
   DataArrayPath tempPath;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getDataContainerName(), DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -220,23 +246,23 @@ void YSChoiAbaqusReader::dataCheck()
   ImageGeom::Pointer image = ImageGeom::CreateGeometry(SIMPL::Geometry::ImageGeometry);
   m->setGeometry(image);
 
-  QVector<size_t> tDims(3, 0);
-  AttributeMatrix::Pointer cellAttrMat = m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell);
-  if(getErrorCondition() < 0 || nullptr == cellAttrMat.get())
+  std::vector<size_t> tDims(3, 0);
+  AttributeMatrix::Pointer cellAttrMat = m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell, AttributeMatrixID21);
+  if(getErrorCode() < 0 || nullptr == cellAttrMat.get())
   {
     return;
   }
   tDims.resize(1);
   tDims[0] = 0;
 
-  AttributeMatrix::Pointer cellFeatureAttrMat = m->createNonPrereqAttributeMatrix(this, getCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature);
-  if(getErrorCondition() < 0 || nullptr == cellFeatureAttrMat.get())
+  AttributeMatrix::Pointer cellFeatureAttrMat = m->createNonPrereqAttributeMatrix(this, getCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature, AttributeMatrixID22);
+  if(getErrorCode() < 0 || nullptr == cellFeatureAttrMat.get())
   {
     return;
   }
 
-  AttributeMatrix::Pointer cellEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble);
-  if(getErrorCondition() < 0 || nullptr == cellEnsembleAttrMat.get())
+  AttributeMatrix::Pointer cellEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble, AttributeMatrixID23);
+  if(getErrorCode() < 0 || nullptr == cellEnsembleAttrMat.get())
   {
     return;
   }
@@ -245,14 +271,12 @@ void YSChoiAbaqusReader::dataCheck()
   if(getInputFile().isEmpty())
   {
     QString ss = QObject::tr("%1 needs the Input File Set and it was not.").arg(ClassName());
-    setErrorCondition(-387);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-387, ss);
   }
   else if(!fi.exists())
   {
     QString ss = QObject::tr("The input file does not exist");
-    setErrorCondition(-388);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-388, ss);
   }
   else
   {
@@ -263,8 +287,7 @@ void YSChoiAbaqusReader::dataCheck()
     if(!in.open(QIODevice::ReadOnly | QIODevice::Text))
     {
       QString msg = QObject::tr("Abaqus file could not be opened: %1").arg(getInputFile());
-      setErrorCondition(-100);
-      notifyErrorMessage(getHumanLabel(), "", getErrorCondition());
+      setErrorCondition(-100, "");
       return;
     }
     QString word;
@@ -283,7 +306,7 @@ void YSChoiAbaqusReader::dataCheck()
         zpoints = tokens[3].toInt(&ok, 10);
         size_t dims[3] = {static_cast<size_t>(xpoints), static_cast<size_t>(ypoints), static_cast<size_t>(zpoints)};
         m->getGeometryAs<ImageGeom>()->setDimensions(dims);
-        m->getGeometryAs<ImageGeom>()->setOrigin(0, 0, 0);
+        m->getGeometryAs<ImageGeom>()->setOrigin(FloatVec3Type(0.0f, 0.0f, 0.0f));
       }
       if(RES == word)
       {
@@ -291,14 +314,14 @@ void YSChoiAbaqusReader::dataCheck()
         resx = tokens[1].toInt(&ok, 10);
         resy = tokens[2].toInt(&ok, 10);
         resz = tokens[3].toInt(&ok, 10);
-        float res[3] = {resx, resy, resz};
-        m->getGeometryAs<ImageGeom>()->setResolution(res);
+        FloatVec3Type res = {resx, resy, resz};
+        m->getGeometryAs<ImageGeom>()->setSpacing(res);
       }
     }
   }
 
-  QVector<size_t> dims(1, 3);
-  tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), getCellEulerAnglesArrayName());
+  std::vector<size_t> dims(1, 3);
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), getCellEulerAnglesArrayName());
   m_CellEulerAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
       this, tempPath, 0, dims);                    /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellEulerAnglesPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -306,47 +329,44 @@ void YSChoiAbaqusReader::dataCheck()
     m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
   dims[0] = 4;
-  tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), getQuatsArrayName());
-  m_QuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                              dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), getQuatsArrayName());
+  m_QuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, dims, "", DataArrayID31);
   if(nullptr != m_QuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  tempPath.update(getDataContainerName(), getCellFeatureAttributeMatrixName(), getAvgQuatsArrayName());
-  m_AvgQuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                 dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellFeatureAttributeMatrixName(), getAvgQuatsArrayName());
+  m_AvgQuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, dims, "", DataArrayID32);
   if(nullptr != m_AvgQuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
   dims[0] = 1;
-  tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), getCellPhasesArrayName());
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), getCellPhasesArrayName());
   m_CellPhasesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 1, dims);               /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 1, dims, "", DataArrayID35); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellPhasesPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  tempPath.update(getDataContainerName(), getCellFeatureAttributeMatrixName(), getSurfaceFeaturesArrayName());
-  m_SurfaceFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, false,
-                                                                                                                      dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellFeatureAttributeMatrixName(), getSurfaceFeaturesArrayName());
+  m_SurfaceFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, false, dims, "", DataArrayID33);
   if(nullptr != m_SurfaceFeaturesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceFeatures = m_SurfaceFeaturesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  tempPath.update(getDataContainerName(), getCellAttributeMatrixName(), getFeatureIdsArrayName());
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), getFeatureIdsArrayName());
   m_FeatureIdsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 0, dims);               /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID36); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   // typedef DataArray<unsigned int> XTalStructArrayType;
-  tempPath.update(getDataContainerName(), getCellEnsembleAttributeMatrixName(), getCrystalStructuresArrayName());
-  m_CrystalStructuresPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter, uint32_t>(
-      this, tempPath, Ebsd::CrystalStructure::Cubic_High, dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  tempPath.update(getDataContainerName().getDataContainerName(), getCellEnsembleAttributeMatrixName(), getCrystalStructuresArrayName());
+  m_CrystalStructuresPtr =
+      getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter, uint32_t>(this, tempPath, Ebsd::CrystalStructure::Cubic_High, dims, "", DataArrayID34);
   if(nullptr != m_CrystalStructuresPtr.lock())                   /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CrystalStructures = m_CrystalStructuresPtr.lock()->getPointer(0);
@@ -378,8 +398,7 @@ void YSChoiAbaqusReader::execute()
   if(!in.open(QIODevice::ReadOnly | QIODevice::Text))
   {
     QString msg = QObject::tr("Abaqus file could not be opened: %1").arg(getInputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), "", getErrorCondition());
+    setErrorCondition(-100, "");
     return;
   }
 
@@ -399,7 +418,7 @@ void YSChoiAbaqusReader::execute()
       totalpoints = xpoints * ypoints * zpoints;
       size_t dims[3] = {static_cast<size_t>(xpoints), static_cast<size_t>(ypoints), static_cast<size_t>(zpoints)};
       m->getGeometryAs<ImageGeom>()->setDimensions(dims);
-      m->getGeometryAs<ImageGeom>()->setOrigin(0, 0, 0);
+      m->getGeometryAs<ImageGeom>()->setOrigin(FloatVec3Type(0.0f, 0.0f, 0.0f));
     }
     if(buf.startsWith(RES))
     {
@@ -407,8 +426,8 @@ void YSChoiAbaqusReader::execute()
       resx = tokens[1].toInt(&ok, 10);
       resy = tokens[2].toInt(&ok, 10);
       resz = tokens[3].toInt(&ok, 10);
-      float res[3] = {resx, resy, resz};
-      m->getGeometryAs<ImageGeom>()->setResolution(res);
+      FloatVec3Type res = {resx, resy, resz};
+      m->getGeometryAs<ImageGeom>()->setSpacing(res);
     }
     if(buf.startsWith(LOOKUP))
     {
@@ -422,8 +441,7 @@ void YSChoiAbaqusReader::execute()
   if(!in2.open(QIODevice::ReadOnly | QIODevice::Text))
   {
     QString msg = QObject::tr("Abaqus Feature Info file could not be opened: %1").arg(getInputFeatureInfoFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), "", getErrorCondition());
+    setErrorCondition(-100, "");
     return;
   }
 
@@ -434,7 +452,7 @@ void YSChoiAbaqusReader::execute()
   buf = in2.readLine();
   QList<QByteArray> tokens = buf.split(' ');
   //  in2 >> word >> word >> word >> word >> word >> word;
-  QVector<size_t> tDims(3, 0);
+  std::vector<size_t> tDims(3, 0);
   tDims[0] = xpoints;
   tDims[1] = ypoints;
   tDims[2] = zpoints;
@@ -495,24 +513,25 @@ void YSChoiAbaqusReader::execute()
     }
   }
   // Read feature info
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
-  avgQuats[0].x = 0.0;
-  avgQuats[0].y = 0.0;
-  avgQuats[0].z = 0.0;
-  avgQuats[0].w = 0.0;
+  float* avgQuats = m_AvgQuatsPtr.lock()->getTuplePointer(0);
+  // Initialize the first Quat to all zeros
+  avgQuats[0] = 0.0;
+  avgQuats[1] = 0.0;
+  avgQuats[2] = 0.0;
+  avgQuats[3] = 0.0;
 
   for(int i = 1; i < numfeatures + 1; i++)
   {
     buf = in2.readLine();
     tokens = buf.split(' ');
     gnum = tokens[0].toInt(&ok, 10);
-    avgQuats[i].x = tokens[2].toFloat(&ok);
-    avgQuats[i].y = tokens[3].toFloat(&ok);
-    avgQuats[i].z = tokens[4].toFloat(&ok);
-    avgQuats[i].w = tokens[5].toFloat(&ok);
+    avgQuats[i * 4 + 0] = tokens[2].toFloat(&ok);
+    avgQuats[i * 4 + 1] = tokens[3].toFloat(&ok);
+    avgQuats[i * 4 + 2] = tokens[4].toFloat(&ok);
+    avgQuats[i * 4 + 3] = tokens[5].toFloat(&ok);
   }
-  QuatF q;
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+  //  QuatF q;
+  //  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
   float g[3][3];
   for(int i = 0; i < (xpoints * ypoints * zpoints); i++)
   {
@@ -524,13 +543,19 @@ void YSChoiAbaqusReader::execute()
       }
     }
     MatrixMath::Normalize3x3(g);
-    q.w = static_cast<float>(sqrt((1.0 + g[0][0] + g[1][1] + g[2][2])) / 2.0);
-    q.x = static_cast<float>((g[1][2] - g[2][1]) / (4.0 * q.w));
-    q.y = static_cast<float>((g[2][0] - g[0][2]) / (4.0 * q.w));
-    q.z = static_cast<float>((g[0][1] - g[1][0]) / (4.0 * q.w));
-    QuaternionMathF::Copy(q, quats[i]);
-    FOrientArrayType eu(m_CellEulerAngles + (3 * i), 3);
-    FOrientTransformsType::qu2eu(FOrientArrayType(q), eu);
+    QuatF q;
+    q.w() = static_cast<float>(sqrt((1.0 + g[0][0] + g[1][1] + g[2][2])) / 2.0);
+    q.x() = static_cast<float>((g[1][2] - g[2][1]) / (4.0 * q.w()));
+    q.y() = static_cast<float>((g[2][0] - g[0][2]) / (4.0 * q.w()));
+    q.z() = static_cast<float>((g[0][1] - g[1][0]) / (4.0 * q.w()));
+
+    m_Quats[i * 4 + 0] = q[0];
+    m_Quats[i * 4 + 1] = q[1];
+    m_Quats[i * 4 + 2] = q[2];
+    m_Quats[i * 4 + 3] = q[3];
+
+    OrientationF eu(m_CellEulerAngles + (3 * i), 3);
+    eu = OrientationTransformation::qu2eu<QuatF, OrientationF>(q);
 
     delete[] mat[i];
   }
@@ -553,7 +578,7 @@ AbstractFilter::Pointer YSChoiAbaqusReader::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString YSChoiAbaqusReader::getCompiledLibraryName() const
+QString YSChoiAbaqusReader::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -561,7 +586,7 @@ const QString YSChoiAbaqusReader::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString YSChoiAbaqusReader::getBrandingString() const
+QString YSChoiAbaqusReader::getBrandingString() const
 {
   return "Orientation Analysis";
 }
@@ -569,7 +594,7 @@ const QString YSChoiAbaqusReader::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString YSChoiAbaqusReader::getFilterVersion() const
+QString YSChoiAbaqusReader::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -580,7 +605,7 @@ const QString YSChoiAbaqusReader::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString YSChoiAbaqusReader::getGroupName() const
+QString YSChoiAbaqusReader::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -588,7 +613,7 @@ const QString YSChoiAbaqusReader::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid YSChoiAbaqusReader::getUuid()
+QUuid YSChoiAbaqusReader::getUuid() const
 {
   return QUuid("{917b66ac-35ba-56ac-b752-9c4c3c17266d}");
 }
@@ -596,7 +621,7 @@ const QUuid YSChoiAbaqusReader::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString YSChoiAbaqusReader::getSubGroupName() const
+QString YSChoiAbaqusReader::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -604,7 +629,192 @@ const QString YSChoiAbaqusReader::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString YSChoiAbaqusReader::getHumanLabel() const
+QString YSChoiAbaqusReader::getHumanLabel() const
 {
   return "Import YS Choi Abaqus Vtk Output File";
+}
+
+// -----------------------------------------------------------------------------
+YSChoiAbaqusReader::Pointer YSChoiAbaqusReader::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<YSChoiAbaqusReader> YSChoiAbaqusReader::New()
+{
+  struct make_shared_enabler : public YSChoiAbaqusReader
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getNameOfClass() const
+{
+  return QString("YSChoiAbaqusReader");
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::ClassName()
+{
+  return QString("YSChoiAbaqusReader");
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setDataContainerName(const DataArrayPath& value)
+{
+  m_DataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath YSChoiAbaqusReader::getDataContainerName() const
+{
+  return m_DataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setCellEnsembleAttributeMatrixName(const QString& value)
+{
+  m_CellEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getCellEnsembleAttributeMatrixName() const
+{
+  return m_CellEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setCellFeatureAttributeMatrixName(const QString& value)
+{
+  m_CellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getCellFeatureAttributeMatrixName() const
+{
+  return m_CellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setCellAttributeMatrixName(const QString& value)
+{
+  m_CellAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getCellAttributeMatrixName() const
+{
+  return m_CellAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setInputFeatureInfoFile(const QString& value)
+{
+  m_InputFeatureInfoFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getInputFeatureInfoFile() const
+{
+  return m_InputFeatureInfoFile;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setCellEulerAnglesArrayName(const QString& value)
+{
+  m_CellEulerAnglesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getCellEulerAnglesArrayName() const
+{
+  return m_CellEulerAnglesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setQuatsArrayName(const QString& value)
+{
+  m_QuatsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getQuatsArrayName() const
+{
+  return m_QuatsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setAvgQuatsArrayName(const QString& value)
+{
+  m_AvgQuatsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getAvgQuatsArrayName() const
+{
+  return m_AvgQuatsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setCellPhasesArrayName(const QString& value)
+{
+  m_CellPhasesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getCellPhasesArrayName() const
+{
+  return m_CellPhasesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setSurfaceFeaturesArrayName(const QString& value)
+{
+  m_SurfaceFeaturesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getSurfaceFeaturesArrayName() const
+{
+  return m_SurfaceFeaturesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setFeatureIdsArrayName(const QString& value)
+{
+  m_FeatureIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getFeatureIdsArrayName() const
+{
+  return m_FeatureIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void YSChoiAbaqusReader::setCrystalStructuresArrayName(const QString& value)
+{
+  m_CrystalStructuresArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString YSChoiAbaqusReader::getCrystalStructuresArrayName() const
+{
+  return m_CrystalStructuresArrayName;
 }

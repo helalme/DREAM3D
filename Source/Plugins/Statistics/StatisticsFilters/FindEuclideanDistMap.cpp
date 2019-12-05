@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindEuclideanDistMap.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -44,18 +46,36 @@
 #include <tbb/tick_count.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+  DataArrayID35 = 35,
+  DataArrayID36 = 36,
+};
 
 /**
  * @brief The ComputeDistanceMapImpl class implements a threaded algorithm that computes the  distance map
@@ -101,10 +121,7 @@ class ComputeDistanceMapImpl
       int64_t xpoints = static_cast<int64_t>(imageGeom->getXPoints());
       int64_t ypoints = static_cast<int64_t>(imageGeom->getYPoints());
       int64_t zpoints = static_cast<int64_t>(imageGeom->getZPoints());
-      double resx = 0.0;
-      double resy = 0.0;
-      double resz = 0.0;
-      std::tie(resx, resy, resz) = imageGeom->getResolution();
+      FloatVec3Type spacing = imageGeom->getSpacing();
 
       neighbors[0] = -xpoints * ypoints;
       neighbors[1] = -xpoints;
@@ -240,15 +257,15 @@ class ComputeDistanceMapImpl
             yStride = n * xpoints;
             for(int64_t p = 0; p < xpoints; p++)
             {
-              x1 = double(p) * resx;
-              y1 = double(n) * resy;
-              z1 = double(m) * resz;
+              x1 = static_cast<double>(p) * spacing[0];
+              y1 = static_cast<double>(n) * spacing[1];
+              z1 = static_cast<double>(m) * spacing[2];
               nearestneighbor = voxel_NearestNeighbor[zStride + yStride + p];
               if(nearestneighbor >= 0)
               {
-                x2 = resx * double(nearestneighbor % xpoints);                           // find_xcoord(nearestneighbor);
-                y2 = resy * double(int64_t(nearestneighbor * oneOverxpoints) % ypoints); // find_ycoord(nearestneighbor);
-                z2 = resz * floor(nearestneighbor * oneOverzBlock);                      // find_zcoord(nearestneighbor);
+                x2 = spacing[0] * double(nearestneighbor % xpoints);                           // find_xcoord(nearestneighbor);
+                y2 = spacing[1] * double(int64_t(nearestneighbor * oneOverxpoints) % ypoints); // find_ycoord(nearestneighbor);
+                z2 = spacing[2] * floor(nearestneighbor * oneOverzBlock);                      // find_zcoord(nearestneighbor);
                 dist = ((x1 - x2) * (x1 - x2)) + ((y1 - y2) * (y1 - y2)) + ((z1 - z2) * (z1 - z2));
                 dist = sqrt(dist);
                 voxel_Distance[zStride + yStride + p] = dist;
@@ -303,7 +320,7 @@ FindEuclideanDistMap::~FindEuclideanDistMap() = default;
 // -----------------------------------------------------------------------------
 void FindEuclideanDistMap::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_BOOL_FP("Calculate Manhattan Distance", CalcManhattanDist, FilterParameter::Parameter, FindEuclideanDistMap));
   QStringList linkedProps("GBDistancesArrayName");
 
@@ -326,10 +343,10 @@ void FindEuclideanDistMap::setupFilterParameters()
   }
 
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Boundary Distances", GBDistancesArrayName, FilterParameter::CreatedArray, FindEuclideanDistMap));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Triple Line Distances", TJDistancesArrayName, FilterParameter::CreatedArray, FindEuclideanDistMap));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Quadruple Point Distances", QPDistancesArrayName, FilterParameter::CreatedArray, FindEuclideanDistMap));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Nearest Neighbors", NearestNeighborsArrayName, FilterParameter::CreatedArray, FindEuclideanDistMap));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Boundary Distances", GBDistancesArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, FindEuclideanDistMap));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Triple Line Distances", TJDistancesArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, FindEuclideanDistMap));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Quadruple Point Distances", QPDistancesArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, FindEuclideanDistMap));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Nearest Neighbors", NearestNeighborsArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, FindEuclideanDistMap));
 
   setFilterParameters(parameters);
 }
@@ -365,13 +382,13 @@ void FindEuclideanDistMap::initialize()
 // -----------------------------------------------------------------------------
 void FindEuclideanDistMap::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())
@@ -384,7 +401,7 @@ void FindEuclideanDistMap::dataCheck()
     tempPath.update(getFeatureIdsArrayPath().getDataContainerName(), getFeatureIdsArrayPath().getAttributeMatrixName(), getGBDistancesArrayName());
     if(m_CalcManhattanDist)
     {
-      m_GBManhattanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, -1, cDims);
+      m_GBManhattanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, -1, cDims, "", DataArrayID31);
       if(nullptr != m_GBManhattanDistancesPtr.lock())
       {
         m_GBManhattanDistances = m_GBManhattanDistancesPtr.lock()->getPointer(0);
@@ -392,7 +409,7 @@ void FindEuclideanDistMap::dataCheck()
     }
     else
     {
-      m_GBEuclideanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -1, cDims);
+      m_GBEuclideanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -1, cDims, "", DataArrayID32);
       if(nullptr != m_GBEuclideanDistancesPtr.lock())
       {
         m_GBEuclideanDistances = m_GBEuclideanDistancesPtr.lock()->getPointer(0);
@@ -405,7 +422,7 @@ void FindEuclideanDistMap::dataCheck()
     tempPath.update(getFeatureIdsArrayPath().getDataContainerName(), getFeatureIdsArrayPath().getAttributeMatrixName(), getTJDistancesArrayName());
     if(m_CalcManhattanDist)
     {
-      m_TJManhattanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, -1, cDims);
+      m_TJManhattanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, -1, cDims, "", DataArrayID33);
       if(nullptr != m_TJManhattanDistancesPtr.lock())
       {
         m_TJManhattanDistances = m_TJManhattanDistancesPtr.lock()->getPointer(0);
@@ -413,7 +430,7 @@ void FindEuclideanDistMap::dataCheck()
     }
     else
     {
-      m_TJEuclideanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -1, cDims);
+      m_TJEuclideanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -1, cDims, "", DataArrayID34);
       if(nullptr != m_TJEuclideanDistancesPtr.lock())
       {
         m_TJEuclideanDistances = m_TJEuclideanDistancesPtr.lock()->getPointer(0);
@@ -426,7 +443,7 @@ void FindEuclideanDistMap::dataCheck()
     tempPath.update(getFeatureIdsArrayPath().getDataContainerName(), getFeatureIdsArrayPath().getAttributeMatrixName(), getQPDistancesArrayName());
     if(m_CalcManhattanDist)
     {
-      m_QPManhattanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, -1, cDims);
+      m_QPManhattanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, -1, cDims, "", DataArrayID35);
       if(nullptr != m_QPManhattanDistancesPtr.lock())
       {
         m_QPManhattanDistances = m_QPManhattanDistancesPtr.lock()->getPointer(0);
@@ -434,7 +451,7 @@ void FindEuclideanDistMap::dataCheck()
     }
     else
     {
-      m_QPEuclideanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -1, cDims);
+      m_QPEuclideanDistancesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -1, cDims, "", DataArrayID36);
       if(nullptr != m_QPEuclideanDistancesPtr.lock())
       {
         m_QPEuclideanDistances = m_QPEuclideanDistancesPtr.lock()->getPointer(0);
@@ -461,7 +478,7 @@ void FindEuclideanDistMap::preflight()
   emit preflightAboutToExecute();
   emit updateFilterParameters(this);
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     emit preflightExecuted();
     setInPreflight(false);
@@ -528,8 +545,7 @@ void FindEuclideanDistMap::findDistanceMap()
   int32_t feature = 0;
   std::vector<int32_t> coordination;
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
     static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -737,10 +753,10 @@ void FindEuclideanDistMap::findDistanceMap()
 // -----------------------------------------------------------------------------
 void FindEuclideanDistMap::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -772,7 +788,7 @@ AbstractFilter::Pointer FindEuclideanDistMap::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEuclideanDistMap::getCompiledLibraryName() const
+QString FindEuclideanDistMap::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -780,7 +796,7 @@ const QString FindEuclideanDistMap::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEuclideanDistMap::getBrandingString() const
+QString FindEuclideanDistMap::getBrandingString() const
 {
   return "Statistics";
 }
@@ -788,7 +804,7 @@ const QString FindEuclideanDistMap::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEuclideanDistMap::getFilterVersion() const
+QString FindEuclideanDistMap::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -798,7 +814,7 @@ const QString FindEuclideanDistMap::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEuclideanDistMap::getGroupName() const
+QString FindEuclideanDistMap::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -806,7 +822,7 @@ const QString FindEuclideanDistMap::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindEuclideanDistMap::getUuid()
+QUuid FindEuclideanDistMap::getUuid() const
 {
   return QUuid("{933e4b2d-dd61-51c3-98be-00548ba783a3}");
 }
@@ -814,7 +830,7 @@ const QUuid FindEuclideanDistMap::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEuclideanDistMap::getSubGroupName() const
+QString FindEuclideanDistMap::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -822,7 +838,156 @@ const QString FindEuclideanDistMap::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEuclideanDistMap::getHumanLabel() const
+QString FindEuclideanDistMap::getHumanLabel() const
 {
   return "Find Euclidean Distance Map";
+}
+
+// -----------------------------------------------------------------------------
+FindEuclideanDistMap::Pointer FindEuclideanDistMap::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindEuclideanDistMap> FindEuclideanDistMap::New()
+{
+  struct make_shared_enabler : public FindEuclideanDistMap
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEuclideanDistMap::getNameOfClass() const
+{
+  return QString("FindEuclideanDistMap");
+}
+
+// -----------------------------------------------------------------------------
+QString FindEuclideanDistMap::ClassName()
+{
+  return QString("FindEuclideanDistMap");
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEuclideanDistMap::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setGBDistancesArrayName(const QString& value)
+{
+  m_GBDistancesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEuclideanDistMap::getGBDistancesArrayName() const
+{
+  return m_GBDistancesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setTJDistancesArrayName(const QString& value)
+{
+  m_TJDistancesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEuclideanDistMap::getTJDistancesArrayName() const
+{
+  return m_TJDistancesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setQPDistancesArrayName(const QString& value)
+{
+  m_QPDistancesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEuclideanDistMap::getQPDistancesArrayName() const
+{
+  return m_QPDistancesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setNearestNeighborsArrayName(const QString& value)
+{
+  m_NearestNeighborsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEuclideanDistMap::getNearestNeighborsArrayName() const
+{
+  return m_NearestNeighborsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setDoBoundaries(bool value)
+{
+  m_DoBoundaries = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindEuclideanDistMap::getDoBoundaries() const
+{
+  return m_DoBoundaries;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setDoTripleLines(bool value)
+{
+  m_DoTripleLines = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindEuclideanDistMap::getDoTripleLines() const
+{
+  return m_DoTripleLines;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setDoQuadPoints(bool value)
+{
+  m_DoQuadPoints = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindEuclideanDistMap::getDoQuadPoints() const
+{
+  return m_DoQuadPoints;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setSaveNearestNeighbors(bool value)
+{
+  m_SaveNearestNeighbors = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindEuclideanDistMap::getSaveNearestNeighbors() const
+{
+  return m_SaveNearestNeighbors;
+}
+
+// -----------------------------------------------------------------------------
+void FindEuclideanDistMap::setCalcManhattanDist(bool value)
+{
+  m_CalcManhattanDist = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindEuclideanDistMap::getCalcManhattanDist() const
+{
+  return m_CalcManhattanDist;
 }

@@ -33,32 +33,46 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindAvgOrientations.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/LaueOps.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
 FindAvgOrientations::FindAvgOrientations()
-: m_FeatureIdsArrayPath("", "", "")
-, m_CellPhasesArrayPath("", "", "")
-, m_QuatsArrayPath("", "", "")
-, m_CrystalStructuresArrayPath("", "", "")
-, m_AvgQuatsArrayPath("", "", "")
-, m_AvgEulerAnglesArrayPath("", "", "")
+: m_FeatureIdsArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::CellData::FeatureIds)
+, m_CellPhasesArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::CellData::Phases)
+, m_QuatsArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::CellData::Quats)
+, m_CrystalStructuresArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellEnsembleAttributeMatrixName, SIMPL::EnsembleData::CrystalStructures)
+, m_AvgQuatsArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellFeatureAttributeMatrixName, SIMPL::FeatureData::AvgQuats)
+, m_AvgEulerAnglesArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellFeatureAttributeMatrixName, SIMPL::CellData::EulerAngles)
 {
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
-
 }
 
 // -----------------------------------------------------------------------------
@@ -71,7 +85,7 @@ FindAvgOrientations::~FindAvgOrientations() = default;
 // -----------------------------------------------------------------------------
 void FindAvgOrientations::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateCategoryRequirement(SIMPL::TypeNames::Int32, 1, AttributeMatrix::Category::Element);
@@ -130,19 +144,19 @@ void FindAvgOrientations::initialize()
 // -----------------------------------------------------------------------------
 void FindAvgOrientations::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeatureIdsArrayPath());
   }
@@ -153,7 +167,7 @@ void FindAvgOrientations::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -165,13 +179,12 @@ void FindAvgOrientations::dataCheck()
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getQuatsArrayPath());
   }
 
-  m_AvgQuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getAvgQuatsArrayPath(), 0,
-                                                                                                                 cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AvgQuatsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getAvgQuatsArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_AvgQuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
@@ -214,13 +227,14 @@ void FindAvgOrientations::preflight()
 // -----------------------------------------------------------------------------
 void FindAvgOrientations::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
+  QVector<LaueOps::Pointer> m_OrientationOps = LaueOps::getOrientationOpsQVector();
 
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
   size_t totalFeatures = m_AvgQuatsPtr.lock()->getNumberOfTuples();
@@ -228,15 +242,8 @@ void FindAvgOrientations::execute()
   std::vector<float> counts(totalFeatures, 0.0f);
 
   int32_t phase = 0;
-  QuatF voxquat = QuaternionMathF::New();
-  QuatF curavgquat = QuaternionMathF::New();
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
 
-  for(size_t i = 1; i < totalFeatures; i++)
-  {
-    QuaternionMathF::ElementWiseAssign(avgQuats[i], 0.0);
-  }
+  m_AvgQuatsPtr.lock()->initializeWithZeros();
 
   for(size_t i = 0; i < totalPoints; i++)
   {
@@ -244,30 +251,34 @@ void FindAvgOrientations::execute()
     {
       counts[m_FeatureIds[i]] += 1.0f;
       phase = m_CellPhases[i];
-      QuaternionMathF::Copy(quats[i], voxquat);
-      QuaternionMathF::Copy(avgQuats[m_FeatureIds[i]], curavgquat);
-      QuaternionMathF::ScalarDivide(curavgquat, counts[m_FeatureIds[i]]);
+      QuatF voxquat(m_Quats + i * 4);
+      QuatF curavgquat(m_AvgQuats + m_FeatureIds[i] * 4);
+      curavgquat.scalarDivide(counts[m_FeatureIds[i]]);
 
       if(counts[m_FeatureIds[i]] == 1.0f)
       {
-        QuaternionMathF::Identity(curavgquat);
+        curavgquat.identity();
       }
       m_OrientationOps[m_CrystalStructures[phase]]->getNearestQuat(curavgquat, voxquat);
-      QuaternionMathF::Add(avgQuats[m_FeatureIds[i]], voxquat, avgQuats[m_FeatureIds[i]]);
+
+      QuatF qSum(m_AvgQuats + m_FeatureIds[i] * 4); // Wrap the pointer
+      qSum = qSum + voxquat;
     }
   }
 
   for(size_t i = 1; i < totalFeatures; i++)
   {
+
+    QuatF qAvg = QuatF(m_AvgQuats + i * 4);
     if(counts[i] == 0.0f)
     {
-      QuaternionMathF::Identity(avgQuats[i]);
+      qAvg.identity();
     }
-    QuaternionMathF::ScalarDivide(avgQuats[i], counts[i]);
-    QuaternionMathF::UnitQuaternion(avgQuats[i]);
+    qAvg.scalarDivide(counts[i]);
+    qAvg = qAvg.unitQuaternion();
 
-    FOrientArrayType eu(m_FeatureEulerAngles + (3 * i), 3);
-    FOrientTransformsType::qu2eu(FOrientArrayType(avgQuats[i]), eu);
+    Orientation<float> eu(m_FeatureEulerAngles + (3 * i), 3);                           // Wrap the pointer
+    eu = OrientationTransformation::qu2eu<Quaternion<float>, Orientation<float>>(qAvg); // Exploit the copy assignment that will not reallocate if we are wrapping an existing pointer.
   }
 }
 
@@ -287,7 +298,7 @@ AbstractFilter::Pointer FindAvgOrientations::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgOrientations::getCompiledLibraryName() const
+QString FindAvgOrientations::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -295,7 +306,7 @@ const QString FindAvgOrientations::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgOrientations::getBrandingString() const
+QString FindAvgOrientations::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -303,7 +314,7 @@ const QString FindAvgOrientations::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgOrientations::getFilterVersion() const
+QString FindAvgOrientations::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -313,7 +324,7 @@ const QString FindAvgOrientations::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgOrientations::getGroupName() const
+QString FindAvgOrientations::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -321,7 +332,7 @@ const QString FindAvgOrientations::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindAvgOrientations::getUuid()
+QUuid FindAvgOrientations::getUuid() const
 {
   return QUuid("{bf7036d8-25bd-540e-b6de-3a5ab0e42c5f}");
 }
@@ -329,7 +340,7 @@ const QUuid FindAvgOrientations::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgOrientations::getSubGroupName() const
+QString FindAvgOrientations::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -337,7 +348,108 @@ const QString FindAvgOrientations::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgOrientations::getHumanLabel() const
+QString FindAvgOrientations::getHumanLabel() const
 {
   return "Find Feature Average Orientations";
+}
+
+// -----------------------------------------------------------------------------
+FindAvgOrientations::Pointer FindAvgOrientations::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindAvgOrientations> FindAvgOrientations::New()
+{
+  struct make_shared_enabler : public FindAvgOrientations
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindAvgOrientations::getNameOfClass() const
+{
+  return QString("FindAvgOrientations");
+}
+
+// -----------------------------------------------------------------------------
+QString FindAvgOrientations::ClassName()
+{
+  return QString("FindAvgOrientations");
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgOrientations::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgOrientations::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgOrientations::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgOrientations::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgOrientations::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgOrientations::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgOrientations::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgOrientations::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgOrientations::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgOrientations::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgOrientations::setAvgEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_AvgEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgOrientations::getAvgEulerAnglesArrayPath() const
+{
+  return m_AvgEulerAnglesArrayPath;
 }

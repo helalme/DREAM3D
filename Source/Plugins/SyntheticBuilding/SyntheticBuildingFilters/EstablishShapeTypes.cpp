@@ -33,14 +33,22 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "EstablishShapeTypes.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/ShapeTypeSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SyntheticBuilding/SyntheticBuildingConstants.h"
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
@@ -64,7 +72,7 @@ EstablishShapeTypes::~EstablishShapeTypes() = default;
 // -----------------------------------------------------------------------------
 void EstablishShapeTypes::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Ensemble Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -76,7 +84,7 @@ void EstablishShapeTypes::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Phase Types", InputPhaseTypesArrayPath, FilterParameter::RequiredArray, EstablishShapeTypes, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Ensemble Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Shape Types", ShapeTypesArrayName, FilterParameter::CreatedArray, EstablishShapeTypes));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Shape Types", ShapeTypesArrayName, InputPhaseTypesArrayPath, InputPhaseTypesArrayPath, FilterParameter::CreatedArray, EstablishShapeTypes));
   ShapeTypeSelectionFilterParameter::Pointer sType_parameter =
       SIMPL_NEW_SHAPETYPE_SELECTION_FP("Shape Types", ShapeTypeData, FilterParameter::CreatedArray, EstablishShapeTypes, "PhaseCount", "InputPhaseTypesArrayPath");
   parameters.push_back(sType_parameter);
@@ -114,13 +122,13 @@ void EstablishShapeTypes::initialize()
 // -----------------------------------------------------------------------------
 void EstablishShapeTypes::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   DataContainerArray::Pointer dca = getDataContainerArray();
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_PhaseTypesPtr = dca->getPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter>(this, getInputPhaseTypesArrayPath(), cDims);
   if(nullptr != m_PhaseTypesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -129,14 +137,14 @@ void EstablishShapeTypes::dataCheck()
 
   // Get the DataContainer first - same as phase types
   DataContainer::Pointer m = dca->getPrereqDataContainer(this, getInputPhaseTypesArrayPath().getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   // Now get the AttributeMatrix that the user wants to use to store the ShapeTypes array - same as phase types
   AttributeMatrix::Pointer cellEnsembleAttrMat = m->getPrereqAttributeMatrix(this, getInputPhaseTypesArrayPath().getAttributeMatrixName(), -990);
-  if(getErrorCondition() < 0 || nullptr == cellEnsembleAttrMat.get())
+  if(getErrorCode() < 0 || nullptr == cellEnsembleAttrMat.get())
   {
     return;
   }
@@ -167,10 +175,10 @@ void EstablishShapeTypes::preflight()
 // -----------------------------------------------------------------------------
 void EstablishShapeTypes::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -203,7 +211,7 @@ int EstablishShapeTypes::getPhaseCount()
     return 0;
   }
 
-  QVector<size_t> tupleDims = inputAttrMat->getTupleDimensions();
+  std::vector<size_t> tupleDims = inputAttrMat->getTupleDimensions();
   size_t phaseCount = 1;
   for(int32_t i = 0; i < tupleDims.size(); i++)
   {
@@ -229,7 +237,7 @@ AbstractFilter::Pointer EstablishShapeTypes::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EstablishShapeTypes::getCompiledLibraryName() const
+QString EstablishShapeTypes::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -237,7 +245,7 @@ const QString EstablishShapeTypes::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EstablishShapeTypes::getBrandingString() const
+QString EstablishShapeTypes::getBrandingString() const
 {
   return "SyntheticBuilding";
 }
@@ -245,7 +253,7 @@ const QString EstablishShapeTypes::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EstablishShapeTypes::getFilterVersion() const
+QString EstablishShapeTypes::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -255,7 +263,7 @@ const QString EstablishShapeTypes::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EstablishShapeTypes::getGroupName() const
+QString EstablishShapeTypes::getGroupName() const
 {
   return SIMPL::FilterGroups::SyntheticBuildingFilters;
 }
@@ -263,7 +271,7 @@ const QString EstablishShapeTypes::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid EstablishShapeTypes::getUuid()
+QUuid EstablishShapeTypes::getUuid() const
 {
   return QUuid("{4edbbd35-a96b-5ff1-984a-153d733e2abb}");
 }
@@ -271,7 +279,7 @@ const QUuid EstablishShapeTypes::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EstablishShapeTypes::getSubGroupName() const
+QString EstablishShapeTypes::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GenerationFilters;
 }
@@ -279,7 +287,72 @@ const QString EstablishShapeTypes::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EstablishShapeTypes::getHumanLabel() const
+QString EstablishShapeTypes::getHumanLabel() const
 {
   return "Establish Shape Types";
+}
+
+// -----------------------------------------------------------------------------
+EstablishShapeTypes::Pointer EstablishShapeTypes::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<EstablishShapeTypes> EstablishShapeTypes::New()
+{
+  struct make_shared_enabler : public EstablishShapeTypes
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString EstablishShapeTypes::getNameOfClass() const
+{
+  return QString("EstablishShapeTypes");
+}
+
+// -----------------------------------------------------------------------------
+QString EstablishShapeTypes::ClassName()
+{
+  return QString("EstablishShapeTypes");
+}
+
+// -----------------------------------------------------------------------------
+void EstablishShapeTypes::setInputPhaseTypesArrayPath(const DataArrayPath& value)
+{
+  m_InputPhaseTypesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath EstablishShapeTypes::getInputPhaseTypesArrayPath() const
+{
+  return m_InputPhaseTypesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void EstablishShapeTypes::setShapeTypesArrayName(const QString& value)
+{
+  m_ShapeTypesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString EstablishShapeTypes::getShapeTypesArrayName() const
+{
+  return m_ShapeTypesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void EstablishShapeTypes::setShapeTypeData(const ShapeType::Types& value)
+{
+  m_ShapeTypeData = value;
+}
+
+// -----------------------------------------------------------------------------
+ShapeType::Types EstablishShapeTypes::getShapeTypeData() const
+{
+  return m_ShapeTypeData;
 }

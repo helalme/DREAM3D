@@ -33,9 +33,15 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "WriteStlFile.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
@@ -44,6 +50,7 @@
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+
 #include <QtCore/QDir>
 
 #include "ImportExport/ImportExportConstants.h"
@@ -71,7 +78,7 @@ WriteStlFile::~WriteStlFile() = default;
 // -----------------------------------------------------------------------------
 void WriteStlFile::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_OUTPUT_PATH_FP("Output STL Directory", OutputStlDirectory, FilterParameter::Parameter, WriteStlFile));
   parameters.push_back(SIMPL_NEW_STRING_FP("STL File Prefix", OutputStlPrefix, FilterParameter::Parameter, WriteStlFile));
   // QStringList linkedProps("SurfaceMeshFacePhasesArrayPath");
@@ -139,32 +146,31 @@ void WriteStlFile::initialize()
 // -----------------------------------------------------------------------------
 void WriteStlFile::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   TriangleGeom::Pointer triangles = getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath().getDataContainerName());
 
   QVector<IDataArray::Pointer> dataArrays;
 
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(triangles->getTriangles());
   }
 
   if(m_OutputStlDirectory.isEmpty())
   {
-    setErrorCondition(-1003);
-    notifyErrorMessage(getHumanLabel(), "The output directory must be set", -1003);
+    setErrorCondition(-1003, "The output directory must be set");
   }
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshFaceLabels = m_SurfaceMeshFaceLabelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_SurfaceMeshFaceLabelsPtr.lock());
   }
@@ -177,7 +183,7 @@ void WriteStlFile::dataCheck()
     {
       m_SurfaceMeshFacePhases = m_SurfaceMeshFacePhasesPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArrays.push_back(m_SurfaceMeshFacePhasesPtr.lock());
     }
@@ -205,10 +211,10 @@ void WriteStlFile::preflight()
 void WriteStlFile::execute()
 {
   int32_t err = 0;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -219,21 +225,19 @@ void WriteStlFile::execute()
   if(!stlDir.mkpath("."))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(getOutputStlDirectory());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
   TriangleGeom::Pointer triangleGeom = getDataContainerArray()->getDataContainer(getSurfaceMeshFaceLabelsArrayPath().getDataContainerName())->getGeometryAs<TriangleGeom>();
   float* nodes = triangleGeom->getVertexPointer(0);
-  int64_t* triangles = triangleGeom->getTriPointer(0);
-  int64_t nTriangles = triangleGeom->getNumberOfTris();
+  MeshIndexType* triangles = triangleGeom->getTriPointer(0);
+  MeshIndexType nTriangles = triangleGeom->getNumberOfTris();
 
   if(nTriangles > std::numeric_limits<int32_t>::max())
   {
     QString ss = QObject::tr("The number of triangles is %1, but the STL specification only supports triangle counts up to %2").arg(nTriangles).arg(std::numeric_limits<int32_t>::max());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -241,7 +245,7 @@ void WriteStlFile::execute()
   QMap<int32_t, int32_t> uniqueGrainIdtoPhase;
   if(m_GroupByPhase)
   {
-    for(int64_t i = 0; i < nTriangles; i++)
+    for(MeshIndexType i = 0; i < nTriangles; i++)
     {
       uniqueGrainIdtoPhase.insert(m_SurfaceMeshFaceLabels[i * 2], m_SurfaceMeshFacePhases[i * 2]);
       uniqueGrainIdtoPhase.insert(m_SurfaceMeshFaceLabels[i * 2 + 1], m_SurfaceMeshFacePhases[i * 2 + 1]);
@@ -249,7 +253,7 @@ void WriteStlFile::execute()
   }
   else
   {
-    for(int64_t i = 0; i < nTriangles; i++)
+    for(MeshIndexType i = 0; i < nTriangles; i++)
     {
       uniqueGrainIdtoPhase.insert(m_SurfaceMeshFaceLabels[i * 2], 0);
       uniqueGrainIdtoPhase.insert(m_SurfaceMeshFaceLabels[i * 2 + 1], 0);
@@ -286,7 +290,7 @@ void WriteStlFile::execute()
     FILE* f = fopen(filename.toLatin1().data(), "wb");
     {
       QString ss = QObject::tr("Writing STL for Feature Id %1").arg(spin);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
     }
 
     QString header = "DREAM3D Generated For Feature ID " + QString::number(spin);
@@ -301,12 +305,12 @@ void WriteStlFile::execute()
     triCount = 0; // Reset this to Zero. Increment for every triangle written
 
     // Loop over all the triangles for this spin
-    for(int64_t t = 0; t < nTriangles; ++t)
+    for(MeshIndexType t = 0; t < nTriangles; ++t)
     {
       // Get the true indices of the 3 nodes
-      int64_t nId0 = triangles[t * 3];
-      int64_t nId1 = triangles[t * 3 + 1];
-      int64_t nId2 = triangles[t * 3 + 2];
+      MeshIndexType nId0 = triangles[t * 3];
+      MeshIndexType nId1 = triangles[t * 3 + 1];
+      MeshIndexType nId2 = triangles[t * 3 + 2];
 
       vert1[0] = static_cast<float>(nodes[nId0 * 3]);
       vert1[1] = static_cast<float>(nodes[nId0 * 3 + 1]);
@@ -320,7 +324,7 @@ void WriteStlFile::execute()
       {
         // winding = 1; // Write it using backward spin
         // Switch the 2 node indices
-        int64_t temp = nId1;
+        MeshIndexType temp = nId1;
         nId1 = nId2;
         nId2 = temp;
       }
@@ -359,7 +363,7 @@ void WriteStlFile::execute()
       if(totalWritten != 50)
       {
         QString ss = QObject::tr("Error Writing STL File. Not enough elements written for Feature Id %1. Wrote %2 of 50.").arg(spin).arg(totalWritten);
-        notifyErrorMessage(getHumanLabel(), ss, -1201);
+        setErrorCondition(-1201, ss);
       }
       triCount++;
     }
@@ -367,8 +371,8 @@ void WriteStlFile::execute()
     err = writeNumTrianglesToFile(filename, triCount);
   }
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -384,7 +388,7 @@ int32_t WriteStlFile::writeHeader(FILE* f, const QString& header, int32_t triCou
   size_t headlength = 80;
   if(header.length() < 80)
   {
-    headlength = header.length();
+    headlength = static_cast<size_t>(header.length());
   }
 
   std::string c_str = header.toStdString();
@@ -428,7 +432,7 @@ AbstractFilter::Pointer WriteStlFile::newFilterInstance(bool copyFilterParameter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteStlFile::getCompiledLibraryName() const
+QString WriteStlFile::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -436,7 +440,7 @@ const QString WriteStlFile::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteStlFile::getBrandingString() const
+QString WriteStlFile::getBrandingString() const
 {
   return "IO";
 }
@@ -444,7 +448,7 @@ const QString WriteStlFile::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteStlFile::getFilterVersion() const
+QString WriteStlFile::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -454,7 +458,7 @@ const QString WriteStlFile::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteStlFile::getGroupName() const
+QString WriteStlFile::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -462,7 +466,7 @@ const QString WriteStlFile::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid WriteStlFile::getUuid()
+QUuid WriteStlFile::getUuid() const
 {
   return QUuid("{b9134758-d5e5-59dd-9907-28d23e0e0143}");
 }
@@ -470,7 +474,7 @@ const QUuid WriteStlFile::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteStlFile::getSubGroupName() const
+QString WriteStlFile::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -478,7 +482,96 @@ const QString WriteStlFile::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteStlFile::getHumanLabel() const
+QString WriteStlFile::getHumanLabel() const
 {
   return "Export STL Files from Triangle Geometry";
+}
+
+// -----------------------------------------------------------------------------
+WriteStlFile::Pointer WriteStlFile::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<WriteStlFile> WriteStlFile::New()
+{
+  struct make_shared_enabler : public WriteStlFile
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString WriteStlFile::getNameOfClass() const
+{
+  return QString("WriteStlFile");
+}
+
+// -----------------------------------------------------------------------------
+QString WriteStlFile::ClassName()
+{
+  return QString("WriteStlFile");
+}
+
+// -----------------------------------------------------------------------------
+void WriteStlFile::setOutputStlDirectory(const QString& value)
+{
+  m_OutputStlDirectory = value;
+}
+
+// -----------------------------------------------------------------------------
+QString WriteStlFile::getOutputStlDirectory() const
+{
+  return m_OutputStlDirectory;
+}
+
+// -----------------------------------------------------------------------------
+void WriteStlFile::setOutputStlPrefix(const QString& value)
+{
+  m_OutputStlPrefix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString WriteStlFile::getOutputStlPrefix() const
+{
+  return m_OutputStlPrefix;
+}
+
+// -----------------------------------------------------------------------------
+void WriteStlFile::setGroupByPhase(bool value)
+{
+  m_GroupByPhase = value;
+}
+
+// -----------------------------------------------------------------------------
+bool WriteStlFile::getGroupByPhase() const
+{
+  return m_GroupByPhase;
+}
+
+// -----------------------------------------------------------------------------
+void WriteStlFile::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WriteStlFile::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void WriteStlFile::setSurfaceMeshFacePhasesArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFacePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WriteStlFile::getSurfaceMeshFacePhasesArrayPath() const
+{
+  return m_SurfaceMeshFacePhasesArrayPath;
 }

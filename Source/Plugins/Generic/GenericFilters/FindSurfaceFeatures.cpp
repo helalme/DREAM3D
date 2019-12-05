@@ -33,7 +33,11 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindSurfaceFeatures.h"
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
 
@@ -42,9 +46,18 @@
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Generic/GenericConstants.h"
 #include "Generic/GenericVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -65,7 +78,7 @@ FindSurfaceFeatures::~FindSurfaceFeatures() = default;
 // -----------------------------------------------------------------------------
 void FindSurfaceFeatures::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -104,12 +117,12 @@ void FindSurfaceFeatures::initialize()
 // -----------------------------------------------------------------------------
 void FindSurfaceFeatures::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -117,8 +130,7 @@ void FindSurfaceFeatures::dataCheck()
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  m_SurfaceFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(
-      this, getSurfaceFeaturesArrayPath(), false, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_SurfaceFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, getSurfaceFeaturesArrayPath(), false, cDims, "", DataArrayID31);
   if(nullptr != m_SurfaceFeaturesPtr.lock())              /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceFeatures = m_SurfaceFeaturesPtr.lock()->getPointer(0);
@@ -297,10 +309,10 @@ void FindSurfaceFeatures::find_surfacefeatures2D()
 // -----------------------------------------------------------------------------
 void FindSurfaceFeatures::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -334,7 +346,7 @@ AbstractFilter::Pointer FindSurfaceFeatures::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceFeatures::getCompiledLibraryName() const
+QString FindSurfaceFeatures::getCompiledLibraryName() const
 {
   return GenericConstants::GenericBaseName;
 }
@@ -342,7 +354,7 @@ const QString FindSurfaceFeatures::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceFeatures::getBrandingString() const
+QString FindSurfaceFeatures::getBrandingString() const
 {
   return "Generic";
 }
@@ -350,7 +362,7 @@ const QString FindSurfaceFeatures::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceFeatures::getFilterVersion() const
+QString FindSurfaceFeatures::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -360,7 +372,7 @@ const QString FindSurfaceFeatures::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceFeatures::getGroupName() const
+QString FindSurfaceFeatures::getGroupName() const
 {
   return SIMPL::FilterGroups::Generic;
 }
@@ -368,7 +380,7 @@ const QString FindSurfaceFeatures::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindSurfaceFeatures::getUuid()
+QUuid FindSurfaceFeatures::getUuid() const
 {
   return QUuid("{d2b0ae3d-686a-5dc0-a844-66bc0dc8f3cb}");
 }
@@ -376,7 +388,7 @@ const QUuid FindSurfaceFeatures::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceFeatures::getSubGroupName() const
+QString FindSurfaceFeatures::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::SpatialFilters;
 }
@@ -384,7 +396,60 @@ const QString FindSurfaceFeatures::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceFeatures::getHumanLabel() const
+QString FindSurfaceFeatures::getHumanLabel() const
 {
   return "Find Surface Features";
+}
+
+// -----------------------------------------------------------------------------
+FindSurfaceFeatures::Pointer FindSurfaceFeatures::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindSurfaceFeatures> FindSurfaceFeatures::New()
+{
+  struct make_shared_enabler : public FindSurfaceFeatures
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSurfaceFeatures::getNameOfClass() const
+{
+  return QString("FindSurfaceFeatures");
+}
+
+// -----------------------------------------------------------------------------
+QString FindSurfaceFeatures::ClassName()
+{
+  return QString("FindSurfaceFeatures");
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceFeatures::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSurfaceFeatures::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceFeatures::setSurfaceFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSurfaceFeatures::getSurfaceFeaturesArrayPath() const
+{
+  return m_SurfaceFeaturesArrayPath;
 }

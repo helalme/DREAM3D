@@ -33,11 +33,16 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "WritePoleFigure.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
@@ -50,6 +55,8 @@
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Utilities/ColorTable.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationLib/LaueOps/CubicLowOps.h"
 #include "OrientationLib/LaueOps/CubicOps.h"
@@ -113,10 +120,9 @@ WritePoleFigure::~WritePoleFigure() = default;
 // -----------------------------------------------------------------------------
 void WritePoleFigure::setupFilterParameters()
 {
-  FilterParameterVector parameters;
-  
-  
-   parameters.push_back(SIMPL_NEW_STRING_FP("Figure Title", Title, FilterParameter::Parameter, WritePoleFigure));
+  FilterParameterVectorType parameters;
+
+  parameters.push_back(SIMPL_NEW_STRING_FP("Figure Title", Title, FilterParameter::Parameter, WritePoleFigure));
 
   {
     LinkedChoicesFilterParameter::Pointer parameter = LinkedChoicesFilterParameter::New();
@@ -246,33 +252,31 @@ void WritePoleFigure::initialize()
 // -----------------------------------------------------------------------------
 void WritePoleFigure::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QDir path(getOutputPath());
 
   if(m_OutputPath.isEmpty())
   {
-    setErrorCondition(-1003);
-    notifyErrorMessage(getHumanLabel(), "The output directory must be set", getErrorCondition());
+    setErrorCondition(-1003, "The output directory must be set");
   }
   else if(!path.exists())
   {
-    setWarningCondition(-1004);
     QString ss = QObject::tr("The directory path for the output file does not exist. DREAM.3D will attempt to create this path during execution of the filter");
-    notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+    setWarningCondition(-1004, ss);
   }
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 3);
+  std::vector<size_t> cDims(1, 3);
   m_CellEulerAnglesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getCellEulerAnglesArrayPath(),
                                                                                                            cDims); 
   if(nullptr != m_CellEulerAnglesPtr.lock())                                                                       
   {
     m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
-  } 
-  if(getErrorCondition() >= 0)
+  }
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellEulerAnglesArrayPath());
   }
@@ -283,8 +287,8 @@ void WritePoleFigure::dataCheck()
   if(nullptr != m_CellPhasesPtr.lock())                                                                         
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
-  } 
-  if(getErrorCondition() >= 0)
+  }
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -308,8 +312,8 @@ void WritePoleFigure::dataCheck()
     if(nullptr != m_GoodVoxelsPtr.lock())                                                                      
     {
       m_GoodVoxels = m_GoodVoxelsPtr.lock()->getPointer(0);
-    } 
-    if(getErrorCondition() >= 0)
+    }
+    if(getErrorCode() >= 0)
     {
       dataArrayPaths.push_back(getGoodVoxelsArrayPath());
     }
@@ -391,13 +395,12 @@ void WritePoleFigure::writeImage(QImage image, QString label)
 {
   QString filename = generateImagePath(label);
   QString ss = QObject::tr("Writing Image %1").arg(filename);
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
   bool saved = image.save(filename);
   if(!saved)
   {
-    setErrorCondition(-90011);
     QString ss = QObject::tr("The Pole Figure image file '%1' was not saved").arg(filename);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-90011, ss);
   }
 }
 #endif
@@ -408,9 +411,7 @@ void WritePoleFigure::writeImage(QImage image, QString label)
 // -----------------------------------------------------------------------------
 UInt8ArrayType::Pointer flipAndMirrorPoleFigure(UInt8ArrayType* src, const PoleFigureConfiguration_t config)
 {
-  UInt8ArrayType::Pointer converted = UInt8ArrayType::CreateArray(static_cast<size_t>(config.imageDim * config.imageDim), 
-                                                                  QVector<size_t>(1,3), 
-                                                                  src->getName());
+  UInt8ArrayType::Pointer converted = UInt8ArrayType::CreateArray(static_cast<size_t>(config.imageDim * config.imageDim), std::vector<size_t>(1, 3), src->getName(), true);
   // We need to flip the image "vertically", which means the bottom row becomes
   // the top row and convert from BGRA to RGB ordering (This is a Little Endian code)
   // If this is ever compiled on a BIG ENDIAN machine the colors will be off.
@@ -670,10 +671,10 @@ void drawDiscreteInfoArea(HPDF_Page page, const PoleFigureConfiguration_t &confi
 // -----------------------------------------------------------------------------
 void WritePoleFigure::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -685,8 +686,7 @@ void WritePoleFigure::execute()
   if(!path.mkpath("."))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(path.absolutePath());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -714,8 +714,8 @@ void WritePoleFigure::execute()
         }
       }
     }
-    QVector<size_t> eulerCompDim(1, 3);
-    FloatArrayType::Pointer subEulers = FloatArrayType::CreateArray(count, eulerCompDim, "Eulers_Per_Phase");
+    std::vector<size_t> eulerCompDim(1, 3);
+    FloatArrayType::Pointer subEulers = FloatArrayType::CreateArray(count, eulerCompDim, "Eulers_Per_Phase", true);
     subEulers->initializeWithValue(std::numeric_limits<float>::signaling_NaN());
     float* eu = subEulers->getPointer(0);
 
@@ -761,8 +761,8 @@ void WritePoleFigure::execute()
     label.append(QString::number(phase));
 
     QString ss = QObject::tr("Generating Pole Figures for Phase %1").arg(phase);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
-    
+    notifyStatusMessage(ss);
+
     switch(m_CrystalStructures[phase])
     {
     case Ebsd::CrystalStructure::Cubic_High:
@@ -779,23 +779,19 @@ void WritePoleFigure::execute()
       break;
     case Ebsd::CrystalStructure::Trigonal_High:
       figures = makePoleFigures<TrigonalOps>(config);
-      //   setWarningCondition(-1010);
-      //   notifyWarningMessage(getHumanLabel(), "Trigonal High Symmetry is not supported for Pole figures. This phase will be omitted from results", getWarningCondition());
+      //   setWarningCondition(-1010, "Trigonal High Symmetry is not supported for Pole figures. This phase will be omitted from results");
       break;
     case Ebsd::CrystalStructure::Trigonal_Low:
       figures = makePoleFigures<TrigonalLowOps>(config);
-      //  setWarningCondition(-1010);
-      //  notifyWarningMessage(getHumanLabel(), "Trigonal Low Symmetry is not supported for Pole figures. This phase will be omitted from results", getWarningCondition());
+      //  setWarningCondition(-1010, "Trigonal Low Symmetry is not supported for Pole figures. This phase will be omitted from results");
       break;
     case Ebsd::CrystalStructure::Tetragonal_High:
       figures = makePoleFigures<TetragonalOps>(config);
-    //  setWarningCondition(-1010);
-    //  notifyWarningMessage(getHumanLabel(), "Tetragonal High Symmetry is not supported for Pole figures. This phase will be omitted from results", getWarningCondition());
+      //  setWarningCondition(-1010, "Tetragonal High Symmetry is not supported for Pole figures. This phase will be omitted from results");
       break;
     case Ebsd::CrystalStructure::Tetragonal_Low:
       figures = makePoleFigures<TetragonalLowOps>(config);
-      // setWarningCondition(-1010);
-      // notifyWarningMessage(getHumanLabel(), "Tetragonal Low Symmetry is not supported for Pole figures. This phase will be omitted from results", getWarningCondition());
+      // setWarningCondition(-1010, "Tetragonal Low Symmetry is not supported for Pole figures. This phase will be omitted from results");
       break;
     case Ebsd::CrystalStructure::OrthoRhombic:
       figures = makePoleFigures<OrthoRhombicOps>(config);
@@ -1036,7 +1032,7 @@ AbstractFilter::Pointer WritePoleFigure::newFilterInstance(bool copyFilterParame
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WritePoleFigure::getCompiledLibraryName() const
+QString WritePoleFigure::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -1044,7 +1040,7 @@ const QString WritePoleFigure::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WritePoleFigure::getBrandingString() const
+QString WritePoleFigure::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -1052,7 +1048,7 @@ const QString WritePoleFigure::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WritePoleFigure::getFilterVersion() const
+QString WritePoleFigure::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -1062,7 +1058,7 @@ const QString WritePoleFigure::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WritePoleFigure::getGroupName() const
+QString WritePoleFigure::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -1070,7 +1066,7 @@ const QString WritePoleFigure::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid WritePoleFigure::getUuid()
+QUuid WritePoleFigure::getUuid() const
 {
   return QUuid("{a10bb78e-fcff-553d-97d6-830a43c85385}");
 }
@@ -1078,7 +1074,7 @@ const QUuid WritePoleFigure::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WritePoleFigure::getSubGroupName() const
+QString WritePoleFigure::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -1086,7 +1082,216 @@ const QString WritePoleFigure::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WritePoleFigure::getHumanLabel() const
+QString WritePoleFigure::getHumanLabel() const
 {
   return "Export Pole Figure Images";
+}
+
+// -----------------------------------------------------------------------------
+WritePoleFigure::Pointer WritePoleFigure::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<WritePoleFigure> WritePoleFigure::New()
+{
+  struct make_shared_enabler : public WritePoleFigure
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString WritePoleFigure::getNameOfClass() const
+{
+  return QString("WritePoleFigure");
+}
+
+// -----------------------------------------------------------------------------
+QString WritePoleFigure::ClassName()
+{
+  return QString("WritePoleFigure");
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setImagePrefix(const QString& value)
+{
+  m_ImagePrefix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString WritePoleFigure::getImagePrefix() const
+{
+  return m_ImagePrefix;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setOutputPath(const QString& value)
+{
+  m_OutputPath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString WritePoleFigure::getOutputPath() const
+{
+  return m_OutputPath;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setImageFormat(int value)
+{
+  m_ImageFormat = value;
+}
+
+// -----------------------------------------------------------------------------
+int WritePoleFigure::getImageFormat() const
+{
+  return m_ImageFormat;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setImageSize(int value)
+{
+  m_ImageSize = value;
+}
+
+// -----------------------------------------------------------------------------
+int WritePoleFigure::getImageSize() const
+{
+  return m_ImageSize;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setLambertSize(int value)
+{
+  m_LambertSize = value;
+}
+
+// -----------------------------------------------------------------------------
+int WritePoleFigure::getLambertSize() const
+{
+  return m_LambertSize;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setNumColors(int value)
+{
+  m_NumColors = value;
+}
+
+// -----------------------------------------------------------------------------
+int WritePoleFigure::getNumColors() const
+{
+  return m_NumColors;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setImageLayout(int value)
+{
+  m_ImageLayout = value;
+}
+
+// -----------------------------------------------------------------------------
+int WritePoleFigure::getImageLayout() const
+{
+  return m_ImageLayout;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setCellEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_CellEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WritePoleFigure::getCellEulerAnglesArrayPath() const
+{
+  return m_CellEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WritePoleFigure::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WritePoleFigure::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WritePoleFigure::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setUseGoodVoxels(bool value)
+{
+  m_UseGoodVoxels = value;
+}
+
+// -----------------------------------------------------------------------------
+bool WritePoleFigure::getUseGoodVoxels() const
+{
+  return m_UseGoodVoxels;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setGenerationAlgorithm(int value)
+{
+  m_GenerationAlgorithm = value;
+}
+
+// -----------------------------------------------------------------------------
+int WritePoleFigure::getGenerationAlgorithm() const
+{
+  return m_GenerationAlgorithm;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setTitle(const QString& value)
+{
+  m_Title = value;
+}
+
+// -----------------------------------------------------------------------------
+QString WritePoleFigure::getTitle() const
+{
+  return m_Title;
+}
+
+// -----------------------------------------------------------------------------
+void WritePoleFigure::setMaterialNameArrayPath(const DataArrayPath& value)
+{
+  m_MaterialNameArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath WritePoleFigure::getMaterialNameArrayPath() const
+{
+  return m_MaterialNameArrayPath;
 }

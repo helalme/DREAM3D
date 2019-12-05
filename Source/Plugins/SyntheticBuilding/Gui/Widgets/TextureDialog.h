@@ -37,7 +37,6 @@
 
 #include <vector>
 
-#include <QtWidgets/QDialog>
 
 #include "ui_TextureDialog.h"
 
@@ -62,7 +61,15 @@ public:
   TextureDialog(unsigned int xtal, QWidget* parent = nullptr);
   virtual ~TextureDialog();
 
-  SIMPL_INSTANCE_PROPERTY(unsigned int, CrystalStructure)
+  /**
+   * @brief Setter property for CrystalStructure
+   */
+  void setCrystalStructure(unsigned int value);
+  /**
+   * @brief Getter property for CrystalStructure
+   * @return Value of CrystalStructure
+   */
+  unsigned int getCrystalStructure() const;
 
   void getODFEntry(float& e1, float& e2, float& e3, float& weight, float& sigma);
 
@@ -74,6 +81,8 @@ protected:
   void setupGui();
 
 private:
+  unsigned int m_CrystalStructure = {};
+
   QVector<TexturePreset::Pointer> m_Presets;
 
 public:

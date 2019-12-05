@@ -35,15 +35,17 @@
 
 #pragma once
 
+#include <memory>
+
 #include <string>
 #include <vector>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include "SIMPLib/SIMPLib.h"
 #include "SIMPLib/DataArrays/IDataArray.h"
 #include "SIMPLib/DataContainers/DataContainer.h"
 #include "SIMPLib/FilterParameters/FloatVec3FilterParameter.h"
 #include "SIMPLib/Filtering/AbstractFilter.h"
-#include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataArrays/DataArray.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisDLLExport.h"
 
@@ -57,44 +59,103 @@
 class OrientationAnalysis_EXPORT FindBasalLoadingFactor : public AbstractFilter
 {
   Q_OBJECT
-    PYB11_CREATE_BINDINGS(FindBasalLoadingFactor SUPERCLASS AbstractFilter)
-    PYB11_PROPERTY(DataArrayPath AvgQuatsArrayPath READ getAvgQuatsArrayPath WRITE setAvgQuatsArrayPath)
-    PYB11_PROPERTY(DataArrayPath BasalLoadingFactorArrayPath READ getBasalLoadingFactorArrayPath WRITE setBasalLoadingFactorArrayPath)
-    PYB11_PROPERTY(FloatVec3_t LoadingDirection READ getLoadingDirection WRITE setLoadingDirection)
+
+#ifdef SIMPL_ENABLE_PYTHON
+  PYB11_CREATE_BINDINGS(FindBasalLoadingFactor SUPERCLASS AbstractFilter)
+  PYB11_SHARED_POINTERS(FindBasalLoadingFactor)
+  PYB11_FILTER_NEW_MACRO(FindBasalLoadingFactor)
+  PYB11_FILTER_PARAMETER(DataArrayPath, AvgQuatsArrayPath)
+  PYB11_FILTER_PARAMETER(DataArrayPath, BasalLoadingFactorArrayPath)
+  PYB11_FILTER_PARAMETER(FloatVec3Type, LoadingDirection)
+  PYB11_PROPERTY(DataArrayPath AvgQuatsArrayPath READ getAvgQuatsArrayPath WRITE setAvgQuatsArrayPath)
+  PYB11_PROPERTY(DataArrayPath BasalLoadingFactorArrayPath READ getBasalLoadingFactorArrayPath WRITE setBasalLoadingFactorArrayPath)
+  PYB11_PROPERTY(FloatVec3Type LoadingDirection READ getLoadingDirection WRITE setLoadingDirection)
+#endif
+
 public:
-  SIMPL_SHARED_POINTERS(FindBasalLoadingFactor)
-  SIMPL_FILTER_NEW_MACRO(FindBasalLoadingFactor)
-  SIMPL_TYPE_MACRO_SUPER_OVERRIDE(FindBasalLoadingFactor, AbstractFilter)
+  using Self = FindBasalLoadingFactor;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  
+  /**
+   * @brief Returns a NullPointer wrapped by a shared_ptr<>
+   * @return
+   */
+  static Pointer NullPointer();
+
+  /**
+   * @brief Creates a new object wrapped in a shared_ptr<>
+   * @return
+   */
+  static Pointer New();
+
+  /**
+   * @brief Returns the name of the class for FindBasalLoadingFactor
+   */
+  QString getNameOfClass() const override;
+  /**
+   * @brief Returns the name of the class for FindBasalLoadingFactor
+   */
+  static QString ClassName();
 
   ~FindBasalLoadingFactor() override;
 
-  SIMPL_FILTER_PARAMETER(DataArrayPath, AvgQuatsArrayPath)
+  /**
+   * @brief Setter property for AvgQuatsArrayPath
+   */
+  void setAvgQuatsArrayPath(const DataArrayPath& value);
+  /**
+   * @brief Getter property for AvgQuatsArrayPath
+   * @return Value of AvgQuatsArrayPath
+   */
+  DataArrayPath getAvgQuatsArrayPath() const;
+
   Q_PROPERTY(DataArrayPath AvgQuatsArrayPath READ getAvgQuatsArrayPath WRITE setAvgQuatsArrayPath)
 
-  SIMPL_FILTER_PARAMETER(DataArrayPath, BasalLoadingFactorArrayPath)
+  /**
+   * @brief Setter property for BasalLoadingFactorArrayPath
+   */
+  void setBasalLoadingFactorArrayPath(const DataArrayPath& value);
+  /**
+   * @brief Getter property for BasalLoadingFactorArrayPath
+   * @return Value of BasalLoadingFactorArrayPath
+   */
+  DataArrayPath getBasalLoadingFactorArrayPath() const;
+
   Q_PROPERTY(DataArrayPath BasalLoadingFactorArrayPath READ getBasalLoadingFactorArrayPath WRITE setBasalLoadingFactorArrayPath)
 
-  SIMPL_FILTER_PARAMETER(FloatVec3_t, LoadingDirection)
-  Q_PROPERTY(FloatVec3_t LoadingDirection READ getLoadingDirection WRITE setLoadingDirection)
+  /**
+   * @brief Setter property for LoadingDirection
+   */
+  void setLoadingDirection(const FloatVec3Type& value);
+  /**
+   * @brief Getter property for LoadingDirection
+   * @return Value of LoadingDirection
+   */
+  FloatVec3Type getLoadingDirection() const;
+
+  Q_PROPERTY(FloatVec3Type LoadingDirection READ getLoadingDirection WRITE setLoadingDirection)
 
   /**
    * @brief getCompiledLibraryName Reimplemented from @see AbstractFilter class
    */
-  const QString getCompiledLibraryName() const override;
+  QString getCompiledLibraryName() const override;
 
   /**
    * @brief getBrandingString Returns the branding string for the filter, which is a tag
    * used to denote the filter's association with specific plugins
    * @return Branding string
-  */
-  const QString getBrandingString() const override;
+   */
+  QString getBrandingString() const override;
 
   /**
    * @brief getFilterVersion Returns a version string for this filter. Default
    * value is an empty string.
    * @return
    */
-  const QString getFilterVersion() const override;
+  QString getFilterVersion() const override;
 
   /**
    * @brief newFilterInstance Reimplemented from @see AbstractFilter class
@@ -104,23 +165,23 @@ public:
   /**
    * @brief getGroupName Reimplemented from @see AbstractFilter class
    */
-  const QString getGroupName() const override;
+  QString getGroupName() const override;
 
   /**
    * @brief getSubGroupName Reimplemented from @see AbstractFilter class
    */
-  const QString getSubGroupName() const override;
+  QString getSubGroupName() const override;
 
   /**
    * @brief getUuid Return the unique identifier for this filter.
    * @return A QUuid object.
    */
-  const QUuid getUuid() override;
+  QUuid getUuid() const override;
 
   /**
    * @brief getHumanLabel Reimplemented from @see AbstractFilter class
    */
-  const QString getHumanLabel() const override;
+  QString getHumanLabel() const override;
 
   /**
    * @brief setupFilterParameters Reimplemented from @see AbstractFilter class
@@ -138,8 +199,8 @@ public:
   void execute() override;
 
   /**
-  * @brief preflight Reimplemented from @see AbstractFilter class
-  */
+   * @brief preflight Reimplemented from @see AbstractFilter class
+   */
   void preflight() override;
 
 signals:
@@ -178,12 +239,18 @@ protected:
   void initialize();
 
 private:
-  DEFINE_DATAARRAY_VARIABLE(float, BasalLoadingFactor)
-  DEFINE_DATAARRAY_VARIABLE(float, AvgQuats)
+  std::weak_ptr<DataArray<float>> m_BasalLoadingFactorPtr;
+  float* m_BasalLoadingFactor = nullptr;
+  std::weak_ptr<DataArray<float>> m_AvgQuatsPtr;
+  float* m_AvgQuats = nullptr;
+
+  DataArrayPath m_AvgQuatsArrayPath = {};
+  DataArrayPath m_BasalLoadingFactorArrayPath = {};
+  FloatVec3Type m_LoadingDirection = {};
 
 public:
-  FindBasalLoadingFactor(const FindBasalLoadingFactor&) = delete; // Copy Constructor Not Implemented
-  FindBasalLoadingFactor(FindBasalLoadingFactor&&) = delete;      // Move Constructor Not Implemented
+  FindBasalLoadingFactor(const FindBasalLoadingFactor&) = delete;            // Copy Constructor Not Implemented
+  FindBasalLoadingFactor(FindBasalLoadingFactor&&) = delete;                 // Move Constructor Not Implemented
   FindBasalLoadingFactor& operator=(const FindBasalLoadingFactor&) = delete; // Copy Assignment Not Implemented
   FindBasalLoadingFactor& operator=(FindBasalLoadingFactor&&) = delete;      // Move Assignment Not Implemented
 };

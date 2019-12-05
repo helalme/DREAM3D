@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "NeighborOrientationCorrelation.h"
 
 #include <vector>
@@ -46,7 +48,10 @@
 #include <tbb/tick_count.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
@@ -54,6 +59,8 @@
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -130,7 +137,7 @@ NeighborOrientationCorrelation::~NeighborOrientationCorrelation() = default;
 // -----------------------------------------------------------------------------
 void NeighborOrientationCorrelation::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Minimum Confidence Index", MinConfidence, FilterParameter::Parameter, NeighborOrientationCorrelation));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Misorientation Tolerance (Degrees)", MisorientationTolerance, FilterParameter::Parameter, NeighborOrientationCorrelation));
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Cleanup Level", Level, FilterParameter::Parameter, NeighborOrientationCorrelation));
@@ -192,21 +199,21 @@ void NeighborOrientationCorrelation::initialize()
 // -----------------------------------------------------------------------------
 void NeighborOrientationCorrelation::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getConfidenceIndexArrayPath().getDataContainerName());
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_ConfidenceIndexPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getConfidenceIndexArrayPath(),
                                                                                                            cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_ConfidenceIndexPtr.lock())                                                                       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_ConfidenceIndex = m_ConfidenceIndexPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getConfidenceIndexArrayPath());
   }
@@ -217,7 +224,7 @@ void NeighborOrientationCorrelation::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -236,7 +243,7 @@ void NeighborOrientationCorrelation::dataCheck()
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getQuatsArrayPath());
   }
@@ -262,10 +269,10 @@ void NeighborOrientationCorrelation::preflight()
 // -----------------------------------------------------------------------------
 void NeighborOrientationCorrelation::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -278,8 +285,7 @@ void NeighborOrientationCorrelation::execute()
 
   float misorientationToleranceR = m_MisorientationTolerance * static_cast<float>(SIMPLib::Constants::k_PiOver180);
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -302,15 +308,12 @@ void NeighborOrientationCorrelation::execute()
   neighpoints[5] = static_cast<int64_t>(dims[0] * dims[1]);
 
   float w = std::numeric_limits<float>::max();
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
   float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
   uint32_t phase1 = 0, phase2 = 0;
 
   std::vector<int32_t> neighborDiffCount(totalPoints, 0);
   std::vector<int32_t> neighborSimCount(6, 0);
   std::vector<int64_t> bestNeighbor(totalPoints, -1);
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
 
   const int32_t startLevel = 6;
   for(int32_t currentLevel = startLevel; currentLevel > m_Level; currentLevel--)
@@ -329,7 +332,7 @@ void NeighborOrientationCorrelation::execute()
       {
         progressInt = static_cast<int64_t>((static_cast<float>(i) / totalPoints) * 100.0f);
         QString ss = QObject::tr("Level %1 of %2 || Processing Data %3%").arg((startLevel - currentLevel) + 1).arg(startLevel - m_Level).arg(progressInt);
-        notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+        notifyStatusMessage(ss);
         prog = prog + progIncrement;
       }
 
@@ -370,10 +373,10 @@ void NeighborOrientationCorrelation::execute()
           if(good)
           {
             phase1 = m_CrystalStructures[m_CellPhases[i]];
-            QuaternionMathF::Copy(quats[i], q1);
+            QuatF q1(m_Quats + i * 4);
 
             phase2 = m_CrystalStructures[m_CellPhases[neighbor]];
-            QuaternionMathF::Copy(quats[neighbor], q2);
+            QuatF q2(m_Quats + neighbor * 4);
 
             if(m_CellPhases[i] == m_CellPhases[neighbor] && m_CellPhases[i] > 0)
             {
@@ -414,10 +417,10 @@ void NeighborOrientationCorrelation::execute()
               if(good2)
               {
                 phase1 = m_CrystalStructures[m_CellPhases[neighbor2]];
-                QuaternionMathF::Copy(quats[neighbor2], q1);
+                q1 = QuatF(m_Quats + neighbor2 * 4);
 
                 phase2 = m_CrystalStructures[m_CellPhases[neighbor]];
-                QuaternionMathF::Copy(quats[neighbor], q2);
+                q2 = QuatF(m_Quats + neighbor * 4);
                 if(m_CellPhases[neighbor2] == m_CellPhases[neighbor] && m_CellPhases[neighbor2] > 0)
                 {
                   w = m_OrientationOps[phase1]->getMisoQuat(q1, q2, n1, n2, n3);
@@ -521,7 +524,7 @@ void NeighborOrientationCorrelation::execute()
         {
           progressInt = static_cast<int64_t>(((float)i / totalPoints) * 100.0f);
           QString ss = QObject::tr("Level %1 of %2 || Copying Data %3%").arg((startLevel - currentLevel) + 2).arg(startLevel - m_Level).arg(progressInt);
-          notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+          notifyStatusMessage(ss);
           prog = prog + progIncrement;
         }
         neighbor = bestNeighbor[i];
@@ -556,7 +559,7 @@ void NeighborOrientationCorrelation::updateProgress(size_t p)
   m_Progress += p;
   int32_t progressInt = static_cast<int>((static_cast<float>(m_Progress) / static_cast<float>(m_TotalProgress)) * 100.0f);
   QString ss = QObject::tr("Level %1 of %2 || Copying Data %3%").arg((6 - m_CurrentLevel) + 2).arg(6 - m_Level).arg(progressInt);
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 }
 
 // -----------------------------------------------------------------------------
@@ -575,7 +578,7 @@ AbstractFilter::Pointer NeighborOrientationCorrelation::newFilterInstance(bool c
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NeighborOrientationCorrelation::getCompiledLibraryName() const
+QString NeighborOrientationCorrelation::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -583,7 +586,7 @@ const QString NeighborOrientationCorrelation::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NeighborOrientationCorrelation::getBrandingString() const
+QString NeighborOrientationCorrelation::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -591,7 +594,7 @@ const QString NeighborOrientationCorrelation::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NeighborOrientationCorrelation::getFilterVersion() const
+QString NeighborOrientationCorrelation::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -601,7 +604,7 @@ const QString NeighborOrientationCorrelation::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NeighborOrientationCorrelation::getGroupName() const
+QString NeighborOrientationCorrelation::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -609,7 +612,7 @@ const QString NeighborOrientationCorrelation::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid NeighborOrientationCorrelation::getUuid()
+QUuid NeighborOrientationCorrelation::getUuid() const
 {
   return QUuid("{6427cd5e-0ad2-5a24-8847-29f8e0720f4f}");
 }
@@ -617,7 +620,7 @@ const QUuid NeighborOrientationCorrelation::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NeighborOrientationCorrelation::getSubGroupName() const
+QString NeighborOrientationCorrelation::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -625,7 +628,132 @@ const QString NeighborOrientationCorrelation::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NeighborOrientationCorrelation::getHumanLabel() const
+QString NeighborOrientationCorrelation::getHumanLabel() const
 {
   return "Neighbor Orientation Correlation";
+}
+
+// -----------------------------------------------------------------------------
+NeighborOrientationCorrelation::Pointer NeighborOrientationCorrelation::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<NeighborOrientationCorrelation> NeighborOrientationCorrelation::New()
+{
+  struct make_shared_enabler : public NeighborOrientationCorrelation
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString NeighborOrientationCorrelation::getNameOfClass() const
+{
+  return QString("NeighborOrientationCorrelation");
+}
+
+// -----------------------------------------------------------------------------
+QString NeighborOrientationCorrelation::ClassName()
+{
+  return QString("NeighborOrientationCorrelation");
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setMisorientationTolerance(float value)
+{
+  m_MisorientationTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float NeighborOrientationCorrelation::getMisorientationTolerance() const
+{
+  return m_MisorientationTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setMinConfidence(float value)
+{
+  m_MinConfidence = value;
+}
+
+// -----------------------------------------------------------------------------
+float NeighborOrientationCorrelation::getMinConfidence() const
+{
+  return m_MinConfidence;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setLevel(int value)
+{
+  m_Level = value;
+}
+
+// -----------------------------------------------------------------------------
+int NeighborOrientationCorrelation::getLevel() const
+{
+  return m_Level;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setConfidenceIndexArrayPath(const DataArrayPath& value)
+{
+  m_ConfidenceIndexArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath NeighborOrientationCorrelation::getConfidenceIndexArrayPath() const
+{
+  return m_ConfidenceIndexArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath NeighborOrientationCorrelation::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath NeighborOrientationCorrelation::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath NeighborOrientationCorrelation::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void NeighborOrientationCorrelation::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> NeighborOrientationCorrelation::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

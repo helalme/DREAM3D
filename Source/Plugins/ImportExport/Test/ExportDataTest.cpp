@@ -33,14 +33,13 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/CoreFilters/DataContainerReader.h"
 #include "SIMPLib/CoreFilters/DataContainerWriter.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -48,6 +47,7 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "ImportExportTestFileLocations.h"
@@ -55,13 +55,8 @@
 class ExportDataTest
 {
 public:
-  ExportDataTest()
-  {
-  }
-  virtual ~ExportDataTest()
-  {
-  }
-  SIMPL_TYPE_MACRO(ExportDataTest)
+  ExportDataTest() = default;
+  virtual ~ExportDataTest() = default;
 
   enum ErrorCodes
   {
@@ -110,53 +105,53 @@ public:
 
     // A DataContainer that mimics some real data
     DataContainer::Pointer m = DataContainer::New(SIMPL::Defaults::DataContainerName);
-    dca->addDataContainer(m);
+    dca->addOrReplaceDataContainer(m);
 
-    AttributeMatrix::Pointer attrMatrix = AttributeMatrix::New(QVector<size_t>(1, 20), SIMPL::Defaults::AttributeMatrixName, AttributeMatrix::Type::Generic);
-    m->addAttributeMatrix(SIMPL::Defaults::AttributeMatrixName, attrMatrix);
+    AttributeMatrix::Pointer attrMatrix = AttributeMatrix::New(std::vector<size_t>(1, 20), SIMPL::Defaults::AttributeMatrixName, AttributeMatrix::Type::Generic);
+    m->addOrReplaceAttributeMatrix(attrMatrix);
 
-    AttributeMatrix::Pointer attrMatrix2 = AttributeMatrix::New(QVector<size_t>(1, 20), SIMPL::Defaults::CellAttributeMatrixName, AttributeMatrix::Type::Cell);
-    m->addAttributeMatrix(SIMPL::Defaults::CellAttributeMatrixName, attrMatrix2);
+    AttributeMatrix::Pointer attrMatrix2 = AttributeMatrix::New(std::vector<size_t>(1, 20), SIMPL::Defaults::CellAttributeMatrixName, AttributeMatrix::Type::Cell);
+    m->addOrReplaceAttributeMatrix(attrMatrix2);
     int size = 20;
 
     {
-      Int32ArrayType::Pointer intArray = Int32ArrayType::CreateArray(size, SIMPL::CellData::CellPhases);
+      Int32ArrayType::Pointer intArray = Int32ArrayType::CreateArray(size, SIMPL::CellData::CellPhases, true);
       for(int i = 0; i < size; ++i) // create an array with values 20 to 39
       {
         intArray->setValue(i, i + 20);
       }
-      attrMatrix->addAttributeArray(SIMPL::CellData::CellPhases, intArray);
+      attrMatrix->insertOrAssign(intArray);
     }
     {
-      Int32ArrayType::Pointer intArray = Int32ArrayType::CreateArray(size, SIMPL::CellData::ConfidenceIndexNoSpace);
+      Int32ArrayType::Pointer intArray = Int32ArrayType::CreateArray(size, SIMPL::CellData::ConfidenceIndexNoSpace, true);
       for(int i = 0; i < size; ++i) // create an array with values 20 to 39
       {
         intArray->setValue(i, i + 20);
       }
-      attrMatrix->addAttributeArray(SIMPL::CellData::ConfidenceIndexNoSpace, intArray);
+      attrMatrix->insertOrAssign(intArray);
     }
     {
-      BoolArrayType::Pointer boolArray = BoolArrayType::CreateArray(size, SIMPL::GeneralData::ThresholdArray);
+      BoolArrayType::Pointer boolArray = BoolArrayType::CreateArray(size, SIMPL::GeneralData::ThresholdArray, true);
       for(int i = 0; i < size; ++i) // create an bool array with true and false values
       {
         if(i % 2 == 0)
         {
-          boolArray->setValue(i, 0);
+          boolArray->setValue(i, false);
         }
         else
         {
-          boolArray->setValue(i, 1);
+          boolArray->setValue(i, true);
         }
       }
-      attrMatrix->addAttributeArray(SIMPL::GeneralData::ThresholdArray, boolArray);
+      attrMatrix->insertOrAssign(boolArray);
     }
     {
-      Int32ArrayType::Pointer intArray = Int32ArrayType::CreateArray(size, SIMPL::CellData::ConfidenceIndexNoSpace);
+      Int32ArrayType::Pointer intArray = Int32ArrayType::CreateArray(size, SIMPL::CellData::ConfidenceIndexNoSpace, true);
       for(int i = 0; i < size; ++i) // create an array with values 20 to 39
       {
         intArray->setValue(i, i + 20);
       }
-      attrMatrix2->addAttributeArray(SIMPL::CellData::ConfidenceIndexNoSpace, intArray);
+      attrMatrix2->insertOrAssign(intArray);
     }
 
     Observer obs;
@@ -171,10 +166,10 @@ public:
     // manually. Normally the Pipeline Object would do this for us. We are NOT using a Pipeline Object because using the
     // Pipeline Object would over write the DataContainer Array that we have created with a blank one thus defeating the
     // entire purpose of the test.
-    QObject::connect(writer.get(), SIGNAL(filterGeneratedMessage(const PipelineMessage&)), &obs, SLOT(processPipelineMessage(const PipelineMessage&)));
+    QObject::connect(writer.get(), SIGNAL(messageGenerated(const AbstractMessage::Pointer&)), &obs, SLOT(processPipelineMessage(const AbstractMessage::Pointer&)));
 
     writer->execute();
-    int err = writer->getErrorCondition();
+    int err = writer->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, NO_ERROR);
 
     // Now instantiate the EnsembleInfoReader Filter from the FilterManager
@@ -220,7 +215,7 @@ public:
       DREAM3D_REQUIRE_EQUAL(propWasSet, true)
 
       filter->execute();
-      err = filter->getErrorCondition();
+      err = filter->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, NO_ERROR);
 
       DataArrayPath path3 = DataArrayPath(SIMPL::Defaults::DataContainerName, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::CellData::ConfidenceIndexNoSpace);
@@ -232,7 +227,7 @@ public:
       DREAM3D_REQUIRE_EQUAL(propWasSet, true)
 
       filter->execute();
-      err = filter->getErrorCondition();
+      err = filter->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, DIFF_MATRICES);
     }
     else
@@ -307,7 +302,7 @@ public:
   void operator()()
   {
     int err = EXIT_SUCCESS;
-    std::cout << "<===== Start " << getNameOfClass().toStdString() << std::endl;
+    std::cout << "<===== Start ExportDataTest " << std::endl;
     DREAM3D_REGISTER_TEST(TestFilterAvailability());
 
     DREAM3D_REGISTER_TEST(TestExportDataWriter())

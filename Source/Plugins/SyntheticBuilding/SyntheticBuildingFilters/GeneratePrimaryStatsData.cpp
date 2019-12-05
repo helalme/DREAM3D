@@ -2,9 +2,11 @@
  * Your License or Copyright can go here
  */
 
+#include <memory>
+
 #include "GeneratePrimaryStatsData.h"
 
-#include "EbsdLib/EbsdConstants.h"
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
@@ -14,14 +16,20 @@
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DoubleFilterParameter.h"
 #include "SIMPLib/FilterParameters/DynamicTableFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/PreflightUpdatedValueFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/StatsData/PrimaryStatsData.h"
 #include "SIMPLib/Utilities/ColorUtilities.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
+#include "EbsdLib/EbsdConstants.h"
 
 #include "OrientationLib/Texture/StatsGen.hpp"
 
@@ -32,6 +40,13 @@
 #include "SyntheticBuilding/SyntheticBuildingFilters/Presets/PrimaryRolledPreset.h"
 #include "SyntheticBuilding/SyntheticBuildingFilters/StatsGeneratorUtilities.h"
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID20 = 20,
+  AttributeMatrixID21 = 21,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -65,8 +80,8 @@ GeneratePrimaryStatsData::~GeneratePrimaryStatsData() = default;
 // -----------------------------------------------------------------------------
 void GeneratePrimaryStatsData::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
   m_StatsDataArray = nullptr;
   m_PrimaryStatsData = nullptr;
@@ -80,7 +95,7 @@ void GeneratePrimaryStatsData::initialize()
 // -----------------------------------------------------------------------------
 void GeneratePrimaryStatsData::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_STRING_FP("Phase Name", PhaseName, FilterParameter::Parameter, GeneratePrimaryStatsData));
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
@@ -187,8 +202,8 @@ void GeneratePrimaryStatsData::setupFilterParameters()
   linkedProps << "CellEnsembleAttributeMatrixName";
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Create Data Container & Ensemble AttributeMatrix", CreateEnsembleAttributeMatrix, FilterParameter::Parameter, GeneratePrimaryStatsData, linkedProps));
 
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", DataContainerName, FilterParameter::CreatedArray, GeneratePrimaryStatsData));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Ensemble Attribute Matrix", CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, GeneratePrimaryStatsData));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", DataContainerName, FilterParameter::CreatedArray, GeneratePrimaryStatsData));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Ensemble Attribute Matrix", CellEnsembleAttributeMatrixName, DataContainerName, FilterParameter::CreatedArray, GeneratePrimaryStatsData));
 
   linkedProps.clear();
   linkedProps << "SelectedEnsembleAttributeMatrix";
@@ -201,8 +216,7 @@ void GeneratePrimaryStatsData::setupFilterParameters()
 #define FLOAT_RANGE_CHECK(var, min, max, error)                                                                                                                                                        \
   if(m_##var < min || m_##var > max)                                                                                                                                                                   \
   {                                                                                                                                                                                                    \
-    setErrorCondition(error);                                                                                                                                                                          \
-    notifyErrorMessage(getHumanLabel(), "Valid range for " #var " is " #min "~" #max, getErrorCondition());                                                                                            \
+    setErrorCondition(error, "Valid range for " #var " is " #min "~" #max);                                                                                                                            \
   }
 
 // -----------------------------------------------------------------------------
@@ -211,8 +225,8 @@ void GeneratePrimaryStatsData::setupFilterParameters()
 void GeneratePrimaryStatsData::dataCheck()
 {
   initialize();
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   FLOAT_RANGE_CHECK(Mu, 0.0001, 10.0, -95000);
   FLOAT_RANGE_CHECK(Sigma, 0.0, 5.0, -95001);
@@ -221,8 +235,7 @@ void GeneratePrimaryStatsData::dataCheck()
 
   if((m_CreateEnsembleAttributeMatrix && m_AppendToExistingAttributeMatrix) || (!m_CreateEnsembleAttributeMatrix && !m_AppendToExistingAttributeMatrix))
   {
-    setErrorCondition(-95010);
-    notifyErrorMessage(getHumanLabel(), "CreateEnsembleAttributeMatrix & AppendToExistingAttributeMatrix can NOT both be true or false. One must be true and one must be false.", getErrorCondition());
+    setErrorCondition(-95010, "CreateEnsembleAttributeMatrix & AppendToExistingAttributeMatrix can NOT both be true or false. One must be true and one must be false.");
     return;
   }
 
@@ -231,40 +244,40 @@ void GeneratePrimaryStatsData::dataCheck()
   {
     DataContainerArray::Pointer dca = getDataContainerArray();
     DataContainer::Pointer dc = dca->createNonPrereqDataContainer(this, getDataContainerName());
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
 
-    QVector<size_t> tDims(1, 2); // we need 2 slots in the array. ZERO=Junk, 1 = our new primary stats data
-    AttributeMatrix::Pointer cellEnsembleAttrMat = dc->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble);
-    if(getErrorCondition() < 0)
+    std::vector<size_t> tDims(1, 2); // we need 2 slots in the array. ZERO=Junk, 1 = our new primary stats data
+    AttributeMatrix::Pointer cellEnsembleAttrMat = dc->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble, AttributeMatrixID21);
+    if(getErrorCode() < 0)
     {
       return;
     }
     StatsDataArray::Pointer statsDataArray = StatsDataArray::New();
-    statsDataArray->resize(tDims[0]);
-    cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::Statistics, statsDataArray);
+    statsDataArray->resizeTuples(tDims[0]);
+    cellEnsembleAttrMat->insertOrAssign(statsDataArray);
     m_StatsDataArray = statsDataArray.get();
 
     PrimaryStatsData::Pointer primaryStatsData = PrimaryStatsData::New();
     statsDataArray->setStatsData(1, primaryStatsData);
     m_PrimaryStatsData = primaryStatsData.get();
 
-    QVector<size_t> cDims(1, 1);
-    UInt32ArrayType::Pointer crystalStructures = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::CrystalStructures);
+    std::vector<size_t> cDims(1, 1);
+    UInt32ArrayType::Pointer crystalStructures = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::CrystalStructures, true);
     crystalStructures->setValue(0, Ebsd::CrystalStructure::UnknownCrystalStructure);
-    cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::CrystalStructures, crystalStructures);
+    cellEnsembleAttrMat->insertOrAssign(crystalStructures);
     m_CrystalStructures = crystalStructures.get();
 
-    UInt32ArrayType::Pointer phaseTypes = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::PhaseTypes);
+    UInt32ArrayType::Pointer phaseTypes = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::PhaseTypes, true);
     phaseTypes->setValue(0, static_cast<PhaseType::EnumType>(PhaseType::Type::Unknown));
-    cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::PhaseTypes, phaseTypes);
+    cellEnsembleAttrMat->insertOrAssign(phaseTypes);
     m_PhaseTypes = phaseTypes.get();
 
-    StringDataArray::Pointer phaseNames = StringDataArray::CreateArray(tDims[0], SIMPL::EnsembleData::PhaseName);
+    StringDataArray::Pointer phaseNames = StringDataArray::CreateArray(tDims[0], SIMPL::EnsembleData::PhaseName, true);
     phaseNames->setValue(0, PhaseType::getPhaseTypeString(PhaseType::Type::Unknown));
-    cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::PhaseName, phaseNames);
+    cellEnsembleAttrMat->insertOrAssign(phaseNames);
     m_PhaseNames = phaseNames.get();
 
     setPhaseIndex(1); // If we are creating the StatsDataArray then we are the first phase
@@ -278,21 +291,20 @@ void GeneratePrimaryStatsData::dataCheck()
     AttributeMatrix::Pointer cellEnsembleAttrMat = dca->getAttributeMatrix(m_SelectedEnsembleAttributeMatrix);
     if(nullptr == cellEnsembleAttrMat.get())
     {
-      setErrorCondition(-95020);
-      notifyErrorMessage(getHumanLabel(), QString("AttributeMatrix does not exist at path %1").arg(m_SelectedEnsembleAttributeMatrix.serialize("/")), getErrorCondition());
+      setErrorCondition(-95020, QString("AttributeMatrix does not exist at path %1").arg(m_SelectedEnsembleAttributeMatrix.serialize("/")));
       return;
     }
 
     // Resize the AttributeMatrix, which should resize all the AttributeArrays
-    QVector<size_t> tDims(1, cellEnsembleAttrMat->getNumberOfTuples() + 1);
+    std::vector<size_t> tDims(1, cellEnsembleAttrMat->getNumberOfTuples() + 1);
     cellEnsembleAttrMat->resizeAttributeArrays(tDims);
 
     StatsDataArray::Pointer statsDataArray = cellEnsembleAttrMat->getAttributeArrayAs<StatsDataArray>(SIMPL::EnsembleData::Statistics);
     if(nullptr == statsDataArray.get())
     {
       statsDataArray = StatsDataArray::New();
-      statsDataArray->resize(tDims[0]);
-      cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::Statistics, statsDataArray);
+      statsDataArray->resizeTuples(tDims[0]);
+      cellEnsembleAttrMat->insertOrAssign(statsDataArray);
     }
     m_StatsDataArray = statsDataArray.get();
 
@@ -300,32 +312,32 @@ void GeneratePrimaryStatsData::dataCheck()
     statsDataArray->setStatsData(tDims[0] - 1, primaryStatsData);
     m_PrimaryStatsData = primaryStatsData.get();
 
-    QVector<size_t> cDims(1, 1);
+    std::vector<size_t> cDims(1, 1);
 
     UInt32ArrayType::Pointer crystalStructures = cellEnsembleAttrMat->getAttributeArrayAs<UInt32ArrayType>(SIMPL::EnsembleData::CrystalStructures);
     if(nullptr == crystalStructures.get())
     {
-      crystalStructures = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::CrystalStructures);
+      crystalStructures = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::CrystalStructures, true);
       crystalStructures->setValue(0, Ebsd::CrystalStructure::UnknownCrystalStructure);
-      cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::CrystalStructures, crystalStructures);
+      cellEnsembleAttrMat->insertOrAssign(crystalStructures);
     }
     m_CrystalStructures = crystalStructures.get();
 
     UInt32ArrayType::Pointer phaseTypes = cellEnsembleAttrMat->getAttributeArrayAs<UInt32ArrayType>(SIMPL::EnsembleData::PhaseTypes);
     if(nullptr == phaseTypes.get())
     {
-      phaseTypes = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::PhaseTypes);
+      phaseTypes = UInt32ArrayType::CreateArray(tDims, cDims, SIMPL::EnsembleData::PhaseTypes, true);
       phaseTypes->setValue(0, static_cast<PhaseType::EnumType>(PhaseType::Type::Unknown));
-      cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::PhaseTypes, phaseTypes);
+      cellEnsembleAttrMat->insertOrAssign(phaseTypes);
     }
     m_PhaseTypes = phaseTypes.get();
 
     StringDataArray::Pointer phaseNames = cellEnsembleAttrMat->getAttributeArrayAs<StringDataArray>(SIMPL::EnsembleData::PhaseName);
     if(nullptr == phaseNames.get())
     {
-      phaseNames = StringDataArray::CreateArray(tDims[0], SIMPL::EnsembleData::PhaseName);
+      phaseNames = StringDataArray::CreateArray(tDims[0], SIMPL::EnsembleData::PhaseName, true);
       phaseNames->setValue(0, PhaseType::getPhaseTypeString(PhaseType::Type::Unknown));
-      cellEnsembleAttrMat->addAttributeArray(SIMPL::EnsembleData::PhaseName, phaseNames);
+      cellEnsembleAttrMat->insertOrAssign(phaseNames);
     }
     m_PhaseNames = phaseNames.get();
 
@@ -364,7 +376,7 @@ void GeneratePrimaryStatsData::execute()
 {
   initialize();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -382,8 +394,7 @@ void GeneratePrimaryStatsData::execute()
   err = StatsGen::GenLogNormalPlotData<FloatVectorType>(m_Mu, m_Sigma, x, y, size, m_MinCutOff, m_MaxCutOff);
   if(err == 1)
   {
-    setErrorCondition(-95011);
-    notifyErrorMessage(getHumanLabel(), "Error generating the LogNormal Data", getErrorCondition());
+    setErrorCondition(-95011, "Error generating the LogNormal Data");
     return;
   }
   float yMax = 0.0f;
@@ -403,8 +414,7 @@ void GeneratePrimaryStatsData::execute()
   err = StatsGen::GenCutOff<float, FloatVectorType>(m_Mu, m_Sigma, m_MinCutOff, m_MaxCutOff, m_BinStepSize, xCo, yCo, yMax, numsizebins, binSizes);
   if(err == 1)
   {
-    setErrorCondition(-95012);
-    notifyErrorMessage(getHumanLabel(), "Error generating the Min or Max Cut Off values", getErrorCondition());
+    setErrorCondition(-95012, "Error generating the Min or Max Cut Off values");
     return;
   }
 
@@ -440,8 +450,8 @@ void GeneratePrimaryStatsData::execute()
   // Feature Size Distribution
   {
     VectorOfFloatArray data;
-    FloatArrayType::Pointer d1 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::Average);
-    FloatArrayType::Pointer d2 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::StandardDeviation);
+    FloatArrayType::Pointer d1 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::Average, true);
+    FloatArrayType::Pointer d2 = FloatArrayType::CreateArray(1, SIMPL::StringConstants::StandardDeviation, true);
     data.push_back(d1);
     data.push_back(d2);
     d1->setValue(0, m_Mu);
@@ -626,7 +636,7 @@ AbstractFilter::Pointer GeneratePrimaryStatsData::newFilterInstance(bool copyFil
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GeneratePrimaryStatsData::getCompiledLibraryName() const
+QString GeneratePrimaryStatsData::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -634,7 +644,7 @@ const QString GeneratePrimaryStatsData::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GeneratePrimaryStatsData::getBrandingString() const
+QString GeneratePrimaryStatsData::getBrandingString() const
 {
   return "StatsGenerator";
 }
@@ -642,7 +652,7 @@ const QString GeneratePrimaryStatsData::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GeneratePrimaryStatsData::getFilterVersion() const
+QString GeneratePrimaryStatsData::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -653,7 +663,7 @@ const QString GeneratePrimaryStatsData::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GeneratePrimaryStatsData::getGroupName() const
+QString GeneratePrimaryStatsData::getGroupName() const
 {
   return SIMPL::FilterGroups::Unsupported;
 }
@@ -661,7 +671,7 @@ const QString GeneratePrimaryStatsData::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GeneratePrimaryStatsData::getUuid()
+QUuid GeneratePrimaryStatsData::getUuid() const
 {
   return QUuid("{383f0e2a-c82e-5f7e-a904-156828b42314}");
 }
@@ -669,7 +679,7 @@ const QUuid GeneratePrimaryStatsData::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GeneratePrimaryStatsData::getSubGroupName() const
+QString GeneratePrimaryStatsData::getSubGroupName() const
 {
   return "StatsGenerator";
 }
@@ -677,7 +687,252 @@ const QString GeneratePrimaryStatsData::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GeneratePrimaryStatsData::getHumanLabel() const
+QString GeneratePrimaryStatsData::getHumanLabel() const
 {
   return "Generate Primary StatsData";
+}
+
+// -----------------------------------------------------------------------------
+GeneratePrimaryStatsData::Pointer GeneratePrimaryStatsData::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GeneratePrimaryStatsData> GeneratePrimaryStatsData::New()
+{
+  struct make_shared_enabler : public GeneratePrimaryStatsData
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GeneratePrimaryStatsData::getNameOfClass() const
+{
+  return QString("GeneratePrimaryStatsData");
+}
+
+// -----------------------------------------------------------------------------
+QString GeneratePrimaryStatsData::ClassName()
+{
+  return QString("GeneratePrimaryStatsData");
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setPhaseName(const QString& value)
+{
+  m_PhaseName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GeneratePrimaryStatsData::getPhaseName() const
+{
+  return m_PhaseName;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setPhaseIndex(int value)
+{
+  m_PhaseIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int GeneratePrimaryStatsData::getPhaseIndex() const
+{
+  return m_PhaseIndex;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setCrystalSymmetry(int value)
+{
+  m_CrystalSymmetry = value;
+}
+
+// -----------------------------------------------------------------------------
+int GeneratePrimaryStatsData::getCrystalSymmetry() const
+{
+  return m_CrystalSymmetry;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setMicroPresetModel(int value)
+{
+  m_MicroPresetModel = value;
+}
+
+// -----------------------------------------------------------------------------
+int GeneratePrimaryStatsData::getMicroPresetModel() const
+{
+  return m_MicroPresetModel;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setPhaseFraction(double value)
+{
+  m_PhaseFraction = value;
+}
+
+// -----------------------------------------------------------------------------
+double GeneratePrimaryStatsData::getPhaseFraction() const
+{
+  return m_PhaseFraction;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setMu(double value)
+{
+  m_Mu = value;
+}
+
+// -----------------------------------------------------------------------------
+double GeneratePrimaryStatsData::getMu() const
+{
+  return m_Mu;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setSigma(double value)
+{
+  m_Sigma = value;
+}
+
+// -----------------------------------------------------------------------------
+double GeneratePrimaryStatsData::getSigma() const
+{
+  return m_Sigma;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setMinCutOff(double value)
+{
+  m_MinCutOff = value;
+}
+
+// -----------------------------------------------------------------------------
+double GeneratePrimaryStatsData::getMinCutOff() const
+{
+  return m_MinCutOff;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setMaxCutOff(double value)
+{
+  m_MaxCutOff = value;
+}
+
+// -----------------------------------------------------------------------------
+double GeneratePrimaryStatsData::getMaxCutOff() const
+{
+  return m_MaxCutOff;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setBinStepSize(double value)
+{
+  m_BinStepSize = value;
+}
+
+// -----------------------------------------------------------------------------
+double GeneratePrimaryStatsData::getBinStepSize() const
+{
+  return m_BinStepSize;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setCreateEnsembleAttributeMatrix(bool value)
+{
+  m_CreateEnsembleAttributeMatrix = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GeneratePrimaryStatsData::getCreateEnsembleAttributeMatrix() const
+{
+  return m_CreateEnsembleAttributeMatrix;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setDataContainerName(const DataArrayPath& value)
+{
+  m_DataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GeneratePrimaryStatsData::getDataContainerName() const
+{
+  return m_DataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setCellEnsembleAttributeMatrixName(const QString& value)
+{
+  m_CellEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GeneratePrimaryStatsData::getCellEnsembleAttributeMatrixName() const
+{
+  return m_CellEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setAppendToExistingAttributeMatrix(bool value)
+{
+  m_AppendToExistingAttributeMatrix = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GeneratePrimaryStatsData::getAppendToExistingAttributeMatrix() const
+{
+  return m_AppendToExistingAttributeMatrix;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setSelectedEnsembleAttributeMatrix(const DataArrayPath& value)
+{
+  m_SelectedEnsembleAttributeMatrix = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GeneratePrimaryStatsData::getSelectedEnsembleAttributeMatrix() const
+{
+  return m_SelectedEnsembleAttributeMatrix;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setOdfData(const DynamicTableData& value)
+{
+  m_OdfData = value;
+}
+
+// -----------------------------------------------------------------------------
+DynamicTableData GeneratePrimaryStatsData::getOdfData() const
+{
+  return m_OdfData;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setMdfData(const DynamicTableData& value)
+{
+  m_MdfData = value;
+}
+
+// -----------------------------------------------------------------------------
+DynamicTableData GeneratePrimaryStatsData::getMdfData() const
+{
+  return m_MdfData;
+}
+
+// -----------------------------------------------------------------------------
+void GeneratePrimaryStatsData::setAxisOdfData(const DynamicTableData& value)
+{
+  m_AxisOdfData = value;
+}
+
+// -----------------------------------------------------------------------------
+DynamicTableData GeneratePrimaryStatsData::getAxisOdfData() const
+{
+  return m_AxisOdfData;
 }

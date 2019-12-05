@@ -35,9 +35,7 @@
 
 #include "OEMEbsdScanSelectionWidget.h"
 
-#include <QtWidgets/QComboBox>
-#include <QtWidgets/QLabel>
-#include <QtWidgets/QMessageBox>
+#include <QtCore/QDebug>
 
 #include "SIMPLib/Common/Constants.h"
 

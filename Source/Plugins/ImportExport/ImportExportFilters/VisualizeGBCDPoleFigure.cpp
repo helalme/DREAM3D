@@ -33,11 +33,17 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "VisualizeGBCDPoleFigure.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AxisAngleFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -48,7 +54,7 @@
 #include "SIMPLib/Utilities/FileSystemPathHelper.h"
 #include "SIMPLib/Utilities/SIMPLibEndian.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+
 
 #include "ImportExport/ImportExportConstants.h"
 #include "ImportExport/ImportExportVersion.h"
@@ -80,7 +86,7 @@ VisualizeGBCDPoleFigure::~VisualizeGBCDPoleFigure() = default;
 // -----------------------------------------------------------------------------
 void VisualizeGBCDPoleFigure::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Phase of Interest", PhaseOfInterest, FilterParameter::Parameter, VisualizeGBCDPoleFigure));
   parameters.push_back(SIMPL_NEW_AXISANGLE_FP("Misorientation Axis-Angle", MisorientationRotation, FilterParameter::Parameter, VisualizeGBCDPoleFigure));
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output Regular Grid VTK File", OutputFile, FilterParameter::Parameter, VisualizeGBCDPoleFigure, "*.vtk", "VTK File"));
@@ -123,8 +129,8 @@ void VisualizeGBCDPoleFigure::initialize()
 // -----------------------------------------------------------------------------
 void VisualizeGBCDPoleFigure::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getGBCDArrayPath().getDataContainerName());
 
@@ -135,7 +141,7 @@ void VisualizeGBCDPoleFigure::dataCheck()
   }
   FileSystemPathHelper::CheckOutputFile(this, "Output VTK File", getOutputFile(), true);
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CrystalStructuresPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<unsigned int>, AbstractFilter>(this, getCrystalStructuresArrayPath(),
                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -144,14 +150,14 @@ void VisualizeGBCDPoleFigure::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   IDataArray::Pointer tmpGBCDPtr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, getGBCDArrayPath());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   if(nullptr != tmpGBCDPtr.get())
   {
-    QVector<size_t> cDims = tmpGBCDPtr->getComponentDimensions();
+    std::vector<size_t> cDims = tmpGBCDPtr->getComponentDimensions();
     m_GBCDPtr =
         getDataContainerArray()->getPrereqArrayFromPath<DataArray<double>, AbstractFilter>(this, getGBCDArrayPath(), cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
     if(nullptr != m_GBCDPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -163,8 +169,7 @@ void VisualizeGBCDPoleFigure::dataCheck()
   if(nullptr != m_GBCDPtr.lock() && getPhaseOfInterest() >= m_GBCDPtr.lock()->getNumberOfTuples())
   {
     QString ss = QObject::tr("The phase index is larger than the number of Ensembles").arg(ClassName());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 }
 
@@ -186,10 +191,10 @@ void VisualizeGBCDPoleFigure::preflight()
 // -----------------------------------------------------------------------------
 void VisualizeGBCDPoleFigure::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -203,8 +208,7 @@ void VisualizeGBCDPoleFigure::execute()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(dir.path());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -212,18 +216,17 @@ void VisualizeGBCDPoleFigure::execute()
   if(!file.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-100, ss);
     return;
   }
 
-  FloatArrayType::Pointer gbcdDeltasArray = FloatArrayType::CreateArray(5, "GBCDDeltas");
+  FloatArrayType::Pointer gbcdDeltasArray = FloatArrayType::CreateArray(5, "GBCDDeltas", true);
   gbcdDeltasArray->initializeWithZeros();
 
-  FloatArrayType::Pointer gbcdLimitsArray = FloatArrayType::CreateArray(10, "GBCDLimits");
+  FloatArrayType::Pointer gbcdLimitsArray = FloatArrayType::CreateArray(10, "GBCDLimits", true);
   gbcdLimitsArray->initializeWithZeros();
 
-  Int32ArrayType::Pointer gbcdSizesArray = Int32ArrayType::CreateArray(5, "GBCDSizes");
+  Int32ArrayType::Pointer gbcdSizesArray = Int32ArrayType::CreateArray(5, "GBCDSizes", true);
   gbcdSizesArray->initializeWithZeros();
 
   float* gbcdDeltas = gbcdDeltasArray->getPointer(0);
@@ -261,7 +264,7 @@ void VisualizeGBCDPoleFigure::execute()
   gbcdLimits[9] = sqrtf(SIMPLib::Constants::k_PiOver2);
 
   // get num components of GBCD
-  QVector<size_t> cDims = m_GBCDPtr.lock()->getComponentDimensions();
+  std::vector<size_t> cDims = m_GBCDPtr.lock()->getComponentDimensions();
 
   gbcdSizes[0] = cDims[0];
   gbcdSizes[1] = cDims[1];
@@ -293,9 +296,7 @@ void VisualizeGBCDPoleFigure::execute()
   float normAxis[3] = {m_MisorientationRotation.h, m_MisorientationRotation.k, m_MisorientationRotation.l};
   MatrixMath::Normalize3x1(normAxis);
   // convert axis angle to matrix representation of misorientation
-  FOrientArrayType om(9, 0.0f);
-  FOrientTransformsType::ax2om(FOrientArrayType(normAxis[0], normAxis[1], normAxis[2], misAngle), om);
-  om.toGMatrix(dg);
+  OrientationTransformation::ax2om<OrientationF, OrientationF>(OrientationF(normAxis[0], normAxis[1], normAxis[2], misAngle)).toGMatrix(dg);
 
   // take inverse of misorientation variable to use for switching symmetry
   MatrixMath::Transpose3x3(dg, dgt);
@@ -327,9 +328,9 @@ void VisualizeGBCDPoleFigure::execute()
 
   int64_t totalGBCDBins = gbcdSizes[0] * gbcdSizes[1] * gbcdSizes[2] * gbcdSizes[3] * gbcdSizes[4] * 2;
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   DoubleArrayType::Pointer poleFigureArray = DoubleArrayType::NullPointer();
-  poleFigureArray = DoubleArrayType::CreateArray(xpoints * ypoints, dims, "PoleFigure");
+  poleFigureArray = DoubleArrayType::CreateArray(xpoints * ypoints, dims, "PoleFigure", true);
   poleFigureArray->initializeWithZeros();
   double* poleFigure = poleFigureArray->getPointer(0);
 
@@ -363,8 +364,8 @@ void VisualizeGBCDPoleFigure::execute()
             MatrixMath::Multiply3x3with3x3(dg, sym2t, dg1);
             MatrixMath::Multiply3x3with3x3(sym1, dg1, dg2);
             // convert to euler angle
-            FOrientArrayType eu(mis_euler1, 3);
-            FOrientTransformsType::om2eu(FOrientArrayType(dg2), eu);
+            OrientationF eu(mis_euler1, 3);
+            eu = OrientationTransformation::om2eu<OrientationF, OrientationF>(OrientationF(dg2));
             if(mis_euler1[0] < SIMPLib::Constants::k_PiOver2 && mis_euler1[1] < SIMPLib::Constants::k_PiOver2 && mis_euler1[2] < SIMPLib::Constants::k_PiOver2)
             {
               mis_euler1[1] = cosf(mis_euler1[1]);
@@ -397,7 +398,7 @@ void VisualizeGBCDPoleFigure::execute()
             MatrixMath::Multiply3x3with3x3(dgt, sym2, dg1);
             MatrixMath::Multiply3x3with3x3(sym1, dg1, dg2);
             // convert to euler angle
-            FOrientTransformsType::om2eu(FOrientArrayType(dg2), eu);
+            eu = OrientationTransformation::om2eu<OrientationF, OrientationF>(OrientationF(dg2));
             if(mis_euler1[0] < SIMPLib::Constants::k_PiOver2 && mis_euler1[1] < SIMPLib::Constants::k_PiOver2 && mis_euler1[2] < SIMPLib::Constants::k_PiOver2)
             {
               mis_euler1[1] = cosf(mis_euler1[1]);
@@ -439,8 +440,7 @@ void VisualizeGBCDPoleFigure::execute()
   if(nullptr == f)
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(m_OutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -481,8 +481,7 @@ void VisualizeGBCDPoleFigure::execute()
     if(totalWritten != (total))
     {
       QString ss = QObject::tr("Error writing binary VTK data to file '%1'").arg(m_OutputFile);
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
       fclose(f);
       return;
     }
@@ -537,10 +536,9 @@ int32_t VisualizeGBCDPoleFigure::writeCoords(FILE* f, const char* axis, const ch
   if(totalWritten != static_cast<size_t>(npoints))
   {
     QString ss = QObject::tr("Error writing binary VTK data to file '%1'").arg(m_OutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     fclose(f);
-    return getErrorCondition();
+    return getErrorCode();
   }
   return err;
 }
@@ -561,7 +559,7 @@ AbstractFilter::Pointer VisualizeGBCDPoleFigure::newFilterInstance(bool copyFilt
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDPoleFigure::getCompiledLibraryName() const
+QString VisualizeGBCDPoleFigure::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -569,7 +567,7 @@ const QString VisualizeGBCDPoleFigure::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDPoleFigure::getBrandingString() const
+QString VisualizeGBCDPoleFigure::getBrandingString() const
 {
   return "IO";
 }
@@ -577,7 +575,7 @@ const QString VisualizeGBCDPoleFigure::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDPoleFigure::getFilterVersion() const
+QString VisualizeGBCDPoleFigure::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -587,7 +585,7 @@ const QString VisualizeGBCDPoleFigure::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDPoleFigure::getGroupName() const
+QString VisualizeGBCDPoleFigure::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -595,7 +593,7 @@ const QString VisualizeGBCDPoleFigure::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid VisualizeGBCDPoleFigure::getUuid()
+QUuid VisualizeGBCDPoleFigure::getUuid() const
 {
   return QUuid("{85900eba-3da9-5985-ac71-1d9d290a5d31}");
 }
@@ -603,7 +601,7 @@ const QUuid VisualizeGBCDPoleFigure::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDPoleFigure::getSubGroupName() const
+QString VisualizeGBCDPoleFigure::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -611,7 +609,96 @@ const QString VisualizeGBCDPoleFigure::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDPoleFigure::getHumanLabel() const
+QString VisualizeGBCDPoleFigure::getHumanLabel() const
 {
   return "Export GBCD Pole Figure (VTK)";
+}
+
+// -----------------------------------------------------------------------------
+VisualizeGBCDPoleFigure::Pointer VisualizeGBCDPoleFigure::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<VisualizeGBCDPoleFigure> VisualizeGBCDPoleFigure::New()
+{
+  struct make_shared_enabler : public VisualizeGBCDPoleFigure
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString VisualizeGBCDPoleFigure::getNameOfClass() const
+{
+  return QString("VisualizeGBCDPoleFigure");
+}
+
+// -----------------------------------------------------------------------------
+QString VisualizeGBCDPoleFigure::ClassName()
+{
+  return QString("VisualizeGBCDPoleFigure");
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDPoleFigure::setOutputFile(const QString& value)
+{
+  m_OutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString VisualizeGBCDPoleFigure::getOutputFile() const
+{
+  return m_OutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDPoleFigure::setPhaseOfInterest(int value)
+{
+  m_PhaseOfInterest = value;
+}
+
+// -----------------------------------------------------------------------------
+int VisualizeGBCDPoleFigure::getPhaseOfInterest() const
+{
+  return m_PhaseOfInterest;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDPoleFigure::setMisorientationRotation(const AxisAngleInput_t& value)
+{
+  m_MisorientationRotation = value;
+}
+
+// -----------------------------------------------------------------------------
+AxisAngleInput_t VisualizeGBCDPoleFigure::getMisorientationRotation() const
+{
+  return m_MisorientationRotation;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDPoleFigure::setGBCDArrayPath(const DataArrayPath& value)
+{
+  m_GBCDArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath VisualizeGBCDPoleFigure::getGBCDArrayPath() const
+{
+  return m_GBCDArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDPoleFigure::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath VisualizeGBCDPoleFigure::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
 }

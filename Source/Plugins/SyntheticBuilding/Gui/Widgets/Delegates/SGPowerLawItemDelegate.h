@@ -38,11 +38,7 @@
 #include <iostream>
 
 #include <QtCore/QModelIndex>
-#include <QtGui/QDoubleValidator>
 #include <QtGui/QPainter>
-#include <QtWidgets/QComboBox>
-#include <QtWidgets/QLineEdit>
-#include <QtWidgets/QStyleOptionViewItemV4>
 #include <QtWidgets/QStyledItemDelegate>
 
 #include "SVWidgetsLib/QtSupport/QtSColorComboPicker.h"
@@ -60,7 +56,7 @@ class SGPowerLawItemDelegate : public QStyledItemDelegate
   Q_OBJECT
 
 public:
-  explicit SGPowerLawItemDelegate(QObject* parent = 0);
+  explicit SGPowerLawItemDelegate(QObject* parent = nullptr);
 
   /**
    * @brief paint

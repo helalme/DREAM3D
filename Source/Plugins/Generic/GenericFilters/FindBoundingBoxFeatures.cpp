@@ -33,19 +33,33 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindBoundingBoxFeatures.h"
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
 
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Generic/GenericConstants.h"
 #include "Generic/GenericVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -69,7 +83,7 @@ FindBoundingBoxFeatures::~FindBoundingBoxFeatures() = default;
 // -----------------------------------------------------------------------------
 void FindBoundingBoxFeatures::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   QStringList linkedProps("PhasesArrayPath");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Apply Phase by Phase", CalcByPhase, FilterParameter::Parameter, FindBoundingBoxFeatures, linkedProps));
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::RequiredArray));
@@ -89,7 +103,7 @@ void FindBoundingBoxFeatures::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Phases", PhasesArrayPath, FilterParameter::RequiredArray, FindBoundingBoxFeatures, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Biased Features", BiasedFeaturesArrayName, FilterParameter::CreatedArray, FindBoundingBoxFeatures));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Biased Features", BiasedFeaturesArrayName, CentroidsArrayPath, CentroidsArrayPath, FilterParameter::CreatedArray, FindBoundingBoxFeatures));
   setFilterParameters(parameters);
 }
 
@@ -119,8 +133,8 @@ void FindBoundingBoxFeatures::initialize()
 // -----------------------------------------------------------------------------
 void FindBoundingBoxFeatures::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataArrayPath tempPath;
 
@@ -128,14 +142,14 @@ void FindBoundingBoxFeatures::dataCheck()
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 3);
+  std::vector<size_t> cDims(1, 3);
   m_CentroidsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getCentroidsArrayPath(),
                                                                                                      cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CentroidsPtr.lock())                                                                       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Centroids = m_CentroidsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCentroidsArrayPath());
   }
@@ -147,14 +161,13 @@ void FindBoundingBoxFeatures::dataCheck()
   {
     m_SurfaceFeatures = m_SurfaceFeaturesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getSurfaceFeaturesArrayPath());
   }
 
   tempPath.update(getCentroidsArrayPath().getDataContainerName(), getCentroidsArrayPath().getAttributeMatrixName(), getBiasedFeaturesArrayName());
-  m_BiasedFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, false,
-                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_BiasedFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, false, cDims, "", DataArrayID31);
   if(nullptr != m_BiasedFeaturesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_BiasedFeatures = m_BiasedFeaturesPtr.lock()->getPointer(0);
@@ -168,7 +181,7 @@ void FindBoundingBoxFeatures::dataCheck()
     {
       m_Phases = m_PhasesPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArrayPaths.push_back(getPhasesArrayPath());
     }
@@ -228,7 +241,7 @@ void FindBoundingBoxFeatures::find_boundingboxfeatures()
     if(m_CalcByPhase)
     {
       QString ss = QObject::tr("Working on Phase %1 of %2").arg(iter).arg(numPhases);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
     }
     // reset boundbox for each phase
     imageGeom->getBoundingBox(boundbox);
@@ -342,32 +355,31 @@ void FindBoundingBoxFeatures::find_boundingboxfeatures2D()
   int32_t move = 0;
 
   int32_t xPoints = 0, yPoints = 0;
-  float xRes = 0.0f, yRes = 0.0f, zRes = 0.0f;
+  FloatVec3Type spacing;
 
   if(imageGeom->getXPoints() == 1)
   {
     xPoints = imageGeom->getYPoints();
     yPoints = imageGeom->getZPoints();
-    std::tie(zRes, xRes, yRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
   if(imageGeom->getYPoints() == 1)
   {
     xPoints = imageGeom->getXPoints();
     yPoints = imageGeom->getZPoints();
-    std::tie(xRes, zRes, yRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
   if(imageGeom->getZPoints() == 1)
   {
     xPoints = imageGeom->getXPoints();
     yPoints = imageGeom->getYPoints();
-    std::tie(xRes, yRes, zRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
 
   boundbox[0] = xOrigin;
-  boundbox[1] = xOrigin + xPoints * xRes;
+  boundbox[1] = xOrigin + xPoints * spacing[0];
   boundbox[2] = yOrigin;
-  boundbox[3] = yOrigin + yPoints * yRes;
-
+  boundbox[3] = yOrigin + yPoints * spacing[1];
 
   for(size_t i = 1; i < size; i++)
   {
@@ -445,10 +457,10 @@ void FindBoundingBoxFeatures::find_boundingboxfeatures2D()
 // -----------------------------------------------------------------------------
 void FindBoundingBoxFeatures::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -483,7 +495,7 @@ AbstractFilter::Pointer FindBoundingBoxFeatures::newFilterInstance(bool copyFilt
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBoundingBoxFeatures::getCompiledLibraryName() const
+QString FindBoundingBoxFeatures::getCompiledLibraryName() const
 {
   return GenericConstants::GenericBaseName;
 }
@@ -491,7 +503,7 @@ const QString FindBoundingBoxFeatures::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBoundingBoxFeatures::getBrandingString() const
+QString FindBoundingBoxFeatures::getBrandingString() const
 {
   return "Generic";
 }
@@ -499,7 +511,7 @@ const QString FindBoundingBoxFeatures::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBoundingBoxFeatures::getFilterVersion() const
+QString FindBoundingBoxFeatures::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -510,7 +522,7 @@ const QString FindBoundingBoxFeatures::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBoundingBoxFeatures::getGroupName() const
+QString FindBoundingBoxFeatures::getGroupName() const
 {
   return SIMPL::FilterGroups::Generic;
 }
@@ -518,7 +530,7 @@ const QString FindBoundingBoxFeatures::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindBoundingBoxFeatures::getUuid()
+QUuid FindBoundingBoxFeatures::getUuid() const
 {
   return QUuid("{450c2f00-9ddf-56e1-b4c1-0e74e7ad2349}");
 }
@@ -526,7 +538,7 @@ const QUuid FindBoundingBoxFeatures::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBoundingBoxFeatures::getSubGroupName() const
+QString FindBoundingBoxFeatures::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::SpatialFilters;
 }
@@ -534,7 +546,96 @@ const QString FindBoundingBoxFeatures::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBoundingBoxFeatures::getHumanLabel() const
+QString FindBoundingBoxFeatures::getHumanLabel() const
 {
   return "Find Biased Features (Bounding Box)";
+}
+
+// -----------------------------------------------------------------------------
+FindBoundingBoxFeatures::Pointer FindBoundingBoxFeatures::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindBoundingBoxFeatures> FindBoundingBoxFeatures::New()
+{
+  struct make_shared_enabler : public FindBoundingBoxFeatures
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindBoundingBoxFeatures::getNameOfClass() const
+{
+  return QString("FindBoundingBoxFeatures");
+}
+
+// -----------------------------------------------------------------------------
+QString FindBoundingBoxFeatures::ClassName()
+{
+  return QString("FindBoundingBoxFeatures");
+}
+
+// -----------------------------------------------------------------------------
+void FindBoundingBoxFeatures::setCalcByPhase(bool value)
+{
+  m_CalcByPhase = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindBoundingBoxFeatures::getCalcByPhase() const
+{
+  return m_CalcByPhase;
+}
+
+// -----------------------------------------------------------------------------
+void FindBoundingBoxFeatures::setCentroidsArrayPath(const DataArrayPath& value)
+{
+  m_CentroidsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindBoundingBoxFeatures::getCentroidsArrayPath() const
+{
+  return m_CentroidsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindBoundingBoxFeatures::setPhasesArrayPath(const DataArrayPath& value)
+{
+  m_PhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindBoundingBoxFeatures::getPhasesArrayPath() const
+{
+  return m_PhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindBoundingBoxFeatures::setSurfaceFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindBoundingBoxFeatures::getSurfaceFeaturesArrayPath() const
+{
+  return m_SurfaceFeaturesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindBoundingBoxFeatures::setBiasedFeaturesArrayName(const QString& value)
+{
+  m_BiasedFeaturesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindBoundingBoxFeatures::getBiasedFeaturesArrayName() const
+{
+  return m_BiasedFeaturesArrayName;
 }

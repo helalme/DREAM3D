@@ -33,11 +33,18 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SegmentFeatures.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
@@ -76,8 +83,8 @@ void SegmentFeatures::initialize()
 // -----------------------------------------------------------------------------
 void SegmentFeatures::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<IGeometryGrid, AbstractFilter>(this, getDataContainerName());
 }
@@ -116,18 +123,17 @@ bool SegmentFeatures::determineGrouping(int64_t referencepoint, int64_t neighbor
 // -----------------------------------------------------------------------------
 void SegmentFeatures::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getDataContainerName());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<IGeometryGrid>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<IGeometryGrid>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -223,7 +229,7 @@ void SegmentFeatures::execute()
       QString ss = QObject::tr("Total Features: %1").arg(gnum);
       if(gnum % 100 == 0)
       {
-        notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+        notifyStatusMessage(ss);
       }
     }
     if(getCancel())
@@ -251,7 +257,7 @@ AbstractFilter::Pointer SegmentFeatures::newFilterInstance(bool copyFilterParame
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SegmentFeatures::getCompiledLibraryName() const
+QString SegmentFeatures::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -259,7 +265,7 @@ const QString SegmentFeatures::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SegmentFeatures::getBrandingString() const
+QString SegmentFeatures::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -267,7 +273,7 @@ const QString SegmentFeatures::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SegmentFeatures::getFilterVersion() const
+QString SegmentFeatures::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -277,7 +283,7 @@ const QString SegmentFeatures::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SegmentFeatures::getGroupName() const
+QString SegmentFeatures::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -285,7 +291,7 @@ const QString SegmentFeatures::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SegmentFeatures::getUuid()
+QUuid SegmentFeatures::getUuid() const
 {
   return QUuid("{03fd1d06-a376-5b6e-b103-912dc624f867}");
 }
@@ -293,7 +299,7 @@ const QUuid SegmentFeatures::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SegmentFeatures::getSubGroupName() const
+QString SegmentFeatures::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::SegmentationFilters;
 }
@@ -301,7 +307,48 @@ const QString SegmentFeatures::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SegmentFeatures::getHumanLabel() const
+QString SegmentFeatures::getHumanLabel() const
 {
   return "Segment Features";
+}
+
+// -----------------------------------------------------------------------------
+SegmentFeatures::Pointer SegmentFeatures::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SegmentFeatures> SegmentFeatures::New()
+{
+  struct make_shared_enabler : public SegmentFeatures
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SegmentFeatures::getNameOfClass() const
+{
+  return QString("SegmentFeatures");
+}
+
+// -----------------------------------------------------------------------------
+QString SegmentFeatures::ClassName()
+{
+  return QString("SegmentFeatures");
+}
+
+// -----------------------------------------------------------------------------
+void SegmentFeatures::setDataContainerName(const QString& value)
+{
+  m_DataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SegmentFeatures::getDataContainerName() const
+{
+  return m_DataContainerName;
 }

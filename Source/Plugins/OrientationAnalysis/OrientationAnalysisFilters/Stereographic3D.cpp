@@ -30,6 +30,8 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "Stereographic3D.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -39,14 +41,26 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 /**
  * @brief The GenerateCoordinatesImpl class implements a threaded algorithm that computes the IPF
@@ -79,8 +93,7 @@ public:
       {
         m_Filter->setCancel(true);
         QString ss = QObject::tr("The scalar value of a quaterion was <= -1.0. The value was %1").arg(m_Quats[quatIndex + 3]);
-        m_Filter->setErrorCondition(-95000);
-        m_Filter->notifyErrorMessage(m_Filter->getHumanLabel(), ss, m_Filter->getErrorCondition());
+        m_Filter->setErrorCondition(-95000, ss);
         return;
       }
       if(m_Quats[quatIndex + 3] != 0.0f)
@@ -133,8 +146,8 @@ Stereographic3D::~Stereographic3D() = default;
 // -----------------------------------------------------------------------------
 void Stereographic3D::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -143,13 +156,13 @@ void Stereographic3D::initialize()
 // -----------------------------------------------------------------------------
 void Stereographic3D::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateRequirement(SIMPL::TypeNames::Float, 4, AttributeMatrix::Type::Any, IGeometry::Type::Any);
   parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Quaternions", QuatsArrayPath, FilterParameter::RequiredArray, Stereographic3D, req));
 
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Coordinates", CoordinatesArrayName, FilterParameter::CreatedArray, Stereographic3D));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Coordinates", CoordinatesArrayName, QuatsArrayPath, QuatsArrayPath, FilterParameter::CreatedArray, Stereographic3D));
 
   setFilterParameters(parameters);
 }
@@ -170,11 +183,11 @@ void Stereographic3D::readFilterParameters(AbstractFilterParametersReader* reade
 // -----------------------------------------------------------------------------
 void Stereographic3D::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
 
   cDims[0] = 4;
   m_QuatsPtr =
@@ -188,8 +201,7 @@ void Stereographic3D::dataCheck()
   cDims[0] = 3;
   DataArrayPath path = getQuatsArrayPath();
   path.setDataArrayName(getCoordinatesArrayName());
-  m_CellCoordinatesPtr =
-      getDataContainerArray()->createNonPrereqArrayFromPath<FloatArrayType, AbstractFilter, float>(this, path, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_CellCoordinatesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<FloatArrayType, AbstractFilter, float>(this, path, 0, cDims, "", DataArrayID31);
   if(nullptr != m_CellCoordinatesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellCoordinates = m_CellCoordinatesPtr.lock()->getPointer(0);
@@ -220,7 +232,7 @@ void Stereographic3D::execute()
 {
   initialize();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -267,7 +279,7 @@ AbstractFilter::Pointer Stereographic3D::newFilterInstance(bool copyFilterParame
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString Stereographic3D::getCompiledLibraryName() const
+QString Stereographic3D::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -275,7 +287,7 @@ const QString Stereographic3D::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString Stereographic3D::getBrandingString() const
+QString Stereographic3D::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -283,7 +295,7 @@ const QString Stereographic3D::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString Stereographic3D::getFilterVersion() const
+QString Stereographic3D::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -294,7 +306,7 @@ const QString Stereographic3D::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString Stereographic3D::getGroupName() const
+QString Stereographic3D::getGroupName() const
 {
   return SIMPL::FilterGroups::Utilities;
 }
@@ -302,7 +314,7 @@ const QString Stereographic3D::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid Stereographic3D::getUuid()
+QUuid Stereographic3D::getUuid() const
 {
   return QUuid("{3630623e-724b-5154-a060-a5fca4ecfff5}");
 }
@@ -310,7 +322,7 @@ const QUuid Stereographic3D::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString Stereographic3D::getSubGroupName() const
+QString Stereographic3D::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ConversionFilters;
 }
@@ -318,7 +330,60 @@ const QString Stereographic3D::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString Stereographic3D::getHumanLabel() const
+QString Stereographic3D::getHumanLabel() const
 {
   return "Stereographic 3D Coordinates";
+}
+
+// -----------------------------------------------------------------------------
+Stereographic3D::Pointer Stereographic3D::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<Stereographic3D> Stereographic3D::New()
+{
+  struct make_shared_enabler : public Stereographic3D
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString Stereographic3D::getNameOfClass() const
+{
+  return QString("Stereographic3D");
+}
+
+// -----------------------------------------------------------------------------
+QString Stereographic3D::ClassName()
+{
+  return QString("Stereographic3D");
+}
+
+// -----------------------------------------------------------------------------
+void Stereographic3D::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath Stereographic3D::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void Stereographic3D::setCoordinatesArrayName(const QString& value)
+{
+  m_CoordinatesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString Stereographic3D::getCoordinatesArrayName() const
+{
+  return m_CoordinatesArrayName;
 }

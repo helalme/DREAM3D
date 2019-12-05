@@ -43,11 +43,16 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindGBPDMetricBased.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -58,9 +63,11 @@
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Utilities/FileSystemPathHelper.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationLib/LaueOps/LaueOps.h"
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -121,8 +128,8 @@ class TrisSelector
 {
   // corresponding to Phase of Interest
   bool m_ExcludeTripleLines;
-  int64_t* m_Triangles;
-  int8_t* m_NodeTypes;
+  MeshIndexType* m_Triangles = nullptr;
+  int8_t* m_NodeTypes = nullptr;
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
   tbb::concurrent_vector<TriAreaAndNormals>* selectedTris;
 #else
@@ -132,15 +139,14 @@ class TrisSelector
   QVector<LaueOps::Pointer> m_OrientationOps;
   uint32_t cryst;
   int32_t nsym;
-  uint32_t* m_CrystalStructures;
-  float* m_Eulers;
-  int32_t* m_Phases;
-  int32_t* m_FaceLabels;
-  double* m_FaceNormals;
-  double* m_FaceAreas;
+  float* m_Eulers = nullptr;
+  int32_t* m_Phases = nullptr;
+  int32_t* m_FaceLabels = nullptr;
+  double* m_FaceNormals = nullptr;
+  double* m_FaceAreas = nullptr;
 
 public:
-  TrisSelector(bool __m_ExcludeTripleLines, int64_t* __m_Triangles, int8_t* __m_NodeTypes,
+  TrisSelector(bool __m_ExcludeTripleLines, MeshIndexType* __m_Triangles, int8_t* __m_NodeTypes,
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
                tbb::concurrent_vector<TriAreaAndNormals>* __selectedTris,
@@ -153,7 +159,6 @@ public:
   , m_NodeTypes(__m_NodeTypes)
   , selectedTris(__selectedTris)
   , m_PhaseOfInterest(__m_PhaseOfInterest)
-  , m_CrystalStructures(__m_CrystalStructures)
   , m_Eulers(__m_Eulers)
   , m_Phases(__m_Phases)
   , m_FaceLabels(__m_FaceLabels)
@@ -219,11 +224,8 @@ public:
         g2ea[whichEa] = m_Eulers[3 * feature2 + whichEa];
       }
 
-      FOrientArrayType om(9, 0.0f);
-      FOrientTransformsType::eu2om(FOrientArrayType(g1ea, 3), om);
-      om.toGMatrix(g1);
-      FOrientTransformsType::eu2om(FOrientArrayType(g2ea, 3), om);
-      om.toGMatrix(g2);
+      OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g1ea, 3)).toGMatrix(g1);
+      OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g2ea, 3)).toGMatrix(g2);
 
       MatrixMath::Multiply3x3with3x1(g1, normal_lab, normal_grain1);
       MatrixMath::Multiply3x3with3x1(g2, normal_lab, normal_grain2);
@@ -396,7 +398,7 @@ FindGBPDMetricBased::~FindGBPDMetricBased() = default;
 // -----------------------------------------------------------------------------
 void FindGBPDMetricBased::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Phase of Interest", PhaseOfInterest, FilterParameter::Parameter, FindGBPDMetricBased));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Limiting Distance [deg.]", LimitDist, FilterParameter::Parameter, FindGBPDMetricBased));
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Number of Sampling Points (on a Hemisphere)", NumSamplPts, FilterParameter::Parameter, FindGBPDMetricBased));
@@ -484,30 +486,28 @@ void FindGBPDMetricBased::initialize()
 // -----------------------------------------------------------------------------
 void FindGBPDMetricBased::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // Number of Sampling Points (filter params.)
   if(getNumSamplPts() < 1)
   {
-    setErrorCondition(-1000);
     QString ss = QObject::tr("The number of sampling points must be greater than zero");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1000, ss);
   }
 
   // Set some reasonable value, but allow user to use more if he/she knows what he/she does
   if(getNumSamplPts() > 5000)
   {
-    setWarningCondition(-1001);
     QString ss = QObject::tr("Most likely, you do not need to use that many sampling points");
-    notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+    setWarningCondition(-1001, ss);
   }
 
   // Output files (filter params.)
   FileSystemPathHelper::CheckOutputFile(this, "Output Distribution File", getDistOutputFile(), true);
   FileSystemPathHelper::CheckOutputFile(this, "Output Error File", getErrOutputFile(), true);
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -542,13 +542,12 @@ void FindGBPDMetricBased::dataCheck()
 
   if(!getDistOutputFile().isEmpty() && getDistOutputFile() == getErrOutputFile())
   {
-    setErrorCondition(-1006);
     QString ss = QObject::tr("The output files must be different");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1006, ss);
   }
 
   // Crystal Structures
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CrystalStructuresPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<unsigned int>, AbstractFilter>(this, getCrystalStructuresArrayPath(),
                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -561,9 +560,8 @@ void FindGBPDMetricBased::dataCheck()
   {
     if(getPhaseOfInterest() >= static_cast<int>(m_CrystalStructuresPtr.lock()->getNumberOfTuples()) || getPhaseOfInterest() <= 0)
     {
-      setErrorCondition(-1007);
       QString ss = QObject::tr("The phase index is either larger than the number of Ensembles or smaller than 1");
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1007, ss);
     }
   }
 
@@ -682,10 +680,10 @@ void FindGBPDMetricBased::appendSamplPtsFixedAzimuth(QVector<float>* xVec, QVect
 // -----------------------------------------------------------------------------
 void FindGBPDMetricBased::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -705,14 +703,14 @@ void FindGBPDMetricBased::execute()
   if(m_CrystalStructures[m_PhaseOfInterest] > 10)
   {
     QString ss = QObject::tr("Unsupported CrystalStructure");
-    notifyErrorMessage(getHumanLabel(), ss, -1);
+    setErrorCondition(-1, ss);
     return;
   }
 
   DataContainer::Pointer sm = getDataContainerArray()->getDataContainer(getSurfaceMeshFaceAreasArrayPath().getDataContainerName());
   TriangleGeom::Pointer triangleGeom = sm->getGeometryAs<TriangleGeom>();
   SharedTriList::Pointer m_TrianglesPtr = triangleGeom->getTriangles();
-  int64_t* m_Triangles = m_TrianglesPtr->getPointer(0);
+  MeshIndexType* m_Triangles = m_TrianglesPtr->getPointer(0);
 
   // -------------------- check if directiories are ok and if output files can be opened -----------
 
@@ -725,8 +723,7 @@ void FindGBPDMetricBased::execute()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(distOutFileDir.path());
-    notifyErrorMessage(getHumanLabel(), ss, -1);
-    setErrorCondition(-1);
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -734,8 +731,7 @@ void FindGBPDMetricBased::execute()
   if(!distOutFile.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getDistOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-100, ss);
     return;
   }
 
@@ -746,8 +742,7 @@ void FindGBPDMetricBased::execute()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(errOutFileDir.path());
-    notifyErrorMessage(getHumanLabel(), ss, -1);
-    setErrorCondition(-1);
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -755,8 +750,7 @@ void FindGBPDMetricBased::execute()
   if(!errOutFile.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getDistOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-100, ss);
     return;
   }
 
@@ -766,8 +760,7 @@ void FindGBPDMetricBased::execute()
   if(nullptr == fDist)
   {
     QString ss = QObject::tr("Error opening distribution output file '%1'").arg(m_DistOutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -776,8 +769,7 @@ void FindGBPDMetricBased::execute()
   if(nullptr == fErr)
   {
     QString ss = QObject::tr("Error opening distribution errors output file '%1'").arg(m_ErrOutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -790,7 +782,7 @@ void FindGBPDMetricBased::execute()
   // ------------------------------ generation of sampling points ----------------------------------
 
   QString ss = QObject::tr("--> Generating sampling points");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 
   // generate "Golden Section Spiral", see http://www.softimageblog.com/archives/115
   int numSamplPts_WholeSph = 2 * m_NumSamplPts; // here we generate points on the whole sphere
@@ -1008,7 +1000,7 @@ void FindGBPDMetricBased::execute()
       return;
     }
     ss = QObject::tr("--> Selecting triangles corresponding to Phase Of Interest");
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     if(i + trisChunkSize >= numMeshTris)
     {
       trisChunkSize = numMeshTris - i;
@@ -1079,7 +1071,7 @@ void FindGBPDMetricBased::execute()
       return;
     }
     ss = QObject::tr("--> Determining GBPD values (%1%)").arg(int(100.0 * float(i) / float(samplPtsX.size())));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     if(i + pointsChunkSize >= samplPtsX.size())
     {
       pointsChunkSize = samplPtsX.size() - i;
@@ -1148,11 +1140,10 @@ void FindGBPDMetricBased::execute()
   fclose(fDist);
   fclose(fErr);
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     QString ss = QObject::tr("Something went wrong");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -1174,7 +1165,7 @@ AbstractFilter::Pointer FindGBPDMetricBased::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBPDMetricBased::getCompiledLibraryName() const
+QString FindGBPDMetricBased::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -1182,7 +1173,7 @@ const QString FindGBPDMetricBased::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBPDMetricBased::getBrandingString() const
+QString FindGBPDMetricBased::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -1190,7 +1181,7 @@ const QString FindGBPDMetricBased::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBPDMetricBased::getFilterVersion() const
+QString FindGBPDMetricBased::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -1201,7 +1192,7 @@ const QString FindGBPDMetricBased::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBPDMetricBased::getGroupName() const
+QString FindGBPDMetricBased::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -1209,7 +1200,7 @@ const QString FindGBPDMetricBased::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindGBPDMetricBased::getUuid()
+QUuid FindGBPDMetricBased::getUuid() const
 {
   return QUuid("{00d20627-5b88-56ba-ac7a-fc2a4b337903}");
 }
@@ -1217,7 +1208,7 @@ const QUuid FindGBPDMetricBased::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBPDMetricBased::getSubGroupName() const
+QString FindGBPDMetricBased::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -1225,7 +1216,216 @@ const QString FindGBPDMetricBased::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBPDMetricBased::getHumanLabel() const
+QString FindGBPDMetricBased::getHumanLabel() const
 {
   return "Find GBPD (Metric-Based Approach)";
+}
+
+// -----------------------------------------------------------------------------
+FindGBPDMetricBased::Pointer FindGBPDMetricBased::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindGBPDMetricBased> FindGBPDMetricBased::New()
+{
+  struct make_shared_enabler : public FindGBPDMetricBased
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBPDMetricBased::getNameOfClass() const
+{
+  return QString("FindGBPDMetricBased");
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBPDMetricBased::ClassName()
+{
+  return QString("FindGBPDMetricBased");
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setPhaseOfInterest(int value)
+{
+  m_PhaseOfInterest = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindGBPDMetricBased::getPhaseOfInterest() const
+{
+  return m_PhaseOfInterest;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setLimitDist(float value)
+{
+  m_LimitDist = value;
+}
+
+// -----------------------------------------------------------------------------
+float FindGBPDMetricBased::getLimitDist() const
+{
+  return m_LimitDist;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setNumSamplPts(int value)
+{
+  m_NumSamplPts = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindGBPDMetricBased::getNumSamplPts() const
+{
+  return m_NumSamplPts;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setExcludeTripleLines(bool value)
+{
+  m_ExcludeTripleLines = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindGBPDMetricBased::getExcludeTripleLines() const
+{
+  return m_ExcludeTripleLines;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setDistOutputFile(const QString& value)
+{
+  m_DistOutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBPDMetricBased::getDistOutputFile() const
+{
+  return m_DistOutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setErrOutputFile(const QString& value)
+{
+  m_ErrOutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBPDMetricBased::getErrOutputFile() const
+{
+  return m_ErrOutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setSaveRelativeErr(bool value)
+{
+  m_SaveRelativeErr = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindGBPDMetricBased::getSaveRelativeErr() const
+{
+  return m_SaveRelativeErr;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setFeatureEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_FeatureEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getFeatureEulerAnglesArrayPath() const
+{
+  return m_FeatureEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setSurfaceMeshFaceNormalsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceNormalsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getSurfaceMeshFaceNormalsArrayPath() const
+{
+  return m_SurfaceMeshFaceNormalsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setSurfaceMeshFaceAreasArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceAreasArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getSurfaceMeshFaceAreasArrayPath() const
+{
+  return m_SurfaceMeshFaceAreasArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setSurfaceMeshFeatureFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFeatureFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getSurfaceMeshFeatureFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFeatureFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBPDMetricBased::setNodeTypesArrayPath(const DataArrayPath& value)
+{
+  m_NodeTypesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBPDMetricBased::getNodeTypesArrayPath() const
+{
+  return m_NodeTypesArrayPath;
 }

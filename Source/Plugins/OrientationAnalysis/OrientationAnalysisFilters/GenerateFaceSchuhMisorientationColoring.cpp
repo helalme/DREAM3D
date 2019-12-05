@@ -33,6 +33,8 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "GenerateFaceSchuhMisorientationColoring.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -41,13 +43,18 @@
 #include <tbb/partitioner.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Math/MatrixMath.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
 #include "SIMPLib/Utilities/ColorTable.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationLib/LaueOps/CubicLowOps.h"
 #include "OrientationLib/LaueOps/CubicOps.h"
@@ -101,9 +108,8 @@ public:
     SIMPL::Rgb argb = 0x00000000;
 
     int grain1, grain2, phase1, phase2;
-    QuatF q1;
-    QuatF q2;
-    QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+
+    // QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
 
     for(size_t i = start; i < end; i++)
     {
@@ -136,8 +142,11 @@ public:
         {
           if(m_CrystalStructures[phase1] == Ebsd::CrystalStructure::Cubic_High)
           {
-            QuaternionMathF::Copy(quats[grain1], q1);
-            QuaternionMathF::Copy(quats[grain2], q2);
+            float* quatPtr = m_Quats + i * grain1;
+            QuatType q1(quatPtr[0], quatPtr[1], quatPtr[2], quatPtr[3]);
+            quatPtr = m_Quats + i * grain2;
+            QuatType q2(quatPtr[0], quatPtr[1], quatPtr[2], quatPtr[3]);
+
             argb = ops[m_CrystalStructures[phase1]]->generateMisorientationColor(q1, q2);
             m_Colors[3 * i] = RgbColor::dRed(argb);
             m_Colors[3 * i + 1] = RgbColor::dGreen(argb);
@@ -182,7 +191,7 @@ GenerateFaceSchuhMisorientationColoring::~GenerateFaceSchuhMisorientationColorin
 // -----------------------------------------------------------------------------
 void GenerateFaceSchuhMisorientationColoring::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     DataArraySelectionFilterParameter::RequirementType req;
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("SurfaceMeshFaceLabels", SurfaceMeshFaceLabelsArrayPath, FilterParameter::RequiredArray, GenerateFaceSchuhMisorientationColoring, req));
@@ -226,16 +235,16 @@ void GenerateFaceSchuhMisorientationColoring::readFilterParameters(AbstractFilte
 void GenerateFaceSchuhMisorientationColoring::dataCheckSurfaceMesh()
 {
   DataArrayPath tempPath;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataContainer::Pointer sm = getDataContainerArray()->getPrereqDataContainer(this, m_SurfaceMeshFaceLabelsArrayPath.getDataContainerName(), false);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  QVector<size_t> dims(1, 2);
+  std::vector<size_t> dims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -258,10 +267,10 @@ void GenerateFaceSchuhMisorientationColoring::dataCheckSurfaceMesh()
 void GenerateFaceSchuhMisorientationColoring::dataCheckVoxel()
 {
   DataArrayPath tempPath;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 4);
+  std::vector<size_t> dims(1, 4);
   m_AvgQuatsPtr =
       getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getAvgQuatsArrayPath(), dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_AvgQuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -303,21 +312,21 @@ void GenerateFaceSchuhMisorientationColoring::preflight()
 // -----------------------------------------------------------------------------
 void GenerateFaceSchuhMisorientationColoring::execute()
 {
-  int err = 0;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
   dataCheckSurfaceMesh();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   dataCheckVoxel();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Starting");
+  notifyStatusMessage("Starting");
 
   // Run the data check to allocate the memory for the centroid array
   int64_t numTriangles = m_SurfaceMeshFaceLabelsPtr.lock()->getNumberOfTuples();
@@ -358,7 +367,7 @@ AbstractFilter::Pointer GenerateFaceSchuhMisorientationColoring::newFilterInstan
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateFaceSchuhMisorientationColoring::getCompiledLibraryName() const
+QString GenerateFaceSchuhMisorientationColoring::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -366,7 +375,7 @@ const QString GenerateFaceSchuhMisorientationColoring::getCompiledLibraryName() 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateFaceSchuhMisorientationColoring::getBrandingString() const
+QString GenerateFaceSchuhMisorientationColoring::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -374,7 +383,7 @@ const QString GenerateFaceSchuhMisorientationColoring::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateFaceSchuhMisorientationColoring::getFilterVersion() const
+QString GenerateFaceSchuhMisorientationColoring::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -385,7 +394,7 @@ const QString GenerateFaceSchuhMisorientationColoring::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateFaceSchuhMisorientationColoring::getGroupName() const
+QString GenerateFaceSchuhMisorientationColoring::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -393,7 +402,7 @@ const QString GenerateFaceSchuhMisorientationColoring::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GenerateFaceSchuhMisorientationColoring::getUuid()
+QUuid GenerateFaceSchuhMisorientationColoring::getUuid() const
 {
   return QUuid("{0850a882-ca6f-52c6-aa0b-885359b84c32}");
 }
@@ -401,7 +410,7 @@ const QUuid GenerateFaceSchuhMisorientationColoring::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateFaceSchuhMisorientationColoring::getSubGroupName() const
+QString GenerateFaceSchuhMisorientationColoring::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -409,7 +418,96 @@ const QString GenerateFaceSchuhMisorientationColoring::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateFaceSchuhMisorientationColoring::getHumanLabel() const
+QString GenerateFaceSchuhMisorientationColoring::getHumanLabel() const
 {
   return "Generate Face Schuh Misorientation Colors";
+}
+
+// -----------------------------------------------------------------------------
+GenerateFaceSchuhMisorientationColoring::Pointer GenerateFaceSchuhMisorientationColoring::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GenerateFaceSchuhMisorientationColoring> GenerateFaceSchuhMisorientationColoring::New()
+{
+  struct make_shared_enabler : public GenerateFaceSchuhMisorientationColoring
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateFaceSchuhMisorientationColoring::getNameOfClass() const
+{
+  return QString("GenerateFaceSchuhMisorientationColoring");
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateFaceSchuhMisorientationColoring::ClassName()
+{
+  return QString("GenerateFaceSchuhMisorientationColoring");
+}
+
+// -----------------------------------------------------------------------------
+void GenerateFaceSchuhMisorientationColoring::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateFaceSchuhMisorientationColoring::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateFaceSchuhMisorientationColoring::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateFaceSchuhMisorientationColoring::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateFaceSchuhMisorientationColoring::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateFaceSchuhMisorientationColoring::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateFaceSchuhMisorientationColoring::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateFaceSchuhMisorientationColoring::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateFaceSchuhMisorientationColoring::setSurfaceMeshFaceSchuhMisorientationColorsArrayName(const QString& value)
+{
+  m_SurfaceMeshFaceSchuhMisorientationColorsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateFaceSchuhMisorientationColoring::getSurfaceMeshFaceSchuhMisorientationColorsArrayName() const
+{
+  return m_SurfaceMeshFaceSchuhMisorientationColorsArrayName;
 }

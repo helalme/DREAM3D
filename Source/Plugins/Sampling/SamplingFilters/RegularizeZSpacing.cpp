@@ -33,17 +33,24 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "RegularizeZSpacing.h"
 
 #include <fstream>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingVersion.h"
@@ -68,9 +75,9 @@ RegularizeZSpacing::~RegularizeZSpacing() = default;
 // -----------------------------------------------------------------------------
 void RegularizeZSpacing::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Current Z Positions File", InputFile, FilterParameter::Parameter, RegularizeZSpacing, "*.txt"));
-  parameters.push_back(SIMPL_NEW_FLOAT_FP("New Z Resolution", NewZRes, FilterParameter::Parameter, RegularizeZSpacing));
+  parameters.push_back(SIMPL_NEW_FLOAT_FP("New Z Spacing", NewZRes, FilterParameter::Parameter, RegularizeZSpacing));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     AttributeMatrixSelectionFilterParameter::RequirementType req = AttributeMatrixSelectionFilterParameter::CreateRequirement(AttributeMatrix::Type::Cell, IGeometry::Type::Image);
@@ -103,14 +110,13 @@ void RegularizeZSpacing::initialize()
 // -----------------------------------------------------------------------------
 void RegularizeZSpacing::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(getNewZRes() <= 0)
   {
     QString ss = QObject::tr("The new Z resolution Y (%1) must be positive").arg(getNewZRes());
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5555, ss);
   }
 
   std::ifstream inFile;
@@ -119,14 +125,13 @@ void RegularizeZSpacing::dataCheck()
   if(!inFile.good())
   {
     QString ss = QObject::tr("Unable to open input file with name '%1'").arg(getInputFile());
-    setErrorCondition(-5556);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5556, ss);
     return;
   }
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getCellAttributeMatrixPath().getDataContainerName());
   AttributeMatrix::Pointer cellAttrMat = getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, getCellAttributeMatrixPath(), -301);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -145,7 +150,7 @@ void RegularizeZSpacing::dataCheck()
   if(getInPreflight())
   {
     image->setDimensions(std::make_tuple(image->getXPoints(), image->getYPoints(), zP));
-    QVector<size_t> tDims(3, 0);
+    std::vector<size_t> tDims(3, 0);
     tDims[0] = image->getXPoints();
     tDims[1] = image->getYPoints();
     tDims[2] = zP;
@@ -173,18 +178,17 @@ void RegularizeZSpacing::preflight()
 // -----------------------------------------------------------------------------
 void RegularizeZSpacing::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getCellAttributeMatrixPath().getDataContainerName());
 
-  size_t dims[3];
-  std::tie(dims[0], dims[1], dims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   std::ifstream inFile;
   inFile.open(m_InputFile.toLatin1().data());
@@ -198,10 +202,7 @@ void RegularizeZSpacing::execute()
   }
   inFile.close();
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
   float sizez = zboundvalues[dims[2]];
   size_t m_XP = dims[0];
@@ -238,7 +239,7 @@ void RegularizeZSpacing::execute()
   }
 
   AttributeMatrix::Pointer cellAttrMat = m->getAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName());
-  QVector<size_t> tDims(3, 0);
+  std::vector<size_t> tDims(3, 0);
   tDims[0] = m_XP;
   tDims[1] = m_YP;
   tDims[2] = m_ZP;
@@ -252,7 +253,7 @@ void RegularizeZSpacing::execute()
     // the data container this will over write the current array with
     // the same name. At least in theory
     IDataArray::Pointer data = p->createNewArray(p->getNumberOfTuples(), p->getComponentDimensions(), p->getName());
-    data->resize(totalPoints);
+    data->resizeTuples(totalPoints);
     void* source = nullptr;
     void* destination = nullptr;
     size_t newIndicies_I = 0;
@@ -266,13 +267,12 @@ void RegularizeZSpacing::execute()
       ::memcpy(destination, source, p->getTypeSize() * data->getNumberOfComponents());
     }
     cellAttrMat->removeAttributeArray(*iter);
-    newCellAttrMat->addAttributeArray(*iter, data);
+    newCellAttrMat->insertOrAssign(data);
   }
-  m->getGeometryAs<ImageGeom>()->setResolution(std::make_tuple(xRes, yRes, m_NewZRes));
-  m->getGeometryAs<ImageGeom>()->setDimensions(std::make_tuple(m_XP, m_YP, m_ZP));
+  m->getGeometryAs<ImageGeom>()->setSpacing(spacing[0], spacing[1], m_NewZRes);
+  m->getGeometryAs<ImageGeom>()->setDimensions(m_XP, m_YP, m_ZP);
   m->removeAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName());
-  m->addAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName(), newCellAttrMat);
-
+  m->addOrReplaceAttributeMatrix(newCellAttrMat);
 }
 
 // -----------------------------------------------------------------------------
@@ -291,7 +291,7 @@ AbstractFilter::Pointer RegularizeZSpacing::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RegularizeZSpacing::getCompiledLibraryName() const
+QString RegularizeZSpacing::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -299,7 +299,7 @@ const QString RegularizeZSpacing::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RegularizeZSpacing::getBrandingString() const
+QString RegularizeZSpacing::getBrandingString() const
 {
   return "Sampling";
 }
@@ -307,7 +307,7 @@ const QString RegularizeZSpacing::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RegularizeZSpacing::getFilterVersion() const
+QString RegularizeZSpacing::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -317,7 +317,7 @@ const QString RegularizeZSpacing::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RegularizeZSpacing::getGroupName() const
+QString RegularizeZSpacing::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -325,7 +325,7 @@ const QString RegularizeZSpacing::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid RegularizeZSpacing::getUuid()
+QUuid RegularizeZSpacing::getUuid() const
 {
   return QUuid("{bc4952fa-34ca-50bf-a1e9-2b9f7e5d47ce}");
 }
@@ -333,7 +333,7 @@ const QUuid RegularizeZSpacing::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RegularizeZSpacing::getSubGroupName() const
+QString RegularizeZSpacing::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ResolutionFilters;
 }
@@ -341,7 +341,72 @@ const QString RegularizeZSpacing::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RegularizeZSpacing::getHumanLabel() const
+QString RegularizeZSpacing::getHumanLabel() const
 {
   return "Regularize Z Spacing";
+}
+
+// -----------------------------------------------------------------------------
+RegularizeZSpacing::Pointer RegularizeZSpacing::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<RegularizeZSpacing> RegularizeZSpacing::New()
+{
+  struct make_shared_enabler : public RegularizeZSpacing
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString RegularizeZSpacing::getNameOfClass() const
+{
+  return QString("RegularizeZSpacing");
+}
+
+// -----------------------------------------------------------------------------
+QString RegularizeZSpacing::ClassName()
+{
+  return QString("RegularizeZSpacing");
+}
+
+// -----------------------------------------------------------------------------
+void RegularizeZSpacing::setCellAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_CellAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath RegularizeZSpacing::getCellAttributeMatrixPath() const
+{
+  return m_CellAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void RegularizeZSpacing::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString RegularizeZSpacing::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void RegularizeZSpacing::setNewZRes(float value)
+{
+  m_NewZRes = value;
+}
+
+// -----------------------------------------------------------------------------
+float RegularizeZSpacing::getNewZRes() const
+{
+  return m_NewZRes;
 }

@@ -33,11 +33,16 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ConvertHexGridToSquareGrid.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/Utilities/FilePathGenerator.h"
 
@@ -80,7 +85,7 @@ ConvertHexGridToSquareGrid::~ConvertHexGridToSquareGrid() = default;
 // -----------------------------------------------------------------------------
 void ConvertHexGridToSquareGrid::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(ConvertHexGridToSquareGridFilterParameter::New("Convert Hex Grid ANG Files", "HexGridStack", getHexGridStack(), FilterParameter::Parameter, this));
 
@@ -119,8 +124,8 @@ void ConvertHexGridToSquareGrid::initialize()
 // -----------------------------------------------------------------------------
 void ConvertHexGridToSquareGrid::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
   QString ss;
 
@@ -128,21 +133,18 @@ void ConvertHexGridToSquareGrid::dataCheck()
 
   if(getOutputPath().isEmpty())
   {
-    setErrorCondition(-1003);
-    notifyErrorMessage(getHumanLabel(), "The output directory must be set", getErrorCondition());
+    setErrorCondition(-1003, "The output directory must be set");
   }
   else if(!dir.exists())
   {
-    setWarningCondition(-1004);
     QString ss = QObject::tr("The output directory path does not exist. DREAM.3D will attempt to create this path during execution");
-    notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+    setWarningCondition(-1004, ss);
   }
 
   if(m_InputPath.isEmpty())
   {
     ss = QObject::tr("The input directory must be set");
-    setErrorCondition(-13);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-13, ss);
   }
 
   bool hasMissingFiles = false;
@@ -154,8 +156,7 @@ void ConvertHexGridToSquareGrid::dataCheck()
   if(fileList.empty())
   {
     QString ss = QObject::tr("No files have been selected for import. Have you set the input directory?");
-    setErrorCondition(-11);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11, ss);
   }
 }
 
@@ -262,10 +263,10 @@ QString ConvertHexGridToSquareGrid::modifyAngHeaderLine(QString& buf)
 // -----------------------------------------------------------------------------
 void ConvertHexGridToSquareGrid::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -314,7 +315,7 @@ void ConvertHexGridToSquareGrid::execute()
       progress = static_cast<int32_t>(z - m_ZStartIndex);
       progress = (int32_t)(100.0f * (float)(progress) / total);
       QString msg = "Converting File: " + ebsdFName;
-      notifyStatusMessage(getHumanLabel(), msg.toLatin1().data());
+      notifyStatusMessage(msg.toLatin1().data());
     }
     if(getCancel())
     {
@@ -335,30 +336,26 @@ void ConvertHexGridToSquareGrid::execute()
       err = reader.readFile();
       if(err < 0 && err != -600)
       {
-        setErrorCondition(reader.getErrorCode());
-        notifyErrorMessage(getHumanLabel(), reader.getErrorMessage(), reader.getErrorCode());
+        setErrorCondition(reader.getErrorCode(), reader.getErrorMessage());
         return;
       }
       if(reader.getGrid().startsWith(Ebsd::Ang::SquareGrid))
       {
         QString ss = QObject::tr("Ang file is already a square grid: %1").arg(ebsdFName);
-        setErrorCondition(-55000);
-        notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+        setErrorCondition(-55000, ss);
         return;
       }
 
         if(err == -600)
         {
-          setWarningCondition(reader.getErrorCode());
-          notifyWarningMessage(getHumanLabel(), reader.getErrorMessage(), getWarningCondition());
+          setWarningCondition(reader.getErrorCode(), reader.getErrorMessage());
         }
         QString origHeader = reader.getOriginalHeader();
         if(origHeader.isEmpty())
         {
 
           QString ss = QObject::tr("Header could not be retrieved: %1").arg(ebsdFName);
-          setErrorCondition(-55001);
-          notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+          setErrorCondition(-55001, ss);
         }
 
         QTextStream in(&origHeader);
@@ -368,8 +365,7 @@ void ConvertHexGridToSquareGrid::execute()
         if(newEbsdFName.compare(ebsdFName) == 0)
         {
           QString msg = QObject::tr("New ang file is the same as the old ang file. Overwriting is NOT allowed");
-          setErrorCondition(-201);
-          notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+          setErrorCondition(-201, msg);
           return;
         }
 
@@ -385,8 +381,7 @@ void ConvertHexGridToSquareGrid::execute()
         if(!outFile.open(QIODevice::WriteOnly | QIODevice::Text))
         {
           QString msg = QObject::tr("Ang square output file could not be opened for writing: %1").arg(newEbsdFName);
-          setErrorCondition(-200);
-          notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+          setErrorCondition(-200, msg);
           return;
         }
 
@@ -469,16 +464,14 @@ void ConvertHexGridToSquareGrid::execute()
     else if(ext.compare(Ebsd::Ctf::FileExt) == 0)
     {
       QString ss = QObject::tr("Ctf files are not on a hexagonal grid and do not need to be converted");
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
       return;
     }
     else
     {
       err = -1;
       QString ss = QObject::tr("The file extension was not detected correctly");
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
       return;
     }
   }
@@ -495,18 +488,18 @@ AbstractFilter::Pointer ConvertHexGridToSquareGrid::newFilterInstance(bool copyF
     filter->setFilterParameters(getFilterParameters());
     // We are going to hand copy all of the parameters because the other way of copying the parameters are going to
     // miss some of them because we are not enumerating all of them.
-    SIMPL_COPY_INSTANCEVAR(ZStartIndex)
-    SIMPL_COPY_INSTANCEVAR(ZEndIndex)
-    SIMPL_COPY_INSTANCEVAR(XResolution)
-    SIMPL_COPY_INSTANCEVAR(YResolution)
-    SIMPL_COPY_INSTANCEVAR(InputPath)
-    SIMPL_COPY_INSTANCEVAR(OutputPath)
-    SIMPL_COPY_INSTANCEVAR(OutputPrefix)
-    SIMPL_COPY_INSTANCEVAR(FilePrefix)
-    SIMPL_COPY_INSTANCEVAR(FileSuffix)
-    SIMPL_COPY_INSTANCEVAR(FileExtension)
-    SIMPL_COPY_INSTANCEVAR(PaddingDigits)
-    SIMPL_COPY_INSTANCEVAR(HexGridStack)
+    filter->setZStartIndex(getZStartIndex());
+    filter->setZEndIndex(getZEndIndex());
+    filter->setXResolution(getXResolution());
+    filter->setYResolution(getYResolution());
+    filter->setInputPath(getInputPath());
+    filter->setOutputPath(getOutputPath());
+    filter->setOutputPrefix(getOutputPrefix());
+    filter->setFilePrefix(getFilePrefix());
+    filter->setFileSuffix(getFileSuffix());
+    filter->setFileExtension(getFileExtension());
+    filter->setPaddingDigits(getPaddingDigits());
+    filter->setHexGridStack(getHexGridStack());
   }
   return filter;
 }
@@ -514,7 +507,7 @@ AbstractFilter::Pointer ConvertHexGridToSquareGrid::newFilterInstance(bool copyF
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertHexGridToSquareGrid::getCompiledLibraryName() const
+QString ConvertHexGridToSquareGrid::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -522,7 +515,7 @@ const QString ConvertHexGridToSquareGrid::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertHexGridToSquareGrid::getBrandingString() const
+QString ConvertHexGridToSquareGrid::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -530,7 +523,7 @@ const QString ConvertHexGridToSquareGrid::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertHexGridToSquareGrid::getFilterVersion() const
+QString ConvertHexGridToSquareGrid::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -540,7 +533,7 @@ const QString ConvertHexGridToSquareGrid::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertHexGridToSquareGrid::getGroupName() const
+QString ConvertHexGridToSquareGrid::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -548,7 +541,7 @@ const QString ConvertHexGridToSquareGrid::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ConvertHexGridToSquareGrid::getUuid()
+QUuid ConvertHexGridToSquareGrid::getUuid() const
 {
   return QUuid("{e1343abe-e5ad-5eb1-a89d-c209e620e4de}");
 }
@@ -556,7 +549,7 @@ const QUuid ConvertHexGridToSquareGrid::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertHexGridToSquareGrid::getSubGroupName() const
+QString ConvertHexGridToSquareGrid::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ResolutionFilters;
 }
@@ -564,7 +557,216 @@ const QString ConvertHexGridToSquareGrid::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ConvertHexGridToSquareGrid::getHumanLabel() const
+QString ConvertHexGridToSquareGrid::getHumanLabel() const
 {
   return "Convert Hexagonal Grid Data to Square Grid Data (TSL - .ang)";
+}
+
+// -----------------------------------------------------------------------------
+ConvertHexGridToSquareGrid::Pointer ConvertHexGridToSquareGrid::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ConvertHexGridToSquareGrid> ConvertHexGridToSquareGrid::New()
+{
+  struct make_shared_enabler : public ConvertHexGridToSquareGrid
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getNameOfClass() const
+{
+  return QString("ConvertHexGridToSquareGrid");
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::ClassName()
+{
+  return QString("ConvertHexGridToSquareGrid");
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setZStartIndex(int64_t value)
+{
+  m_ZStartIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int64_t ConvertHexGridToSquareGrid::getZStartIndex() const
+{
+  return m_ZStartIndex;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setZEndIndex(int64_t value)
+{
+  m_ZEndIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int64_t ConvertHexGridToSquareGrid::getZEndIndex() const
+{
+  return m_ZEndIndex;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setXResolution(float value)
+{
+  m_XResolution = value;
+}
+
+// -----------------------------------------------------------------------------
+float ConvertHexGridToSquareGrid::getXResolution() const
+{
+  return m_XResolution;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setYResolution(float value)
+{
+  m_YResolution = value;
+}
+
+// -----------------------------------------------------------------------------
+float ConvertHexGridToSquareGrid::getYResolution() const
+{
+  return m_YResolution;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setInputPath(const QString& value)
+{
+  m_InputPath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getInputPath() const
+{
+  return m_InputPath;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setOutputPath(const QString& value)
+{
+  m_OutputPath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getOutputPath() const
+{
+  return m_OutputPath;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setOutputPrefix(const QString& value)
+{
+  m_OutputPrefix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getOutputPrefix() const
+{
+  return m_OutputPrefix;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setFilePrefix(const QString& value)
+{
+  m_FilePrefix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getFilePrefix() const
+{
+  return m_FilePrefix;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setFileSuffix(const QString& value)
+{
+  m_FileSuffix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getFileSuffix() const
+{
+  return m_FileSuffix;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setFileExtension(const QString& value)
+{
+  m_FileExtension = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ConvertHexGridToSquareGrid::getFileExtension() const
+{
+  return m_FileExtension;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setPaddingDigits(int value)
+{
+  m_PaddingDigits = value;
+}
+
+// -----------------------------------------------------------------------------
+int ConvertHexGridToSquareGrid::getPaddingDigits() const
+{
+  return m_PaddingDigits;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setNumCols(int value)
+{
+  m_NumCols = value;
+}
+
+// -----------------------------------------------------------------------------
+int ConvertHexGridToSquareGrid::getNumCols() const
+{
+  return m_NumCols;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setNumRows(int value)
+{
+  m_NumRows = value;
+}
+
+// -----------------------------------------------------------------------------
+int ConvertHexGridToSquareGrid::getNumRows() const
+{
+  return m_NumRows;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setHeaderIsComplete(bool value)
+{
+  m_HeaderIsComplete = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ConvertHexGridToSquareGrid::getHeaderIsComplete() const
+{
+  return m_HeaderIsComplete;
+}
+
+// -----------------------------------------------------------------------------
+void ConvertHexGridToSquareGrid::setHexGridStack(int value)
+{
+  m_HexGridStack = value;
+}
+
+// -----------------------------------------------------------------------------
+int ConvertHexGridToSquareGrid::getHexGridStack() const
+{
+  return m_HexGridStack;
 }

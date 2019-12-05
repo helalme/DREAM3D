@@ -33,13 +33,22 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SurfaceMeshToNonconformalVtk.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
@@ -72,7 +81,7 @@ SurfaceMeshToNonconformalVtk::~SurfaceMeshToNonconformalVtk() = default;
 // -----------------------------------------------------------------------------
 void SurfaceMeshToNonconformalVtk::setupFilterParameters()
 {
-  QVector<FilterParameter::Pointer> parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output Vtk File", OutputVtkFile, FilterParameter::Parameter, SurfaceMeshToNonconformalVtk));
   parameters.push_back(SIMPL_NEW_BOOL_FP("Write Binary Vtk File", WriteBinaryFile, FilterParameter::Parameter, SurfaceMeshToNonconformalVtk));
@@ -114,20 +123,20 @@ void SurfaceMeshToNonconformalVtk::initialize()
 // -----------------------------------------------------------------------------
 void SurfaceMeshToNonconformalVtk::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   QString ss;
 
   FileSystemPathHelper::CheckOutputFile(this, "Output VTK File", getOutputVtkFile(), true);
 
   DataContainer::Pointer sm = getDataContainerArray()->getPrereqDataContainer(this, m_SurfaceMeshFaceLabelsArrayPath.getDataContainerName(), false);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   TriangleGeom::Pointer triangles = sm->getPrereqGeometry<TriangleGeom, AbstractFilter>(this);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -135,16 +144,14 @@ void SurfaceMeshToNonconformalVtk::dataCheck()
   // We MUST have Nodes
   if(nullptr == triangles->getVertices().get())
   {
-    setErrorCondition(-386);
-    notifyErrorMessage(getHumanLabel(), "DataContainer Geometry missing Vertices", getErrorCondition());
+    setErrorCondition(-386, "DataContainer Geometry missing Vertices");
   }
   // We MUST have Triangles defined also.
   if(nullptr == triangles->getTriangles().get())
   {
-    setErrorCondition(-387);
-    notifyErrorMessage(getHumanLabel(), "DataContainer Geometry missing Triangles", getErrorCondition());
+    setErrorCondition(-387, "DataContainer Geometry missing Triangles");
   }
-  QVector<size_t> dims(1, 2);
+  std::vector<size_t> dims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -200,11 +207,11 @@ private:
 // -----------------------------------------------------------------------------
 void SurfaceMeshToNonconformalVtk::execute()
 {
-  int err = 0;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
 
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -213,7 +220,7 @@ void SurfaceMeshToNonconformalVtk::execute()
 
   TriangleGeom::Pointer triangleGeom = getDataContainerArray()->getDataContainer(getSurfaceMeshFaceLabelsArrayPath().getDataContainerName())->getGeometryAs<TriangleGeom>();
   float* nodes = triangleGeom->getVertexPointer(0);
-  int64_t* triangles = triangleGeom->getTriPointer(0);
+  MeshIndexType* triangles = triangleGeom->getTriPointer(0);
 
   qint64 numNodes = triangleGeom->getNumberOfVertices();
   int64_t numTriangles = triangleGeom->getNumberOfTris();
@@ -225,8 +232,7 @@ void SurfaceMeshToNonconformalVtk::execute()
   if(!parentPath.mkpath("."))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(parentPath.absolutePath());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -236,13 +242,12 @@ void SurfaceMeshToNonconformalVtk::execute()
   if(nullptr == vtkFile)
   {
     QString ss = QObject::tr("Error creating file '%1'").arg(getOutputVtkFile());
-    setErrorCondition(-18542);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-18542, ss);
     return;
   }
   ScopedFileMonitor vtkFileMonitor(vtkFile);
 
-  notifyStatusMessage(getHumanLabel(), "Writing Vertex Data ....");
+  notifyStatusMessage("Writing Vertex Data ....");
 
   fprintf(vtkFile, "# vtk DataFile Version 2.0\n");
   fprintf(vtkFile, "Data set from DREAM.3D Surface Meshing Module\n");
@@ -303,7 +308,7 @@ void SurfaceMeshToNonconformalVtk::execute()
   }
 
   // Write the triangle indices into the vtk File
-  notifyStatusMessage(getHumanLabel(), "Writing Faces ....");
+  notifyStatusMessage("Writing Faces ....");
 
   int tData[4];
 
@@ -406,15 +411,15 @@ void SurfaceMeshToNonconformalVtk::execute()
   }
 
   // Write the POINT_DATA section
-  err = writePointData(vtkFile);
+  int err = writePointData(vtkFile);
 
   // Write the CELL_DATA section
   err = writeCellData(vtkFile, featureTriangleCount);
 
   fprintf(vtkFile, "\n");
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -868,21 +873,21 @@ int SurfaceMeshToNonconformalVtk::writeCellData(FILE* vtkFile, QMap<int32_t, int
 
   QString attrMatName = m_SurfaceMeshFaceLabelsArrayPath.getAttributeMatrixName();
 
-  notifyStatusMessage(getHumanLabel(), "Writing Face Normals...");
+  notifyStatusMessage("Writing Face Normals...");
   writeCellNormalData<double>(sm, attrMatName, SIMPL::FaceData::SurfaceMeshFaceNormals, "double", m_WriteBinaryFile, vtkFile, featureIds, m_SurfaceMeshFaceLabels);
 
-  notifyStatusMessage(getHumanLabel(), "Writing Principal Curvature 1");
+  notifyStatusMessage("Writing Principal Curvature 1");
   writeCellScalarData<double>(sm, attrMatName, SIMPL::FaceData::SurfaceMeshPrincipalCurvature1, "double", m_WriteBinaryFile, vtkFile, featureIds, m_SurfaceMeshFaceLabels);
-  notifyStatusMessage(getHumanLabel(), "Writing Principal Curvature 2");
+  notifyStatusMessage("Writing Principal Curvature 2");
   writeCellScalarData<double>(sm, attrMatName, SIMPL::FaceData::SurfaceMeshPrincipalCurvature2, "double", m_WriteBinaryFile, vtkFile, featureIds, m_SurfaceMeshFaceLabels);
 
-  notifyStatusMessage(getHumanLabel(), "Writing Feature Face Id");
+  notifyStatusMessage("Writing Feature Face Id");
   writeCellScalarData<int32_t>(sm, attrMatName, SIMPL::FaceData::SurfaceMeshFeatureFaceId, "int", m_WriteBinaryFile, vtkFile, featureIds, m_SurfaceMeshFaceLabels);
 
-  notifyStatusMessage(getHumanLabel(), "Writing Gaussian Curvature");
+  notifyStatusMessage("Writing Gaussian Curvature");
   writeCellScalarData<double>(sm, attrMatName, SIMPL::FaceData::SurfaceMeshGaussianCurvatures, "double", m_WriteBinaryFile, vtkFile, featureIds, m_SurfaceMeshFaceLabels);
 
-  notifyStatusMessage(getHumanLabel(), "Writing Mean Curvature");
+  notifyStatusMessage("Writing Mean Curvature");
   writeCellScalarData<double>(sm, attrMatName, SIMPL::FaceData::SurfaceMeshMeanCurvatures, "double", m_WriteBinaryFile, vtkFile, featureIds, m_SurfaceMeshFaceLabels);
 #if 0
   writeCellVectorData<double>(sm, attrMatName, SIMPL::CellData::SurfaceMeshPrincipalDirection1,
@@ -914,7 +919,7 @@ AbstractFilter::Pointer SurfaceMeshToNonconformalVtk::newFilterInstance(bool cop
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SurfaceMeshToNonconformalVtk::getCompiledLibraryName() const
+QString SurfaceMeshToNonconformalVtk::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -922,7 +927,7 @@ const QString SurfaceMeshToNonconformalVtk::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SurfaceMeshToNonconformalVtk::getBrandingString() const
+QString SurfaceMeshToNonconformalVtk::getBrandingString() const
 {
   return "IO";
 }
@@ -930,7 +935,7 @@ const QString SurfaceMeshToNonconformalVtk::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SurfaceMeshToNonconformalVtk::getFilterVersion() const
+QString SurfaceMeshToNonconformalVtk::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -941,7 +946,7 @@ const QString SurfaceMeshToNonconformalVtk::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SurfaceMeshToNonconformalVtk::getGroupName() const
+QString SurfaceMeshToNonconformalVtk::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -949,7 +954,7 @@ const QString SurfaceMeshToNonconformalVtk::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SurfaceMeshToNonconformalVtk::getUuid()
+QUuid SurfaceMeshToNonconformalVtk::getUuid() const
 {
   return QUuid("{55247df8-612a-5303-ac03-09f18f7fbf2b}");
 }
@@ -957,7 +962,7 @@ const QUuid SurfaceMeshToNonconformalVtk::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SurfaceMeshToNonconformalVtk::getSubGroupName() const
+QString SurfaceMeshToNonconformalVtk::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -965,7 +970,84 @@ const QString SurfaceMeshToNonconformalVtk::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SurfaceMeshToNonconformalVtk::getHumanLabel() const
+QString SurfaceMeshToNonconformalVtk::getHumanLabel() const
 {
   return "Export Vtk PolyData (NonConformal) from SurfaceMesh";
+}
+
+// -----------------------------------------------------------------------------
+SurfaceMeshToNonconformalVtk::Pointer SurfaceMeshToNonconformalVtk::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SurfaceMeshToNonconformalVtk> SurfaceMeshToNonconformalVtk::New()
+{
+  struct make_shared_enabler : public SurfaceMeshToNonconformalVtk
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SurfaceMeshToNonconformalVtk::getNameOfClass() const
+{
+  return QString("SurfaceMeshToNonconformalVtk");
+}
+
+// -----------------------------------------------------------------------------
+QString SurfaceMeshToNonconformalVtk::ClassName()
+{
+  return QString("SurfaceMeshToNonconformalVtk");
+}
+
+// -----------------------------------------------------------------------------
+void SurfaceMeshToNonconformalVtk::setOutputVtkFile(const QString& value)
+{
+  m_OutputVtkFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SurfaceMeshToNonconformalVtk::getOutputVtkFile() const
+{
+  return m_OutputVtkFile;
+}
+
+// -----------------------------------------------------------------------------
+void SurfaceMeshToNonconformalVtk::setWriteBinaryFile(bool value)
+{
+  m_WriteBinaryFile = value;
+}
+
+// -----------------------------------------------------------------------------
+bool SurfaceMeshToNonconformalVtk::getWriteBinaryFile() const
+{
+  return m_WriteBinaryFile;
+}
+
+// -----------------------------------------------------------------------------
+void SurfaceMeshToNonconformalVtk::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath SurfaceMeshToNonconformalVtk::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void SurfaceMeshToNonconformalVtk::setSurfaceMeshNodeTypeArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshNodeTypeArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath SurfaceMeshToNonconformalVtk::getSurfaceMeshNodeTypeArrayPath() const
+{
+  return m_SurfaceMeshNodeTypeArrayPath;
 }

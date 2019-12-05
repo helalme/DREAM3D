@@ -32,21 +32,41 @@
 *    United States Prime Contract Navy N00173-07-C-2068
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+#include <memory>
+
 #include "FindShapes.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -77,7 +97,7 @@ FindShapes::~FindShapes() = default;
 // -----------------------------------------------------------------------------
 void FindShapes::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -96,11 +116,11 @@ void FindShapes::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Centroids", CentroidsArrayPath, FilterParameter::RequiredArray, FindShapes, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Omega3s", Omega3sArrayName, FilterParameter::CreatedArray, FindShapes));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Axis Lengths", AxisLengthsArrayName, FilterParameter::CreatedArray, FindShapes));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Axis Euler Angles", AxisEulerAnglesArrayName, FilterParameter::CreatedArray, FindShapes));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Aspect Ratios", AspectRatiosArrayName, FilterParameter::CreatedArray, FindShapes));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Volumes", VolumesArrayName, FilterParameter::CreatedArray, FindShapes));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Omega3s", Omega3sArrayName, CellFeatureAttributeMatrixName, CellFeatureAttributeMatrixName, FilterParameter::CreatedArray, FindShapes));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Axis Lengths", AxisLengthsArrayName, CellFeatureAttributeMatrixName, CellFeatureAttributeMatrixName, FilterParameter::CreatedArray, FindShapes));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Axis Euler Angles", AxisEulerAnglesArrayName, CellFeatureAttributeMatrixName, CellFeatureAttributeMatrixName, FilterParameter::CreatedArray, FindShapes));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Aspect Ratios", AspectRatiosArrayName, CellFeatureAttributeMatrixName, CellFeatureAttributeMatrixName, FilterParameter::CreatedArray, FindShapes));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Volumes", VolumesArrayName, CellFeatureAttributeMatrixName, CellFeatureAttributeMatrixName, FilterParameter::CreatedArray, FindShapes));
   setFilterParameters(parameters);
 }
 
@@ -134,17 +154,17 @@ void FindShapes::initialize()
 // -----------------------------------------------------------------------------
 void FindShapes::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  INIT_DataArray(m_FeatureMomentsPtr, double);
-  INIT_DataArray(m_FeatureEigenValsPtr, double);
+  m_FeatureMomentsPtr = DataArray<double>::CreateArray(0, "m_FeatureMomentsPtr", true);
+  m_FeatureEigenValsPtr = DataArray<double>::CreateArray(0, "m_FeatureEigenValsPtr", true);
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -153,16 +173,14 @@ void FindShapes::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   tempPath.update(getCellFeatureAttributeMatrixName().getDataContainerName(), getCellFeatureAttributeMatrixName().getAttributeMatrixName(), getOmega3sArrayName());
-  m_Omega3sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_Omega3sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_Omega3sPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Omega3s = m_Omega3sPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   tempPath.update(getCellFeatureAttributeMatrixName().getDataContainerName(), getCellFeatureAttributeMatrixName().getAttributeMatrixName(), getVolumesArrayName());
-  m_VolumesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_VolumesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID32);
   if(nullptr != m_VolumesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Volumes = m_VolumesPtr.lock()->getPointer(0);
@@ -170,8 +188,7 @@ void FindShapes::dataCheck()
 
   cDims[0] = 3;
   tempPath.update(getCellFeatureAttributeMatrixName().getDataContainerName(), getCellFeatureAttributeMatrixName().getAttributeMatrixName(), getAxisLengthsArrayName());
-  m_AxisLengthsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AxisLengthsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID33);
   if(nullptr != m_AxisLengthsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AxisLengths = m_AxisLengthsPtr.lock()->getPointer(0);
@@ -194,8 +211,7 @@ void FindShapes::dataCheck()
 
   cDims[0] = 2;
   tempPath.update(getCellFeatureAttributeMatrixName().getDataContainerName(), getCellFeatureAttributeMatrixName().getAttributeMatrixName(), getAspectRatiosArrayName());
-  m_AspectRatiosPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AspectRatiosPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID34);
   if(nullptr != m_AspectRatiosPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AspectRatios = m_AspectRatiosPtr.lock()->getPointer(0);
@@ -234,21 +250,14 @@ void FindShapes::find_moments()
   size_t xPoints = imageGeom->getXPoints();
   size_t yPoints = imageGeom->getYPoints();
   size_t zPoints = imageGeom->getZPoints();
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = imageGeom->getResolution();
-
-  float xOrigin = 0.0f;
-  float yOrigin = 0.0f;
-  float zOrigin = 0.0f;
-  imageGeom->getOrigin(xOrigin, yOrigin, zOrigin);
+  FloatVec3Type spacing = imageGeom->getSpacing();
+  FloatVec3Type origin = imageGeom->getOrigin();
 
   // using a modified resolution to keep the moment calculations "small" and prevent exceeding numerical bounds.
   // scaleFactor is applied later to rescale the calculated axis lengths
-  float modXRes = xRes * static_cast<float>(m_ScaleFactor);
-  float modYRes = yRes * static_cast<float>(m_ScaleFactor);
-  float modZRes = zRes * static_cast<float>(m_ScaleFactor);
+  float modXRes = spacing[0] * static_cast<float>(m_ScaleFactor);
+  float modYRes = spacing[1] * static_cast<float>(m_ScaleFactor);
+  float modZRes = spacing[2] * static_cast<float>(m_ScaleFactor);
 
   size_t numfeatures = m_CentroidsPtr.lock()->getNumberOfTuples();
 
@@ -276,9 +285,9 @@ void FindShapes::find_moments()
       for(size_t k = 0; k < xPoints; k++)
       {
         int32_t gnum = m_FeatureIds[zStride + yStride + k];
-        x = float(k * modXRes) + (xOrigin * static_cast<float>(m_ScaleFactor));
-        y = float(j * modYRes) + (yOrigin * static_cast<float>(m_ScaleFactor));
-        z = float(i * modZRes) + (zOrigin * static_cast<float>(m_ScaleFactor));
+        x = float(k * modXRes) + (origin[0] * static_cast<float>(m_ScaleFactor));
+        y = float(j * modYRes) + (origin[1] * static_cast<float>(m_ScaleFactor));
+        z = float(i * modZRes) + (origin[2] * static_cast<float>(m_ScaleFactor));
         x1 = x + (modXRes / 4.0f);
         x2 = x - (modXRes / 4.0f);
         y1 = y + (modYRes / 4.0f);
@@ -340,7 +349,7 @@ void FindShapes::find_moments()
   // constant for moments because voxels are broken into smaller voxels
   double konst1 = static_cast<double>((modXRes / 2.0) * (modYRes / 2.0) * (modZRes / 2.0));
   // constant for volumes because voxels are counted as one
-  double konst2 = static_cast<double>((xRes) * (yRes) * (zRes));
+  double konst2 = static_cast<double>((spacing[0]) * (spacing[1]) * (spacing[2]));
   double konst3 = static_cast<double>((modXRes) * (modYRes) * (modZRes));
   double o3 = 0.0, vol5 = 0.0, omega3 = 0.0;
   for(size_t i = 1; i < numfeatures; i++)
@@ -388,37 +397,31 @@ void FindShapes::find_moments2D()
   size_t numfeatures = m_CentroidsPtr.lock()->getNumberOfTuples();
 
   size_t xPoints = 0, yPoints = 0;
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
   if(imageGeom->getXPoints() == 1)
   {
     xPoints = imageGeom->getYPoints();
     yPoints = imageGeom->getZPoints();
-    std::tie(zRes, xRes, yRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
   if(imageGeom->getYPoints() == 1)
   {
     xPoints = imageGeom->getXPoints();
     yPoints = imageGeom->getZPoints();
-    std::tie(xRes, zRes, yRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
   if(imageGeom->getZPoints() == 1)
   {
     xPoints = imageGeom->getXPoints();
     yPoints = imageGeom->getYPoints();
-    std::tie(xRes, yRes, zRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
 
-  float modXRes = xRes * m_ScaleFactor;
-  float modYRes = yRes * m_ScaleFactor;
+  float modXRes = spacing[0] * m_ScaleFactor;
+  float modYRes = spacing[1] * m_ScaleFactor;
 
-  float xOrigin = 0.0f;
-  float yOrigin = 0.0f;
-  float zOrigin = 0.0f;
-  imageGeom->getOrigin(xOrigin, yOrigin, zOrigin);
+  FloatVec3Type origin = imageGeom->getOrigin();
 
   for(size_t i = 0; i < 6 * numfeatures; i++)
   {
@@ -435,8 +438,8 @@ void FindShapes::find_moments2D()
     for(size_t k = 0; k < xPoints; k++)
     {
       int32_t gnum = m_FeatureIds[yStride + k];
-      x = float(k * modXRes) + (xOrigin * static_cast<float>(m_ScaleFactor));
-      y = float(j * modYRes) + (yOrigin * static_cast<float>(m_ScaleFactor));
+      x = float(k * modXRes) + (origin[0] * static_cast<float>(m_ScaleFactor));
+      y = float(j * modYRes) + (origin[1] * static_cast<float>(m_ScaleFactor));
       x1 = x + (modXRes / 4.0f);
       x2 = x - (modXRes / 4.0f);
       y1 = y + (modYRes / 4.0f);
@@ -459,7 +462,7 @@ void FindShapes::find_moments2D()
     }
   }
   double konst1 = static_cast<double>( (modXRes / 2.0f) * (modYRes / 2.0f));
-  double konst2 = static_cast<double>(xRes * yRes);
+  double konst2 = static_cast<double>(spacing[0] * spacing[1]);
   for(size_t i = 1; i < numfeatures; i++)
   {
    // Eq. 12 Moment matrix. Omega 2
@@ -586,27 +589,25 @@ void FindShapes::find_axes2D()
 
   size_t xPoints = 0;
   size_t yPoints = 0;
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
+  FloatVec3Type spacing;
 
   if(imageGeom->getXPoints() == 1)
   {
     xPoints = imageGeom->getYPoints();
     yPoints = imageGeom->getZPoints();
-    std::tie(zRes, xRes, yRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
   if(imageGeom->getYPoints() == 1)
   {
     xPoints = imageGeom->getXPoints();
     yPoints = imageGeom->getZPoints();
-    std::tie(xRes, zRes, yRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
   if(imageGeom->getZPoints() == 1)
   {
     xPoints = imageGeom->getXPoints();
     yPoints = imageGeom->getYPoints();
-    std::tie(xRes, yRes, zRes) = imageGeom->getResolution();
+    spacing = imageGeom->getSpacing();
   }
 
 
@@ -623,13 +624,13 @@ void FindShapes::find_axes2D()
       float tempScale2 = 1.0f;
       if(Ixx >= Iyy)
       {
-        tempScale1 = xRes;
-        tempScale2 = yRes;
+        tempScale1 = spacing[0];
+        tempScale2 = spacing[1];
       }
       if(Ixx < Iyy)
       {
-        tempScale1 = yRes;
-        tempScale2 = xRes;
+        tempScale1 = spacing[1];
+        tempScale2 = spacing[0];
       }
       m_AxisLengths[3 * i] = m_Volumes[i] / tempScale1;
       m_AxisLengths[3 * i + 1] = m_Volumes[i] / tempScale2;
@@ -790,8 +791,7 @@ void FindShapes::find_axiseulers()
     g[2][2] = n1z;
 
     // check for right-handedness
-    typedef OrientationTransforms<FOrientArrayType, float> OrientationTransformType;
-    OrientationTransformType::ResultType result = FOrientTransformsType::om_check(FOrientArrayType(g));
+    OrientationTransformation::ResultType result = OrientationTransformation::om_check(OrientationF(g));
     if(result.result == 0)
     {
       g[2][0] *= -1.0f;
@@ -799,8 +799,7 @@ void FindShapes::find_axiseulers()
       g[2][2] *= -1.0f;
     }
 
-    FOrientArrayType eu(3, 0.0f);
-    FOrientTransformsType::om2eu(FOrientArrayType(g), eu);
+    OrientationF eu = OrientationTransformation::om2eu<OrientationF, OrientationF>(OrientationF(g));
 
     m_AxisEulerAngles[3 * i] = eu[0];
     m_AxisEulerAngles[3 * i + 1] = eu[1];
@@ -866,10 +865,10 @@ void FindShapes::find_axiseulers2D()
 // -----------------------------------------------------------------------------
 void FindShapes::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -877,26 +876,23 @@ void FindShapes::execute()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
   ImageGeom::Pointer imageGeom = m->getGeometryAs<ImageGeom>();
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = imageGeom->getResolution();
+  FloatVec3Type spacing = imageGeom->getSpacing();
 
-  m_ScaleFactor = static_cast<double>(1.0f / xRes);
-  if(yRes > xRes && yRes > zRes)
+  m_ScaleFactor = static_cast<double>(1.0f / spacing[0]);
+  if(spacing[1] > spacing[0] && spacing[1] > spacing[2])
   {
-    m_ScaleFactor = static_cast<double>(1.0f / yRes);
+    m_ScaleFactor = static_cast<double>(1.0f / spacing[1]);
   }
-  if(zRes > xRes && zRes > yRes)
+  if(spacing[2] > spacing[0] && spacing[2] > spacing[1])
   {
-    m_ScaleFactor = static_cast<double>(1.0f / zRes);
+    m_ScaleFactor = static_cast<double>(1.0f / spacing[2]);
   }
 
   size_t numfeatures = m_CentroidsPtr.lock()->getNumberOfTuples();
-  m_FeatureMomentsPtr->resize(numfeatures * 6);
+  m_FeatureMomentsPtr->resizeTuples(numfeatures * 6);
   m_FeatureMoments = m_FeatureMomentsPtr->getPointer(0);
 
-  m_FeatureEigenValsPtr->resize(numfeatures * 3);
+  m_FeatureEigenValsPtr->resizeTuples(numfeatures * 3);
   m_FeatureEigenVals = m_FeatureEigenValsPtr->getPointer(0);
 
 
@@ -934,7 +930,7 @@ AbstractFilter::Pointer FindShapes::newFilterInstance(bool copyFilterParameters)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindShapes::getCompiledLibraryName() const
+QString FindShapes::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -942,7 +938,7 @@ const QString FindShapes::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindShapes::getBrandingString() const
+QString FindShapes::getBrandingString() const
 {
   return "Statistics";
 }
@@ -950,7 +946,7 @@ const QString FindShapes::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindShapes::getFilterVersion() const
+QString FindShapes::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -960,7 +956,7 @@ const QString FindShapes::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindShapes::getGroupName() const
+QString FindShapes::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -968,7 +964,7 @@ const QString FindShapes::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindShapes::getUuid()
+QUuid FindShapes::getUuid() const
 {
   return QUuid("{3b0ababf-9c8d-538d-96af-e40775c4f0ab}");
 }
@@ -976,7 +972,7 @@ const QUuid FindShapes::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindShapes::getSubGroupName() const
+QString FindShapes::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -984,7 +980,156 @@ const QString FindShapes::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindShapes::getHumanLabel() const
+QString FindShapes::getHumanLabel() const
 {
   return "Find Feature Shapes";
+}
+
+// -----------------------------------------------------------------------------
+FindShapes::Pointer FindShapes::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindShapes> FindShapes::New()
+{
+  struct make_shared_enabler : public FindShapes
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::getNameOfClass() const
+{
+  return QString("FindShapes");
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::ClassName()
+{
+  return QString("FindShapes");
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setCellFeatureAttributeMatrixName(const DataArrayPath& value)
+{
+  m_CellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindShapes::getCellFeatureAttributeMatrixName() const
+{
+  return m_CellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setFeatureMomentsPtr(const std::shared_ptr<DataArray<double>>& value)
+{
+  m_FeatureMomentsPtr = value;
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<DataArray<double>> FindShapes::getFeatureMomentsPtr() const
+{
+  return m_FeatureMomentsPtr;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setFeatureEigenValsPtr(const std::shared_ptr<DataArray<double>>& value)
+{
+  m_FeatureEigenValsPtr = value;
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<DataArray<double>> FindShapes::getFeatureEigenValsPtr() const
+{
+  return m_FeatureEigenValsPtr;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindShapes::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setCentroidsArrayPath(const DataArrayPath& value)
+{
+  m_CentroidsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindShapes::getCentroidsArrayPath() const
+{
+  return m_CentroidsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setOmega3sArrayName(const QString& value)
+{
+  m_Omega3sArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::getOmega3sArrayName() const
+{
+  return m_Omega3sArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setVolumesArrayName(const QString& value)
+{
+  m_VolumesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::getVolumesArrayName() const
+{
+  return m_VolumesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setAxisLengthsArrayName(const QString& value)
+{
+  m_AxisLengthsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::getAxisLengthsArrayName() const
+{
+  return m_AxisLengthsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setAxisEulerAnglesArrayName(const QString& value)
+{
+  m_AxisEulerAnglesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::getAxisEulerAnglesArrayName() const
+{
+  return m_AxisEulerAnglesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindShapes::setAspectRatiosArrayName(const QString& value)
+{
+  m_AspectRatiosArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindShapes::getAspectRatiosArrayName() const
+{
+  return m_AspectRatiosArrayName;
 }

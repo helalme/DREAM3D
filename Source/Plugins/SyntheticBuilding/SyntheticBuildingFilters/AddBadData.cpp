@@ -33,9 +33,14 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "AddBadData.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
@@ -43,6 +48,8 @@
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SyntheticBuilding/SyntheticBuildingConstants.h"
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
@@ -69,7 +76,7 @@ AddBadData::~AddBadData() = default;
 // -----------------------------------------------------------------------------
 void AddBadData::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   QStringList linkedProps("PoissonVolFraction");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Add Random Noise", PoissonNoise, FilterParameter::Parameter, AddBadData, linkedProps));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Volume Fraction of Random Noise", PoissonVolFraction, FilterParameter::Parameter, AddBadData));
@@ -111,19 +118,18 @@ void AddBadData::initialize()
 // -----------------------------------------------------------------------------
 void AddBadData::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getGBEuclideanDistancesArrayPath().getDataContainerName());
 
   if((!m_PoissonNoise) && (!m_BoundaryNoise))
   {
     QString ss = QObject::tr("At least one type of noise must be selected");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_GBEuclideanDistancesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getGBEuclideanDistancesArrayPath(),
                                                                                                                   cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_GBEuclideanDistancesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -150,10 +156,10 @@ void AddBadData::preflight()
 // -----------------------------------------------------------------------------
 void AddBadData::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -168,7 +174,7 @@ void AddBadData::execute()
 // -----------------------------------------------------------------------------
 void AddBadData::add_noise()
 {
-  notifyStatusMessage(getHumanLabel(), "Adding Noise");
+  notifyStatusMessage("Adding Noise");
   SIMPL_RANDOMNG_NEW()
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getGBEuclideanDistancesArrayPath().getDataContainerName());
@@ -225,7 +231,7 @@ AbstractFilter::Pointer AddBadData::newFilterInstance(bool copyFilterParameters)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddBadData::getCompiledLibraryName() const
+QString AddBadData::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -233,7 +239,7 @@ const QString AddBadData::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddBadData::getBrandingString() const
+QString AddBadData::getBrandingString() const
 {
   return "SyntheticBuilding";
 }
@@ -241,7 +247,7 @@ const QString AddBadData::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddBadData::getFilterVersion() const
+QString AddBadData::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -251,7 +257,7 @@ const QString AddBadData::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddBadData::getGroupName() const
+QString AddBadData::getGroupName() const
 {
   return SIMPL::FilterGroups::SyntheticBuildingFilters;
 }
@@ -259,7 +265,7 @@ const QString AddBadData::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AddBadData::getUuid()
+QUuid AddBadData::getUuid() const
 {
   return QUuid("{ac99b706-d1e0-5f78-9246-fbbe1efd93d2}");
 }
@@ -267,7 +273,7 @@ const QUuid AddBadData::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddBadData::getSubGroupName() const
+QString AddBadData::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MiscFilters;
 }
@@ -275,7 +281,96 @@ const QString AddBadData::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddBadData::getHumanLabel() const
+QString AddBadData::getHumanLabel() const
 {
   return "Add Bad Data";
+}
+
+// -----------------------------------------------------------------------------
+AddBadData::Pointer AddBadData::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AddBadData> AddBadData::New()
+{
+  struct make_shared_enabler : public AddBadData
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AddBadData::getNameOfClass() const
+{
+  return QString("AddBadData");
+}
+
+// -----------------------------------------------------------------------------
+QString AddBadData::ClassName()
+{
+  return QString("AddBadData");
+}
+
+// -----------------------------------------------------------------------------
+void AddBadData::setGBEuclideanDistancesArrayPath(const DataArrayPath& value)
+{
+  m_GBEuclideanDistancesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AddBadData::getGBEuclideanDistancesArrayPath() const
+{
+  return m_GBEuclideanDistancesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void AddBadData::setPoissonNoise(bool value)
+{
+  m_PoissonNoise = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AddBadData::getPoissonNoise() const
+{
+  return m_PoissonNoise;
+}
+
+// -----------------------------------------------------------------------------
+void AddBadData::setPoissonVolFraction(float value)
+{
+  m_PoissonVolFraction = value;
+}
+
+// -----------------------------------------------------------------------------
+float AddBadData::getPoissonVolFraction() const
+{
+  return m_PoissonVolFraction;
+}
+
+// -----------------------------------------------------------------------------
+void AddBadData::setBoundaryNoise(bool value)
+{
+  m_BoundaryNoise = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AddBadData::getBoundaryNoise() const
+{
+  return m_BoundaryNoise;
+}
+
+// -----------------------------------------------------------------------------
+void AddBadData::setBoundaryVolFraction(float value)
+{
+  m_BoundaryVolFraction = value;
+}
+
+// -----------------------------------------------------------------------------
+float AddBadData::getBoundaryVolFraction() const
+{
+  return m_BoundaryVolFraction;
 }

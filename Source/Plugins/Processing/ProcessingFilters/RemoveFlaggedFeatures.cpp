@@ -33,15 +33,22 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "RemoveFlaggedFeatures.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -67,7 +74,7 @@ RemoveFlaggedFeatures::~RemoveFlaggedFeatures() = default;
 // -----------------------------------------------------------------------------
 void RemoveFlaggedFeatures::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_BOOL_FP("Fill-in Removed Features", FillRemovedFeatures, FilterParameter::Parameter, RemoveFlaggedFeatures));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
@@ -114,12 +121,12 @@ void RemoveFlaggedFeatures::initialize()
 // -----------------------------------------------------------------------------
 void RemoveFlaggedFeatures::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -153,10 +160,10 @@ void RemoveFlaggedFeatures::preflight()
 // -----------------------------------------------------------------------------
 void RemoveFlaggedFeatures::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -172,7 +179,7 @@ void RemoveFlaggedFeatures::execute()
   cellFeatureAttrMat->removeInactiveObjects(activeObjects, m_FeatureIdsPtr.lock().get());
 
   // If there is an error set this to something negative and also set a message
-  notifyStatusMessage(getHumanLabel(), "Remove Flagged Features Filter Complete");
+  notifyStatusMessage("Remove Flagged Features Filter Complete");
 }
 
 // -----------------------------------------------------------------------------
@@ -183,14 +190,13 @@ void RemoveFlaggedFeatures::assign_badpoints()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
   };
 
-  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_Neighbors");
+  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_Neighbors", true);
   m_Neighbors = neighborsPtr->getPointer(0);
   neighborsPtr->initializeWithValue(-1);
 
@@ -366,8 +372,7 @@ QVector<bool> RemoveFlaggedFeatures::remove_flaggedfeatures()
   }
   if(!good)
   {
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), "All Features were flagged and would all be removed.  The filter has quit.", -1);
+    setErrorCondition(-1, "All Features were flagged and would all be removed.  The filter has quit.");
     return activeObjects;
   }
   for(size_t i = 0; i < totalPoints; i++)
@@ -404,7 +409,7 @@ AbstractFilter::Pointer RemoveFlaggedFeatures::newFilterInstance(bool copyFilter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RemoveFlaggedFeatures::getCompiledLibraryName() const
+QString RemoveFlaggedFeatures::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -412,7 +417,7 @@ const QString RemoveFlaggedFeatures::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RemoveFlaggedFeatures::getBrandingString() const
+QString RemoveFlaggedFeatures::getBrandingString() const
 {
   return "Processing";
 }
@@ -420,7 +425,7 @@ const QString RemoveFlaggedFeatures::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RemoveFlaggedFeatures::getFilterVersion() const
+QString RemoveFlaggedFeatures::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -430,7 +435,7 @@ const QString RemoveFlaggedFeatures::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RemoveFlaggedFeatures::getGroupName() const
+QString RemoveFlaggedFeatures::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -438,7 +443,7 @@ const QString RemoveFlaggedFeatures::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid RemoveFlaggedFeatures::getUuid()
+QUuid RemoveFlaggedFeatures::getUuid() const
 {
   return QUuid("{a8463056-3fa7-530b-847f-7f4cb78b8602}");
 }
@@ -446,7 +451,7 @@ const QUuid RemoveFlaggedFeatures::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RemoveFlaggedFeatures::getSubGroupName() const
+QString RemoveFlaggedFeatures::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -454,7 +459,84 @@ const QString RemoveFlaggedFeatures::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RemoveFlaggedFeatures::getHumanLabel() const
+QString RemoveFlaggedFeatures::getHumanLabel() const
 {
   return "Remove Flagged Features";
+}
+
+// -----------------------------------------------------------------------------
+RemoveFlaggedFeatures::Pointer RemoveFlaggedFeatures::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<RemoveFlaggedFeatures> RemoveFlaggedFeatures::New()
+{
+  struct make_shared_enabler : public RemoveFlaggedFeatures
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString RemoveFlaggedFeatures::getNameOfClass() const
+{
+  return QString("RemoveFlaggedFeatures");
+}
+
+// -----------------------------------------------------------------------------
+QString RemoveFlaggedFeatures::ClassName()
+{
+  return QString("RemoveFlaggedFeatures");
+}
+
+// -----------------------------------------------------------------------------
+void RemoveFlaggedFeatures::setFillRemovedFeatures(bool value)
+{
+  m_FillRemovedFeatures = value;
+}
+
+// -----------------------------------------------------------------------------
+bool RemoveFlaggedFeatures::getFillRemovedFeatures() const
+{
+  return m_FillRemovedFeatures;
+}
+
+// -----------------------------------------------------------------------------
+void RemoveFlaggedFeatures::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath RemoveFlaggedFeatures::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void RemoveFlaggedFeatures::setFlaggedFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_FlaggedFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath RemoveFlaggedFeatures::getFlaggedFeaturesArrayPath() const
+{
+  return m_FlaggedFeaturesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void RemoveFlaggedFeatures::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> RemoveFlaggedFeatures::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

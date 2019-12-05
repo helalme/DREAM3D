@@ -30,11 +30,13 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
-#include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+
+#include <QtCore/QDebug>
 
 #include "SIMPLib/DataArrays/DataArray.hpp"
+
 #include "SIMPLib/DataContainers/AttributeMatrix.h"
 #include "SIMPLib/DataContainers/DataContainer.h"
 #include "SIMPLib/DataContainers/DataContainerArray.h"
@@ -67,7 +69,24 @@ public:
   virtual ~AngleFileIOTest()
   {
   }
-  SIMPL_TYPE_MACRO(AngleFileIOTest)
+  /**
+   * @brief Returns the name of the class for AngleFileIOTest
+   */
+  /**
+   * @brief Returns the name of the class for AngleFileIOTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("AngleFileIOTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for AngleFileIOTest
+   */
+  QString ClassName()
+  {
+    return QString("AngleFileIOTest");
+  }
 
   DataContainerArray::Pointer InitializeDataContainerArray()
   {
@@ -75,19 +94,19 @@ public:
 
     DataContainer::Pointer m = DataContainer::New("AngleFileIO");
 
-    dca->addDataContainer(m);
+    dca->addOrReplaceDataContainer(m);
 
     // Create Attribute Matrices with different tDims to test validation of tuple compatibility
-    QVector<size_t> tDims(1, k_AngleCount);
+    std::vector<size_t> tDims(1, k_AngleCount);
     AttributeMatrix::Pointer attrMat1 = AttributeMatrix::New(tDims, SIMPL::Defaults::CellAttributeMatrixName, AttributeMatrix::Type::Cell);
-    m->addAttributeMatrix(attrMat1->getName(), attrMat1);
+    m->addOrReplaceAttributeMatrix(attrMat1);
 
-    QVector<size_t> cDims(1, 3);
+    std::vector<size_t> cDims(1, 3);
     DataArray<float>::Pointer angles = DataArray<float>::CreateArray(k_AngleCount, cDims, SIMPL::CellData::EulerAngles, true);
-    attrMat1->addAttributeArray(angles->getName(), angles);
+    attrMat1->insertOrAssign(angles);
     cDims[0] = 1;
     DataArray<int32_t>::Pointer phases = DataArray<int32_t>::CreateArray(k_AngleCount, cDims, SIMPL::CellData::Phases, true);
-    attrMat1->addAttributeArray(phases->getName(), phases);
+    attrMat1->insertOrAssign(phases);
     for(int i = 0; i < k_AngleCount; i++)
     {
 
@@ -124,7 +143,7 @@ public:
     filter = filterFactory->create();
     DREAM3D_REQUIRE_VALID_POINTER(filter.get())
     filter->setDataContainerArray(dca);
-    filter->connect(filter.get(), SIGNAL(filterGeneratedMessage(const PipelineMessage&)), &obs, SLOT(processPipelineMessage(const PipelineMessage&)));
+    filter->connect(filter.get(), SIGNAL(messageGenerated(const AbstractMessage::Pointer&)), &obs, SLOT(processPipelineMessage(const AbstractMessage::Pointer&)));
 
     QVariant var;
     bool propWasSet = filter->setProperty("OutputFile", UnitTest::AngleFileIOTest::OutputFile);
@@ -149,12 +168,12 @@ public:
     DREAM3D_REQUIRE_EQUAL(propWasSet, true)
 
     filter->preflight();
-    int32_t err = filter->getErrorCondition();
+    int32_t err = filter->getErrorCode();
 
     DREAM3D_REQUIRED(err, >=, 0)
 
     filter->execute();
-    err = filter->getErrorCondition();
+    err = filter->getErrorCode();
 
     DREAM3D_REQUIRE(err >= 0)
   }

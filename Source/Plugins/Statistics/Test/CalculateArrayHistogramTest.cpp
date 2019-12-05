@@ -33,10 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QString>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/CoreFilters/DataContainerWriter.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
@@ -46,6 +44,9 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "StatisticsTestFileLocations.h"
@@ -106,7 +107,24 @@ public:
   virtual ~CalculateArrayHistogramTest()
   {
   }
-  SIMPL_TYPE_MACRO(CalculateArrayHistogramTest)
+  /**
+   * @brief Returns the name of the class for CalculateArrayHistogramTest
+   */
+  /**
+   * @brief Returns the name of the class for CalculateArrayHistogramTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("CalculateArrayHistogramTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for CalculateArrayHistogramTest
+   */
+  QString ClassName()
+  {
+    return QString("CalculateArrayHistogramTest");
+  }
 
   // -----------------------------------------------------------------------------
   //
@@ -136,14 +154,14 @@ public:
     DataContainerArray::Pointer dca = DataContainerArray::New();
     DataContainer::Pointer dc = DataContainer::New(DCName);
 
-    QVector<size_t> tDims(1, 0);
+    std::vector<size_t> tDims(1, 0);
     tDims[0] = Faithful_Rows;
-    QVector<size_t> cDims(1);
+    std::vector<size_t> cDims(1);
     cDims[0] = 1;
     AttributeMatrix::Pointer am = AttributeMatrix::New(tDims, Data_AMName, AttributeMatrix::Type::Cell);
 
-    DoubleArrayType::Pointer duration = DoubleArrayType::CreateArray(tDims, cDims, Duration_Name);
-    DoubleArrayType::Pointer wait = DoubleArrayType::CreateArray(tDims, cDims, WaitTime_Name);
+    DoubleArrayType::Pointer duration = DoubleArrayType::CreateArray(tDims, cDims, Duration_Name, true);
+    DoubleArrayType::Pointer wait = DoubleArrayType::CreateArray(tDims, cDims, WaitTime_Name, true);
 
     for(size_t i = 0; i < tDims[0]; i++)
     {
@@ -151,11 +169,11 @@ public:
       wait->setComponent(i, 0, faithful[i][2]);     // Duration first
     }
 
-    am->addAttributeArray(duration->getName(), duration); // int array
-    am->addAttributeArray(wait->getName(), wait);         // int array
+    am->insertOrAssign(duration); // int array
+    am->insertOrAssign(wait);     // int array
 
-    dc->addAttributeMatrix(am->getName(), am);
-    dca->addDataContainer(dc);
+    dc->addOrReplaceAttributeMatrix(am);
+    dca->addOrReplaceDataContainer(dc);
 
     // Now instantiate the CalculateArrayHistogram Filter from the FilterManager
     QString filtName = "CalculateArrayHistogram";
@@ -167,7 +185,7 @@ public:
       // horribly gone wrong in which case the system is going to come down quickly after this.
       AbstractFilter::Pointer filter = filterFactory->create();
       filter->setDataContainerArray(dca);
-      filter->connect(filter.get(), SIGNAL(filterGeneratedMessage(const PipelineMessage&)), &obs, SLOT(processPipelineMessage(const PipelineMessage&)));
+      filter->connect(filter.get(), SIGNAL(messageGenerated(const AbstractMessage::Pointer&)), &obs, SLOT(processPipelineMessage(const AbstractMessage::Pointer&)));
 
       QVariant var;
       QString str;
@@ -210,13 +228,13 @@ public:
       DREAM3D_REQUIRE_EQUAL(propWasSet, true)
 
       filter->execute();
-      DREAM3D_REQUIRED(filter->getErrorCondition(), >=, 0);
+      DREAM3D_REQUIRED(filter->getErrorCode(), >=, 0);
 
       DataContainerWriter::Pointer writer = DataContainerWriter::New();
       writer->setDataContainerArray(dca);
       writer->setOutputFile(UnitTest::CalculateArrayHistogramTest::OldFaithfulFile);
       writer->execute();
-      DREAM3D_REQUIRED(writer->getErrorCondition(), >=, 0);
+      DREAM3D_REQUIRED(writer->getErrorCode(), >=, 0);
 
       // Now lets get the output data
       path = DataArrayPath(DCName, Hist_AMName, DurationHistogram_Name);

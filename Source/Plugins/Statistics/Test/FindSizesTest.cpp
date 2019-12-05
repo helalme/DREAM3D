@@ -33,11 +33,12 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <QtCore/QDebug>
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
+
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -52,6 +53,9 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "StatisticsTestFileLocations.h"
@@ -70,7 +74,7 @@
     qDebug() << "Unable to set property FeatureAttributeMatrixName";                                                                                                                                   \
   }                                                                                                                                                                                                    \
   filter->execute();                                                                                                                                                                                   \
-  err = filter->getErrorCondition();                                                                                                                                                                   \
+  err = filter->getErrorCode();                                                                                                                                                                        \
   DREAM3D_REQUIRE_EQUAL(err, 0);
 
 class FindSizesTest
@@ -82,7 +86,24 @@ public:
   virtual ~FindSizesTest()
   {
   }
-  SIMPL_TYPE_MACRO(FindSizesTest)
+  /**
+   * @brief Returns the name of the class for FindSizesTest
+   */
+  /**
+   * @brief Returns the name of the class for FindSizesTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("FindSizesTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for FindSizesTest
+   */
+  QString ClassName()
+  {
+    return QString("FindSizesTest");
+  }
 
   // -----------------------------------------------------------------------------
   //
@@ -122,28 +143,28 @@ public:
 
     // Create a DataContainer for each geometry
     DataContainer::Pointer image2D_DC = DataContainer::New("ImageGeom2D");
-    dca->addDataContainer(image2D_DC);
+    dca->addOrReplaceDataContainer(image2D_DC);
 
     DataContainer::Pointer image3D_DC = DataContainer::New("ImageGeom3D");
-    dca->addDataContainer(image3D_DC);
+    dca->addOrReplaceDataContainer(image3D_DC);
 
     DataContainer::Pointer rectGrid_DC = DataContainer::New("RectGrid");
-    dca->addDataContainer(rectGrid_DC);
+    dca->addOrReplaceDataContainer(rectGrid_DC);
 
     DataContainer::Pointer vertex_DC = DataContainer::New("VertexGeom");
-    dca->addDataContainer(vertex_DC);
+    dca->addOrReplaceDataContainer(vertex_DC);
 
     DataContainer::Pointer edge_DC = DataContainer::New("EdgeGeom");
-    dca->addDataContainer(edge_DC);
+    dca->addOrReplaceDataContainer(edge_DC);
 
     DataContainer::Pointer triangle_DC = DataContainer::New("TriangleGeom");
-    dca->addDataContainer(triangle_DC);
+    dca->addOrReplaceDataContainer(triangle_DC);
 
     DataContainer::Pointer quad_DC = DataContainer::New("QuadGeom");
-    dca->addDataContainer(quad_DC);
+    dca->addOrReplaceDataContainer(quad_DC);
 
     DataContainer::Pointer tet_DC = DataContainer::New("TetrahedralGeom");
-    dca->addDataContainer(tet_DC);
+    dca->addOrReplaceDataContainer(tet_DC);
 
     // Create an instance of each geometry for testing
     ImageGeom::Pointer image2D = ImageGeom::CreateGeometry(SIMPL::Geometry::ImageGeometry);
@@ -159,17 +180,17 @@ public:
     RectGridGeom::Pointer rectGrid = RectGridGeom::CreateGeometry(SIMPL::Geometry::RectGridGeometry);
     dims[2] = 1;
     rectGrid->setDimensions(dims);
-    FloatArrayType::Pointer xBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::xBoundsList);
+    FloatArrayType::Pointer xBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::xBoundsList, true);
     xBounds->setValue(0, 0.0f);
     xBounds->setValue(1, 1.0f);
     xBounds->setValue(2, 2.0f);
     rectGrid->setXBounds(xBounds);
-    FloatArrayType::Pointer yBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::yBoundsList);
+    FloatArrayType::Pointer yBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::yBoundsList, true);
     yBounds->setValue(0, 0.0f);
     yBounds->setValue(1, 1.0f);
     yBounds->setValue(2, 2.0f);
     rectGrid->setYBounds(yBounds);
-    FloatArrayType::Pointer zBounds = FloatArrayType::CreateArray(2, SIMPL::Geometry::zBoundsList);
+    FloatArrayType::Pointer zBounds = FloatArrayType::CreateArray(2, SIMPL::Geometry::zBoundsList, true);
     zBounds->setValue(0, 0.0f);
     zBounds->setValue(1, 2.0f);
     rectGrid->setZBounds(zBounds);
@@ -181,7 +202,7 @@ public:
     SharedVertexList::Pointer edgeVerts = EdgeGeom::CreateSharedVertexList(3);
     EdgeGeom::Pointer edge = EdgeGeom::CreateGeometry(2, edgeVerts, SIMPL::Geometry::EdgeGeometry);
     float coords[3] = {0.0f, 0.0f, 0.0f};
-    int64_t vertsAtEdge[2] = {0, 1};
+    size_t vertsAtEdge[2] = {0, 1};
     edge->setVertsAtEdge(0, vertsAtEdge);
     vertsAtEdge[1] = 2;
     edge->setVertsAtEdge(1, vertsAtEdge);
@@ -194,7 +215,7 @@ public:
 
     SharedVertexList::Pointer triVerts = TriangleGeom::CreateSharedVertexList(4);
     TriangleGeom::Pointer tris = TriangleGeom::CreateGeometry(2, triVerts, SIMPL::Geometry::TriangleGeometry);
-    int64_t vertsAtTri[3] = {0, 1, 2};
+    size_t vertsAtTri[3] = {0, 1, 2};
     tris->setVertsAtTri(0, vertsAtTri);
     vertsAtTri[0] = 1;
     vertsAtTri[1] = 3;
@@ -213,7 +234,7 @@ public:
 
     SharedVertexList::Pointer quadVerts = TriangleGeom::CreateSharedVertexList(6);
     QuadGeom::Pointer quads = QuadGeom::CreateGeometry(2, quadVerts, SIMPL::Geometry::QuadGeometry);
-    int64_t vertsAtQuad[4] = {0, 1, 2, 3};
+    size_t vertsAtQuad[4] = {0, 1, 2, 3};
     quads->setVertsAtQuad(0, vertsAtQuad);
     vertsAtQuad[0] = 1;
     vertsAtQuad[1] = 4;
@@ -239,7 +260,7 @@ public:
 
     SharedVertexList::Pointer tetVerts = TetrahedralGeom::CreateSharedVertexList(5);
     TetrahedralGeom::Pointer tets = TetrahedralGeom::CreateGeometry(2, tetVerts, SIMPL::Geometry::TetrahedralGeometry);
-    int64_t vertsAtTet[4] = {0, 1, 2, 3};
+    size_t vertsAtTet[4] = {0, 1, 2, 3};
     tets->setVertsAtTet(0, vertsAtTet);
     vertsAtTet[0] = 0;
     vertsAtTet[1] = 2;
@@ -263,101 +284,101 @@ public:
     tet_DC->setGeometry(tets);
 
     // Create an element AttributeMatrix and FeatureIds array for each geometry
-    QVector<size_t> tDims(1, 4);
+    std::vector<size_t> tDims(1, 4);
     AttributeMatrix::Pointer image2D_AttrMat = AttributeMatrix::New(tDims, "Image2DData", AttributeMatrix::Type::Cell);
-    Int32ArrayType::Pointer image2D_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer image2D_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds, true);
     image2D_fIDs->initializeWithValue(1);
     image2D_fIDs->setValue(2, 2);
     image2D_fIDs->setValue(3, 2);
-    image2D_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, image2D_fIDs);
-    image2D_DC->addAttributeMatrix("Image2DData", image2D_AttrMat);
+    image2D_AttrMat->insertOrAssign(image2D_fIDs);
+    image2D_DC->addOrReplaceAttributeMatrix(image2D_AttrMat);
 
     tDims[0] = 8;
     AttributeMatrix::Pointer image3D_AttrMat = AttributeMatrix::New(tDims, "Image3DData", AttributeMatrix::Type::Cell);
-    Int32ArrayType::Pointer image3D_fIDs = Int32ArrayType::CreateArray(8, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer image3D_fIDs = Int32ArrayType::CreateArray(8, SIMPL::CellData::FeatureIds, true);
     image3D_fIDs->initializeWithValue(1);
     image3D_fIDs->setValue(4, 2);
     image3D_fIDs->setValue(5, 2);
     image3D_fIDs->setValue(6, 2);
     image3D_fIDs->setValue(7, 2);
-    image3D_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, image3D_fIDs);
-    image3D_DC->addAttributeMatrix("Image3DData", image3D_AttrMat);
+    image3D_AttrMat->insertOrAssign(image3D_fIDs);
+    image3D_DC->addOrReplaceAttributeMatrix(image3D_AttrMat);
 
     tDims[0] = 4;
     AttributeMatrix::Pointer rectGrid_AttrMat = AttributeMatrix::New(tDims, "RectGridData", AttributeMatrix::Type::Cell);
-    Int32ArrayType::Pointer rectGrid_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer rectGrid_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds, true);
     rectGrid_fIDs->initializeWithValue(1);
     rectGrid_fIDs->setValue(2, 2);
     rectGrid_fIDs->setValue(3, 2);
-    rectGrid_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, rectGrid_fIDs);
-    rectGrid_DC->addAttributeMatrix("RectGridData", rectGrid_AttrMat);
+    rectGrid_AttrMat->insertOrAssign(rectGrid_fIDs);
+    rectGrid_DC->addOrReplaceAttributeMatrix(rectGrid_AttrMat);
 
     tDims[0] = 2;
     AttributeMatrix::Pointer vertex_AttrMat = AttributeMatrix::New(tDims, "VertexData", AttributeMatrix::Type::Vertex);
-    Int32ArrayType::Pointer vertex_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer vertex_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds, true);
     vertex_fIDs->initializeWithValue(1);
     ;
     vertex_fIDs->setValue(1, 2);
-    vertex_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, vertex_fIDs);
-    vertex_DC->addAttributeMatrix("VertexData", vertex_AttrMat);
+    vertex_AttrMat->insertOrAssign(vertex_fIDs);
+    vertex_DC->addOrReplaceAttributeMatrix(vertex_AttrMat);
 
     AttributeMatrix::Pointer edge_AttrMat = AttributeMatrix::New(tDims, "EdgeData", AttributeMatrix::Type::Edge);
-    Int32ArrayType::Pointer edge_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer edge_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds, true);
     edge_fIDs->initializeWithValue(1);
     ;
     edge_fIDs->setValue(1, 2);
-    edge_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, edge_fIDs);
-    edge_DC->addAttributeMatrix("EdgeData", edge_AttrMat);
+    edge_AttrMat->insertOrAssign(edge_fIDs);
+    edge_DC->addOrReplaceAttributeMatrix(edge_AttrMat);
 
     AttributeMatrix::Pointer tri_AttrMat = AttributeMatrix::New(tDims, "TriData", AttributeMatrix::Type::Face);
-    Int32ArrayType::Pointer tri_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer tri_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds, true);
     tri_fIDs->initializeWithValue(1);
     ;
     tri_fIDs->setValue(1, 2);
-    tri_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, tri_fIDs);
-    triangle_DC->addAttributeMatrix("TriData", tri_AttrMat);
+    tri_AttrMat->insertOrAssign(tri_fIDs);
+    triangle_DC->addOrReplaceAttributeMatrix(tri_AttrMat);
 
     AttributeMatrix::Pointer quad_AttrMat = AttributeMatrix::New(tDims, "QuadData", AttributeMatrix::Type::Face);
-    Int32ArrayType::Pointer quad_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer quad_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds, true);
     quad_fIDs->initializeWithValue(1);
     ;
     quad_fIDs->setValue(1, 2);
-    quad_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, quad_fIDs);
-    quad_DC->addAttributeMatrix("QuadData", quad_AttrMat);
+    quad_AttrMat->insertOrAssign(quad_fIDs);
+    quad_DC->addOrReplaceAttributeMatrix(quad_AttrMat);
 
     AttributeMatrix::Pointer tet_AttrMat = AttributeMatrix::New(tDims, "TetData", AttributeMatrix::Type::Face);
-    Int32ArrayType::Pointer tet_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer tet_fIDs = Int32ArrayType::CreateArray(2, SIMPL::CellData::FeatureIds, true);
     tet_fIDs->initializeWithValue(1);
     ;
     tet_fIDs->setValue(1, 2);
-    tet_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, tet_fIDs);
-    tet_DC->addAttributeMatrix("TetData", tet_AttrMat);
+    tet_AttrMat->insertOrAssign(tet_fIDs);
+    tet_DC->addOrReplaceAttributeMatrix(tet_AttrMat);
 
     // Create a feature AttributeMatrix for each geometry, which all have 2 features
     tDims[0] = 3;
     AttributeMatrix::Pointer image2D_featureAttrMat = AttributeMatrix::New(tDims, "Image2DFeatureData", AttributeMatrix::Type::CellFeature);
-    image2D_DC->addAttributeMatrix("Image2DFeatureData", image2D_featureAttrMat);
+    image2D_DC->addOrReplaceAttributeMatrix(image2D_featureAttrMat);
 
     AttributeMatrix::Pointer image3D_featureAttrMat = AttributeMatrix::New(tDims, "Image3DFeatureData", AttributeMatrix::Type::CellFeature);
-    image3D_DC->addAttributeMatrix("Image3DFeatureData", image3D_featureAttrMat);
+    image3D_DC->addOrReplaceAttributeMatrix(image3D_featureAttrMat);
 
     AttributeMatrix::Pointer rectGrid_featureAttrMat = AttributeMatrix::New(tDims, "RectGridFeatureData", AttributeMatrix::Type::CellFeature);
-    rectGrid_DC->addAttributeMatrix("RectGridFeatureData", rectGrid_featureAttrMat);
+    rectGrid_DC->addOrReplaceAttributeMatrix(rectGrid_featureAttrMat);
 
     AttributeMatrix::Pointer vertex_featureAttrMat = AttributeMatrix::New(tDims, "VertexFeatureData", AttributeMatrix::Type::VertexFeature);
-    vertex_DC->addAttributeMatrix("VertexFeatureData", vertex_featureAttrMat);
+    vertex_DC->addOrReplaceAttributeMatrix(vertex_featureAttrMat);
 
     AttributeMatrix::Pointer edge_featureAttrMat = AttributeMatrix::New(tDims, "EdgeFeatureData", AttributeMatrix::Type::EdgeFeature);
-    edge_DC->addAttributeMatrix("EdgeFeatureData", edge_featureAttrMat);
+    edge_DC->addOrReplaceAttributeMatrix(edge_featureAttrMat);
 
     AttributeMatrix::Pointer tri_featureAttrMat = AttributeMatrix::New(tDims, "TriFeatureData", AttributeMatrix::Type::FaceFeature);
-    triangle_DC->addAttributeMatrix("TriFeatureData", tri_featureAttrMat);
+    triangle_DC->addOrReplaceAttributeMatrix(tri_featureAttrMat);
 
     AttributeMatrix::Pointer quad_featureAttrMat = AttributeMatrix::New(tDims, "QuadFeatureData", AttributeMatrix::Type::FaceFeature);
-    quad_DC->addAttributeMatrix("QuadFeatureData", quad_featureAttrMat);
+    quad_DC->addOrReplaceAttributeMatrix(quad_featureAttrMat);
 
     AttributeMatrix::Pointer tet_featureAttrMat = AttributeMatrix::New(tDims, "TetFeatureData", AttributeMatrix::Type::CellFeature);
-    tet_DC->addAttributeMatrix("TetFeatureData", tet_featureAttrMat);
+    tet_DC->addOrReplaceAttributeMatrix(tet_featureAttrMat);
 
     return dca;
   }
@@ -407,7 +428,7 @@ public:
     quad_featureAttrMat.setDataArrayName("Volumes");
     tet_featureAttrMat.setDataArrayName("Volumes");
 
-    QVector<size_t> cDims(1, 1);
+    std::vector<size_t> cDims(1, 1);
 
     FloatArrayType::Pointer image2D_volumes = dca->getPrereqArrayFromPath<FloatArrayType, AbstractFilter>(NULL, imageGeom2D_featureAttrMat, cDims);
     FloatArrayType::Pointer image3D_volumes = dca->getPrereqArrayFromPath<FloatArrayType, AbstractFilter>(NULL, imageGeom3D_featureAttrMat, cDims);

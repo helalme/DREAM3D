@@ -35,13 +35,15 @@
 
 #include "AxisAngleWidget.h"
 
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/Eigen>
+
 #include <QtGui/QDoubleValidator>
 
 #include "SIMPLib/Math/SIMPLibMath.h"
 
-#include <Eigen/Core>
-#include <Eigen/Dense>
-#include <Eigen/Eigen>
+#include "OrientationLib/Core/OrientationTransformation.hpp"
 
 // -----------------------------------------------------------------------------
 //
@@ -82,7 +84,7 @@ void AxisAngleWidget::updateData(OrientationUtilityCalculator* calculator)
 {
   setStyleSheet("");
 
-  if(calculator->getInputType() == OrientationConverter<double>::AxisAngle)
+  if(calculator->getInputType() == OrientationRepresentation::Type::AxisAngle)
   {
     // The input type is the same as this widget, so don't update
     return;
@@ -97,7 +99,7 @@ void AxisAngleWidget::updateData(OrientationUtilityCalculator* calculator)
     return;
   }
 
-  QVector<double> aaValues = calculator->getValues(OrientationConverter<double>::AxisAngle);
+  QVector<double> aaValues = calculator->getValues(OrientationRepresentation::Type::AxisAngle);
 
   if(m_AngleMeasurement == Degrees)
   {
@@ -146,17 +148,17 @@ void AxisAngleWidget::valuesUpdated(const QString& text)
 
   emit invalidValues(errorCode, QString::fromStdString(ss.str()));
 
-  OrientationTransforms<QVector<double>, double>::ResultType result = OrientationTransforms<QVector<double>, double>::ax_check(values);
+  OrientationTransformation::ResultType result = OrientationTransformation::ax_check(values);
   errorCode = result.result;
   QString errorMsg = QString::fromStdString(result.msg);
 
   if(errorCode >= 0)
   {
-    emit valuesChanged(values, OrientationConverter<double>::AxisAngle, false);
+    emit valuesChanged(values, OrientationRepresentation::Type::AxisAngle, false);
   }
   else
   {
-    emit valuesChanged(QVector<double>(), OrientationConverter<double>::AxisAngle, true);
+    emit valuesChanged(QVector<double>(), OrientationRepresentation::Type::AxisAngle, true);
     emit invalidValues(errorCode, errorMsg);
   }
 }

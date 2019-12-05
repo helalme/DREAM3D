@@ -33,9 +33,14 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "MinNeighbors.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
@@ -43,6 +48,8 @@
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -70,7 +77,7 @@ MinNeighbors::~MinNeighbors() = default;
 // -----------------------------------------------------------------------------
 void MinNeighbors::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Minimum Number Neighbors", MinNumNeighbors, FilterParameter::Parameter, MinNeighbors));
   QStringList linkedProps;
   linkedProps << "PhaseNumber"
@@ -128,8 +135,8 @@ void MinNeighbors::initialize()
 // -----------------------------------------------------------------------------
 void MinNeighbors::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   QVector<DataArrayPath> dataArrayPaths;
@@ -137,13 +144,12 @@ void MinNeighbors::dataCheck()
   if(getMinNumNeighbors() < 0)
   {
     QString ss = QObject::tr("The minimum number of neighbors (%1) must be 0 or positive").arg(getMinNumNeighbors());
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5555, ss);
   }
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -157,7 +163,7 @@ void MinNeighbors::dataCheck()
   {
     m_NumNeighbors = m_NumNeighborsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getNumNeighborsArrayPath());
   }
@@ -170,7 +176,7 @@ void MinNeighbors::dataCheck()
     {
       m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArrayPaths.push_back(getFeaturePhasesArrayPath());
     }
@@ -199,8 +205,7 @@ void MinNeighbors::dataCheck()
     }
   }
 
-  setWarningCondition(-5556);
-  notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+  setWarningCondition(-5556, ss);
 }
 
 // -----------------------------------------------------------------------------
@@ -221,10 +226,10 @@ void MinNeighbors::preflight()
 // -----------------------------------------------------------------------------
 void MinNeighbors::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -251,14 +256,13 @@ void MinNeighbors::execute()
     if(unavailablePhase)
     {
       QString ss = QObject::tr("The phase number (%1) is not available in the supplied Feature phases array with path (%2)").arg(m_PhaseNumber).arg(m_FeaturePhasesArrayPath.serialize());
-      setErrorCondition(-5555);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-5555, ss);
       return;
     }
   }
 
   QVector<bool> activeObjects = merge_containedfeatures();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -279,14 +283,13 @@ void MinNeighbors::assign_badpoints()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_NumNeighborsArrayPath.getDataContainerName());
 
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
   };
 
-  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_Neighbors");
+  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_Neighbors", true);
   m_Neighbors = neighborsPtr->getPointer(0);
   neighborsPtr->initializeWithValue(-1);
 
@@ -477,8 +480,7 @@ QVector<bool> MinNeighbors::merge_containedfeatures()
   }
   if(!good)
   {
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), "The minimum number of neighbors is larger than the Feature with the most neighbors.  All Features would be removed", getErrorCondition());
+    setErrorCondition(-1, "The minimum number of neighbors is larger than the Feature with the most neighbors.  All Features would be removed");
     return activeObjects;
   }
   for(size_t i = 0; i < totalPoints; i++)
@@ -508,7 +510,7 @@ AbstractFilter::Pointer MinNeighbors::newFilterInstance(bool copyFilterParameter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MinNeighbors::getCompiledLibraryName() const
+QString MinNeighbors::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -516,7 +518,7 @@ const QString MinNeighbors::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MinNeighbors::getBrandingString() const
+QString MinNeighbors::getBrandingString() const
 {
   return "Processing";
 }
@@ -524,7 +526,7 @@ const QString MinNeighbors::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MinNeighbors::getFilterVersion() const
+QString MinNeighbors::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -534,7 +536,7 @@ const QString MinNeighbors::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MinNeighbors::getGroupName() const
+QString MinNeighbors::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -542,7 +544,7 @@ const QString MinNeighbors::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid MinNeighbors::getUuid()
+QUuid MinNeighbors::getUuid() const
 {
   return QUuid("{dab5de3c-5f81-5bb5-8490-73521e1183ea}");
 }
@@ -550,7 +552,7 @@ const QUuid MinNeighbors::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MinNeighbors::getSubGroupName() const
+QString MinNeighbors::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -558,7 +560,120 @@ const QString MinNeighbors::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MinNeighbors::getHumanLabel() const
+QString MinNeighbors::getHumanLabel() const
 {
   return "Minimum Number of Neighbors";
+}
+
+// -----------------------------------------------------------------------------
+MinNeighbors::Pointer MinNeighbors::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<MinNeighbors> MinNeighbors::New()
+{
+  struct make_shared_enabler : public MinNeighbors
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString MinNeighbors::getNameOfClass() const
+{
+  return QString("MinNeighbors");
+}
+
+// -----------------------------------------------------------------------------
+QString MinNeighbors::ClassName()
+{
+  return QString("MinNeighbors");
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setMinNumNeighbors(int value)
+{
+  m_MinNumNeighbors = value;
+}
+
+// -----------------------------------------------------------------------------
+int MinNeighbors::getMinNumNeighbors() const
+{
+  return m_MinNumNeighbors;
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setApplyToSinglePhase(bool value)
+{
+  m_ApplyToSinglePhase = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MinNeighbors::getApplyToSinglePhase() const
+{
+  return m_ApplyToSinglePhase;
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setPhaseNumber(int value)
+{
+  m_PhaseNumber = value;
+}
+
+// -----------------------------------------------------------------------------
+int MinNeighbors::getPhaseNumber() const
+{
+  return m_PhaseNumber;
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MinNeighbors::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MinNeighbors::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setNumNeighborsArrayPath(const DataArrayPath& value)
+{
+  m_NumNeighborsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MinNeighbors::getNumNeighborsArrayPath() const
+{
+  return m_NumNeighborsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MinNeighbors::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> MinNeighbors::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

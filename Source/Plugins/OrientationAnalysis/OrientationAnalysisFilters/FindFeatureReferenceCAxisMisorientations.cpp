@@ -33,20 +33,32 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindFeatureReferenceCAxisMisorientations.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/GeometryMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+using QuatF = Quaternion<float>;
 
 // -----------------------------------------------------------------------------
 //
@@ -71,7 +83,7 @@ FindFeatureReferenceCAxisMisorientations::~FindFeatureReferenceCAxisMisorientati
 // -----------------------------------------------------------------------------
 void FindFeatureReferenceCAxisMisorientations::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -95,11 +107,11 @@ void FindFeatureReferenceCAxisMisorientations::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Average C-Axes", AvgCAxesArrayPath, FilterParameter::RequiredArray, FindFeatureReferenceCAxisMisorientations, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Average C-Axis Misorientations", FeatureAvgCAxisMisorientationsArrayName, FilterParameter::CreatedArray, FindFeatureReferenceCAxisMisorientations));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Average C-Axis Misorientations", FeatureAvgCAxisMisorientationsArrayName, AvgCAxesArrayPath, AvgCAxesArrayPath, FilterParameter::CreatedArray, FindFeatureReferenceCAxisMisorientations));
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Feature Stdev C-Axis Misorientations", FeatureStdevCAxisMisorientationsArrayName, FilterParameter::CreatedArray, FindFeatureReferenceCAxisMisorientations));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Feature Stdev C-Axis Misorientations", FeatureStdevCAxisMisorientationsArrayName, AvgCAxesArrayPath, AvgCAxesArrayPath, FilterParameter::CreatedArray, FindFeatureReferenceCAxisMisorientations));
   parameters.push_back(
-      SIMPL_NEW_STRING_FP("Feature Reference C-Axis Misorientations", FeatureReferenceCAxisMisorientationsArrayName, FilterParameter::CreatedArray, FindFeatureReferenceCAxisMisorientations));
+    SIMPL_NEW_DA_WITH_LINKED_AM_FP("Feature Reference C-Axis Misorientations", FeatureReferenceCAxisMisorientationsArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, FindFeatureReferenceCAxisMisorientations));
   setFilterParameters(parameters);
 }
 
@@ -129,22 +141,22 @@ void FindFeatureReferenceCAxisMisorientations::initialize()
 // -----------------------------------------------------------------------------
 void FindFeatureReferenceCAxisMisorientations::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeatureIdsArrayPath());
   }
@@ -155,7 +167,7 @@ void FindFeatureReferenceCAxisMisorientations::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -199,7 +211,7 @@ void FindFeatureReferenceCAxisMisorientations::dataCheck()
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getQuatsArrayPath());
   }
@@ -225,10 +237,10 @@ void FindFeatureReferenceCAxisMisorientations::preflight()
 // -----------------------------------------------------------------------------
 void FindFeatureReferenceCAxisMisorientations::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -238,24 +250,22 @@ void FindFeatureReferenceCAxisMisorientations::execute()
   size_t totalFeatures = m_AvgCAxesPtr.lock()->getNumberOfTuples();
 
   int32_t avgMisoComps = 3;
-  QVector<size_t> dims(1, avgMisoComps);
-  FloatArrayType::Pointer avgmisoPtr = FloatArrayType::CreateArray(totalFeatures, dims, "_INTERNAL_USE_ONLY_AvgMiso_Temp");
+  std::vector<size_t> dims(1, avgMisoComps);
+  FloatArrayType::Pointer avgmisoPtr = FloatArrayType::CreateArray(totalFeatures, dims, "_INTERNAL_USE_ONLY_AvgMiso_Temp", true);
   avgmisoPtr->initializeWithZeros();
   float* avgmiso = avgmisoPtr->getPointer(0);
 
-  QuatF q1 = QuaternionMathF::New();
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+  FloatArrayType::Pointer quatsPtr = m_QuatsPtr.lock();
 
   float w = 0.0f;
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   uint32_t maxUInt32 = std::numeric_limits<uint32_t>::max();
   // We have more points than can be allocated on a 32 bit machine. Assert Now.
   if(totalPoints > maxUInt32)
   {
     QString ss = QObject::tr("The volume is too large for a 32 bit machine. Try reducing the input volume size. Total Voxels: %1").arg(totalPoints);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     return;
   }
 
@@ -280,10 +290,8 @@ void FindFeatureReferenceCAxisMisorientations::execute()
         point = (plane * xPoints * yPoints) + (row * xPoints) + col;
         if(m_FeatureIds[point] > 0 && m_CellPhases[point] > 0)
         {
-          QuaternionMathF::Copy(quats[point], q1);
-          FOrientArrayType om(9);
-          FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-          om.toGMatrix(g1);
+          QuatF q1(quatsPtr->getTuplePointer(point));
+          OrientationTransformation::qu2om<QuatF, Orientation<float>>(q1).toGMatrix(g1);
           // transpose the g matricies so when caxis is multiplied by it
           // it will give the sample direction that the caxis is along
           MatrixMath::Transpose3x3(g1, g1t);
@@ -297,7 +305,7 @@ void FindFeatureReferenceCAxisMisorientations::execute()
           // normalize so that the magnitude is 1
           MatrixMath::Normalize3x1(AvgCAxis);
           w = GeometryMath::CosThetaBetweenVectors(c1, AvgCAxis);
-          SIMPLibMath::boundF(w, -1, 1);
+          SIMPLibMath::bound(w, -1.0f, 1.0f);
           w = acosf(w);
           w = w * SIMPLib::Constants::k_180OverPi;
           if(w > 90.0)
@@ -323,7 +331,7 @@ void FindFeatureReferenceCAxisMisorientations::execute()
     if(i % 1000 == 0)
     {
       QString ss = QObject::tr("Working On Feature %1 of %2").arg(i).arg(totalFeatures);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
     }
     index = i * avgMisoComps;
     m_FeatureAvgCAxisMisorientations[i] = avgmiso[index + 1] / avgmiso[index];
@@ -365,7 +373,7 @@ AbstractFilter::Pointer FindFeatureReferenceCAxisMisorientations::newFilterInsta
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureReferenceCAxisMisorientations::getCompiledLibraryName() const
+QString FindFeatureReferenceCAxisMisorientations::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -373,7 +381,7 @@ const QString FindFeatureReferenceCAxisMisorientations::getCompiledLibraryName()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureReferenceCAxisMisorientations::getBrandingString() const
+QString FindFeatureReferenceCAxisMisorientations::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -381,7 +389,7 @@ const QString FindFeatureReferenceCAxisMisorientations::getBrandingString() cons
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureReferenceCAxisMisorientations::getFilterVersion() const
+QString FindFeatureReferenceCAxisMisorientations::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -391,7 +399,7 @@ const QString FindFeatureReferenceCAxisMisorientations::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureReferenceCAxisMisorientations::getGroupName() const
+QString FindFeatureReferenceCAxisMisorientations::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -399,7 +407,7 @@ const QString FindFeatureReferenceCAxisMisorientations::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindFeatureReferenceCAxisMisorientations::getUuid()
+QUuid FindFeatureReferenceCAxisMisorientations::getUuid() const
 {
   return QUuid("{1a0848da-2edd-52c0-b111-62a4dc6d2886}");
 }
@@ -407,7 +415,7 @@ const QUuid FindFeatureReferenceCAxisMisorientations::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureReferenceCAxisMisorientations::getSubGroupName() const
+QString FindFeatureReferenceCAxisMisorientations::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -415,7 +423,120 @@ const QString FindFeatureReferenceCAxisMisorientations::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureReferenceCAxisMisorientations::getHumanLabel() const
+QString FindFeatureReferenceCAxisMisorientations::getHumanLabel() const
 {
   return "Find Feature Reference C-Axis Misalignments";
+}
+
+// -----------------------------------------------------------------------------
+FindFeatureReferenceCAxisMisorientations::Pointer FindFeatureReferenceCAxisMisorientations::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindFeatureReferenceCAxisMisorientations> FindFeatureReferenceCAxisMisorientations::New()
+{
+  struct make_shared_enabler : public FindFeatureReferenceCAxisMisorientations
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureReferenceCAxisMisorientations::getNameOfClass() const
+{
+  return QString("FindFeatureReferenceCAxisMisorientations");
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureReferenceCAxisMisorientations::ClassName()
+{
+  return QString("FindFeatureReferenceCAxisMisorientations");
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureReferenceCAxisMisorientations::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureReferenceCAxisMisorientations::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setAvgCAxesArrayPath(const DataArrayPath& value)
+{
+  m_AvgCAxesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureReferenceCAxisMisorientations::getAvgCAxesArrayPath() const
+{
+  return m_AvgCAxesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureReferenceCAxisMisorientations::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setFeatureAvgCAxisMisorientationsArrayName(const QString& value)
+{
+  m_FeatureAvgCAxisMisorientationsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureReferenceCAxisMisorientations::getFeatureAvgCAxisMisorientationsArrayName() const
+{
+  return m_FeatureAvgCAxisMisorientationsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setFeatureStdevCAxisMisorientationsArrayName(const QString& value)
+{
+  m_FeatureStdevCAxisMisorientationsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureReferenceCAxisMisorientations::getFeatureStdevCAxisMisorientationsArrayName() const
+{
+  return m_FeatureStdevCAxisMisorientationsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureReferenceCAxisMisorientations::setFeatureReferenceCAxisMisorientationsArrayName(const QString& value)
+{
+  m_FeatureReferenceCAxisMisorientationsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureReferenceCAxisMisorientations::getFeatureReferenceCAxisMisorientationsArrayName() const
+{
+  return m_FeatureReferenceCAxisMisorientationsArrayName;
 }

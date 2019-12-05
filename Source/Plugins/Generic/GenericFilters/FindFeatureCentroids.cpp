@@ -33,19 +33,33 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindFeatureCentroids.h"
 
 #include <array>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Generic/GenericConstants.h"
 #include "Generic/GenericVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -65,7 +79,7 @@ FindFeatureCentroids::~FindFeatureCentroids() = default;
 // -----------------------------------------------------------------------------
 void FindFeatureCentroids::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -103,12 +117,12 @@ void FindFeatureCentroids::initialize()
 // -----------------------------------------------------------------------------
 void FindFeatureCentroids::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -117,8 +131,7 @@ void FindFeatureCentroids::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   cDims[0] = 3;
-  m_CentroidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getCentroidsArrayPath(), 0,
-                                                                                                                  cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_CentroidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getCentroidsArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_CentroidsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Centroids = m_CentroidsPtr.lock()->getPointer(0);
@@ -148,8 +161,8 @@ void FindFeatureCentroids::find_centroids()
 
   size_t totalFeatures = m_CentroidsPtr.lock()->getNumberOfTuples();
 
-  QVector<size_t> dims(1, 4);
-  FloatArrayType::Pointer m_FeatureCentersPtr = FloatArrayType::CreateArray(totalFeatures, dims, "_INTERNAL_USE_ONLY_Centroids");
+  std::vector<size_t> dims(1, 4);
+  FloatArrayType::Pointer m_FeatureCentersPtr = FloatArrayType::CreateArray(totalFeatures, dims, "_INTERNAL_USE_ONLY_Centroids", true);
   m_FeatureCentersPtr->initializeWithZeros();
   float* featurecenters = m_FeatureCentersPtr->getPointer(0);
 
@@ -157,10 +170,8 @@ void FindFeatureCentroids::find_centroids()
   size_t yPoints = imageGeom->getYPoints();
   size_t zPoints = imageGeom->getZPoints();
 
-  std::array<float, 3> resolution = {{0.0f, 0.0f, 0.0f}};
-  imageGeom->getResolution(resolution.data());
-  std::array<float, 3> origin = {{0.0f, 0.0f, 0.0f}};
-  imageGeom->getOrigin(origin.data());
+  // FloatVec3Type spacing = imageGeom->getSpacing();
+  // FloatVec3Type origin = imageGeom->getOrigin();
 
   size_t zStride = 0;
   size_t yStride = 0;
@@ -201,10 +212,10 @@ void FindFeatureCentroids::find_centroids()
 // -----------------------------------------------------------------------------
 void FindFeatureCentroids::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -229,7 +240,7 @@ AbstractFilter::Pointer FindFeatureCentroids::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureCentroids::getCompiledLibraryName() const
+QString FindFeatureCentroids::getCompiledLibraryName() const
 {
   return GenericConstants::GenericBaseName;
 }
@@ -237,7 +248,7 @@ const QString FindFeatureCentroids::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureCentroids::getBrandingString() const
+QString FindFeatureCentroids::getBrandingString() const
 {
   return "Generic";
 }
@@ -245,7 +256,7 @@ const QString FindFeatureCentroids::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureCentroids::getFilterVersion() const
+QString FindFeatureCentroids::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -256,7 +267,7 @@ const QString FindFeatureCentroids::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureCentroids::getGroupName() const
+QString FindFeatureCentroids::getGroupName() const
 {
   return SIMPL::FilterGroups::Generic;
 }
@@ -264,7 +275,7 @@ const QString FindFeatureCentroids::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindFeatureCentroids::getUuid()
+QUuid FindFeatureCentroids::getUuid() const
 {
   return QUuid("{6f8ca36f-2995-5bd3-8672-6b0b80d5b2ca}");
 }
@@ -272,7 +283,7 @@ const QUuid FindFeatureCentroids::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureCentroids::getSubGroupName() const
+QString FindFeatureCentroids::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -280,7 +291,60 @@ const QString FindFeatureCentroids::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureCentroids::getHumanLabel() const
+QString FindFeatureCentroids::getHumanLabel() const
 {
   return "Find Feature Centroids";
+}
+
+// -----------------------------------------------------------------------------
+FindFeatureCentroids::Pointer FindFeatureCentroids::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindFeatureCentroids> FindFeatureCentroids::New()
+{
+  struct make_shared_enabler : public FindFeatureCentroids
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureCentroids::getNameOfClass() const
+{
+  return QString("FindFeatureCentroids");
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureCentroids::ClassName()
+{
+  return QString("FindFeatureCentroids");
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureCentroids::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureCentroids::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureCentroids::setCentroidsArrayPath(const DataArrayPath& value)
+{
+  m_CentroidsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureCentroids::getCentroidsArrayPath() const
+{
+  return m_CentroidsArrayPath;
 }

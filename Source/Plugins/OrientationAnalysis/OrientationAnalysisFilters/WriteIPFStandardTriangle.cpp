@@ -33,11 +33,16 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "WriteIPFStandardTriangle.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
@@ -80,7 +85,7 @@ WriteIPFStandardTriangle::~WriteIPFStandardTriangle() = default;
 // -----------------------------------------------------------------------------
 void WriteIPFStandardTriangle::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   QVector<QString> choices = QVector<QString>::fromStdVector(LaueOps::GetLaueNames());
   choices.pop_back(); // Remove the last name because we don't need it.
@@ -115,8 +120,8 @@ void WriteIPFStandardTriangle::initialize()
 // -----------------------------------------------------------------------------
 void WriteIPFStandardTriangle::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QString ss;
 
@@ -127,22 +132,19 @@ void WriteIPFStandardTriangle::dataCheck()
   if(ext != "tif" && ext != "bmp" && ext != "png")
   {
     ss = QObject::tr("The output file has an unsupported extension.  Please select a TIF, BMP, or PNG file");
-    setErrorCondition(-1004);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1004, ss);
     return;
   }
 
   if(m_ImageSize <= 0)
   {
-    setErrorCondition(-1005);
-    notifyErrorMessage(getHumanLabel(), "The size of the image must be positive", getErrorCondition());
+    setErrorCondition(-1005, "The size of the image must be positive");
     return;
   }
 
   if(m_LaueClass < 0 || m_LaueClass > 10)
   {
-    setErrorCondition(-1006);
-    notifyErrorMessage(getHumanLabel(), "The Laue Class value must be in the range [0-10]. See documentation for the complete list of values.", getErrorCondition());
+    setErrorCondition(-1006, "The Laue Class value must be in the range [0-10]. See documentation for the complete list of values.");
     return;
   }
 }
@@ -165,10 +167,10 @@ void WriteIPFStandardTriangle::preflight()
 // -----------------------------------------------------------------------------
 void WriteIPFStandardTriangle::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -246,7 +248,7 @@ void WriteIPFStandardTriangle::writeImage(QImage& image)
 {
 
   QString ss = QObject::tr("Writing Image %1").arg(getOutputFile());
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 
   QFileInfo fi((m_OutputFile));
   QDir parent(fi.absolutePath());
@@ -259,8 +261,7 @@ void WriteIPFStandardTriangle::writeImage(QImage& image)
   if(!saved)
   {
     QString ss = QObject::tr("The Triangle image file '%1' was not saved").arg(getOutputFile());
-    setErrorCondition(-90011);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-90011, ss);
   }
 }
 
@@ -280,7 +281,7 @@ AbstractFilter::Pointer WriteIPFStandardTriangle::newFilterInstance(bool copyFil
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteIPFStandardTriangle::getCompiledLibraryName() const
+QString WriteIPFStandardTriangle::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -288,7 +289,7 @@ const QString WriteIPFStandardTriangle::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteIPFStandardTriangle::getBrandingString() const
+QString WriteIPFStandardTriangle::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -296,7 +297,7 @@ const QString WriteIPFStandardTriangle::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteIPFStandardTriangle::getFilterVersion() const
+QString WriteIPFStandardTriangle::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -306,7 +307,7 @@ const QString WriteIPFStandardTriangle::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteIPFStandardTriangle::getGroupName() const
+QString WriteIPFStandardTriangle::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -314,7 +315,7 @@ const QString WriteIPFStandardTriangle::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid WriteIPFStandardTriangle::getUuid()
+QUuid WriteIPFStandardTriangle::getUuid() const
 {
   return QUuid("{0b72aa9a-6b5a-5677-bf6c-743445e75cc8}");
 }
@@ -322,7 +323,7 @@ const QUuid WriteIPFStandardTriangle::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteIPFStandardTriangle::getSubGroupName() const
+QString WriteIPFStandardTriangle::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -330,7 +331,72 @@ const QString WriteIPFStandardTriangle::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString WriteIPFStandardTriangle::getHumanLabel() const
+QString WriteIPFStandardTriangle::getHumanLabel() const
 {
   return "Export IPF Triangle Legend";
+}
+
+// -----------------------------------------------------------------------------
+WriteIPFStandardTriangle::Pointer WriteIPFStandardTriangle::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<WriteIPFStandardTriangle> WriteIPFStandardTriangle::New()
+{
+  struct make_shared_enabler : public WriteIPFStandardTriangle
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString WriteIPFStandardTriangle::getNameOfClass() const
+{
+  return QString("WriteIPFStandardTriangle");
+}
+
+// -----------------------------------------------------------------------------
+QString WriteIPFStandardTriangle::ClassName()
+{
+  return QString("WriteIPFStandardTriangle");
+}
+
+// -----------------------------------------------------------------------------
+void WriteIPFStandardTriangle::setLaueClass(int value)
+{
+  m_LaueClass = value;
+}
+
+// -----------------------------------------------------------------------------
+int WriteIPFStandardTriangle::getLaueClass() const
+{
+  return m_LaueClass;
+}
+
+// -----------------------------------------------------------------------------
+void WriteIPFStandardTriangle::setOutputFile(const QString& value)
+{
+  m_OutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString WriteIPFStandardTriangle::getOutputFile() const
+{
+  return m_OutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void WriteIPFStandardTriangle::setImageSize(int value)
+{
+  m_ImageSize = value;
+}
+
+// -----------------------------------------------------------------------------
+int WriteIPFStandardTriangle::getImageSize() const
+{
+  return m_ImageSize;
 }

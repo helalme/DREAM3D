@@ -33,19 +33,33 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindMisorientations.h"
 
 #include <cmath>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -76,7 +90,7 @@ FindMisorientations::~FindMisorientations() = default;
 // -----------------------------------------------------------------------------
 void FindMisorientations::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   QStringList linkedProps("AvgMisorientationsArrayName");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Find Average Misorientation Per Feature", FindAvgMisors, FilterParameter::Parameter, FindMisorientations, linkedProps));
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::RequiredArray));
@@ -98,8 +112,8 @@ void FindMisorientations::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Crystal Structures", CrystalStructuresArrayPath, FilterParameter::RequiredArray, FindMisorientations, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Misorientation List", MisorientationListArrayName, FilterParameter::CreatedArray, FindMisorientations));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Average Misorientations", AvgMisorientationsArrayName, FilterParameter::CreatedArray, FindMisorientations));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Misorientation List", MisorientationListArrayName, NeighborListArrayPath, NeighborListArrayPath, FilterParameter::CreatedArray, FindMisorientations));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Average Misorientations", AvgMisorientationsArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, FindMisorientations));
   setFilterParameters(parameters);
 }
 
@@ -133,13 +147,13 @@ void FindMisorientations::initialize()
 // -----------------------------------------------------------------------------
 void FindMisorientations::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   DataArrayPath tempPath;
 
-  QVector<size_t> cDims(1, 4);
+  std::vector<size_t> cDims(1, 4);
 
   QVector<DataArrayPath> dataArrayPaths;
 
@@ -150,7 +164,7 @@ void FindMisorientations::dataCheck()
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getAvgQuatsArrayPath());
   }
@@ -162,7 +176,7 @@ void FindMisorientations::dataCheck()
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeaturePhasesArrayPath());
   }
@@ -188,14 +202,13 @@ void FindMisorientations::dataCheck()
 
   // Now we are going to get a "Pointer" to the NeighborList object out of the DataContainer
   m_NeighborList = getDataContainerArray()->getPrereqArrayFromPath<NeighborList<int32_t>, AbstractFilter>(this, getNeighborListArrayPath(), cDims);
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getNeighborListArrayPath());
   }
 
   tempPath.update(m_NeighborListArrayPath.getDataContainerName(), getNeighborListArrayPath().getAttributeMatrixName(), getMisorientationListArrayName());
-  m_MisorientationList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_MisorientationList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID31);
 
   getDataContainerArray()->validateNumberOfTuples<AbstractFilter>(this, dataArrayPaths);
 }
@@ -218,10 +231,10 @@ void FindMisorientations::preflight()
 // -----------------------------------------------------------------------------
 void FindMisorientations::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -238,9 +251,6 @@ void FindMisorientations::execute()
   float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
   float w = 0.0f;
   size_t tempMisoList = 0;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
   uint32_t xtalType1 = 0, xtalType2 = 0;
   int32_t nname = 0;
@@ -248,16 +258,19 @@ void FindMisorientations::execute()
   misorientationlists.resize(totalFeatures);
   for(size_t i = 1; i < totalFeatures; i++)
   {
-    QuaternionMathF::Copy(avgQuats[i], q1);
+    QuatF q1(m_AvgQuats + i * 4);
     xtalType1 = m_CrystalStructures[m_FeaturePhases[i]];
-    misorientationlists[i].assign(neighborlist[i].size(), -1.0);
-    for(size_t j = 0; j < neighborlist[i].size(); j++)
+    NeighborList<int32_t>::VectorType& featureNeighborList = neighborlist[i];
+
+    misorientationlists[i].assign(featureNeighborList.size(), -1.0);
+
+    for(size_t j = 0; j < featureNeighborList.size(); j++)
     {
       w = std::numeric_limits<float>::max();
-      nname = neighborlist[i][j];
-      QuaternionMathF::Copy(avgQuats[nname], q2);
+      nname = featureNeighborList[j];
+      QuatF q2(m_AvgQuats + nname * 4);
       xtalType2 = m_CrystalStructures[m_FeaturePhases[nname]];
-      tempMisoList = neighborlist[i].size();
+      tempMisoList = featureNeighborList.size();
       if(xtalType1 == xtalType2 && static_cast<int64_t>(xtalType1) < static_cast<int64_t>(m_OrientationOps.size()))
       {
         w = m_OrientationOps[xtalType1]->getMisoQuat(q1, q2, n1, n2, n3);
@@ -315,7 +328,7 @@ AbstractFilter::Pointer FindMisorientations::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindMisorientations::getCompiledLibraryName() const
+QString FindMisorientations::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -323,7 +336,7 @@ const QString FindMisorientations::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindMisorientations::getBrandingString() const
+QString FindMisorientations::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -331,7 +344,7 @@ const QString FindMisorientations::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindMisorientations::getFilterVersion() const
+QString FindMisorientations::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -341,7 +354,7 @@ const QString FindMisorientations::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindMisorientations::getGroupName() const
+QString FindMisorientations::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -349,7 +362,7 @@ const QString FindMisorientations::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindMisorientations::getUuid()
+QUuid FindMisorientations::getUuid() const
 {
   return QUuid("{286dd493-4fea-54f4-b59e-459dd13bbe57}");
 }
@@ -357,7 +370,7 @@ const QUuid FindMisorientations::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindMisorientations::getSubGroupName() const
+QString FindMisorientations::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -365,7 +378,120 @@ const QString FindMisorientations::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindMisorientations::getHumanLabel() const
+QString FindMisorientations::getHumanLabel() const
 {
   return "Find Feature Neighbor Misorientations";
+}
+
+// -----------------------------------------------------------------------------
+FindMisorientations::Pointer FindMisorientations::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindMisorientations> FindMisorientations::New()
+{
+  struct make_shared_enabler : public FindMisorientations
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindMisorientations::getNameOfClass() const
+{
+  return QString("FindMisorientations");
+}
+
+// -----------------------------------------------------------------------------
+QString FindMisorientations::ClassName()
+{
+  return QString("FindMisorientations");
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setNeighborListArrayPath(const DataArrayPath& value)
+{
+  m_NeighborListArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindMisorientations::getNeighborListArrayPath() const
+{
+  return m_NeighborListArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setMisorientationListArrayName(const QString& value)
+{
+  m_MisorientationListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindMisorientations::getMisorientationListArrayName() const
+{
+  return m_MisorientationListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindMisorientations::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindMisorientations::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindMisorientations::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setAvgMisorientationsArrayName(const QString& value)
+{
+  m_AvgMisorientationsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindMisorientations::getAvgMisorientationsArrayName() const
+{
+  return m_AvgMisorientationsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindMisorientations::setFindAvgMisors(bool value)
+{
+  m_FindAvgMisors = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindMisorientations::getFindAvgMisors() const
+{
+  return m_FindAvgMisors;
 }

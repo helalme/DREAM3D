@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "TriangleCentroidFilter.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -42,13 +44,25 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingConstants.h"
 #include "SurfaceMeshing/SurfaceMeshingVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 /**
  * @brief The CalculateCentroidsImpl class implements a threaded algorithm that computes the centroids of
@@ -72,9 +86,9 @@ public:
   void generate(size_t start, size_t end) const
   {
     float* nodes = m_Nodes->getPointer(0);
-    int64_t* triangles = m_Triangles->getPointer(0);
+    MeshIndexType* triangles = m_Triangles->getPointer(0);
 
-    for(size_t i = start; i < end; i++)
+    for(MeshIndexType i = start; i < end; i++)
     {
       m_Centroids[i * 3] = (nodes[triangles[i * 3] * 3 + 0] + nodes[triangles[i * 3 + 1] * 3 + 0] + nodes[triangles[i * 3 + 2] * 3 + 0]) / 3.0;
       m_Centroids[i * 3 + 1] = (nodes[triangles[i * 3] * 3 + 1] + nodes[triangles[i * 3 + 1] * 3 + 1] + nodes[triangles[i * 3 + 2] * 3 + 1]) / 3.0;
@@ -109,7 +123,7 @@ TriangleCentroidFilter::~TriangleCentroidFilter() = default;
 void TriangleCentroidFilter::setupFilterParameters()
 {
   SurfaceMeshFilter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::CreatedArray));
   {
     DataArrayCreationFilterParameter::RequirementType req = DataArrayCreationFilterParameter::CreateRequirement(AttributeMatrix::Type::Face, IGeometry::Type::Triangle);
@@ -140,26 +154,26 @@ void TriangleCentroidFilter::initialize()
 // -----------------------------------------------------------------------------
 void TriangleCentroidFilter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   TriangleGeom::Pointer triangles = getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshTriangleCentroidsArrayPath().getDataContainerName());
 
   QVector<IDataArray::Pointer> dataArrays;
 
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(triangles->getTriangles());
   }
 
-  QVector<size_t> cDims(1, 3);
-  m_SurfaceMeshTriangleCentroidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, getSurfaceMeshTriangleCentroidsArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  std::vector<size_t> cDims(1, 3);
+  m_SurfaceMeshTriangleCentroidsPtr =
+      getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getSurfaceMeshTriangleCentroidsArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_SurfaceMeshTriangleCentroidsPtr.lock())          /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshTriangleCentroids = m_SurfaceMeshTriangleCentroidsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_SurfaceMeshTriangleCentroidsPtr.lock());
   }
@@ -185,10 +199,10 @@ void TriangleCentroidFilter::preflight()
 // -----------------------------------------------------------------------------
 void TriangleCentroidFilter::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -234,7 +248,7 @@ AbstractFilter::Pointer TriangleCentroidFilter::newFilterInstance(bool copyFilte
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleCentroidFilter::getCompiledLibraryName() const
+QString TriangleCentroidFilter::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -242,7 +256,7 @@ const QString TriangleCentroidFilter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleCentroidFilter::getBrandingString() const
+QString TriangleCentroidFilter::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -250,7 +264,7 @@ const QString TriangleCentroidFilter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleCentroidFilter::getFilterVersion() const
+QString TriangleCentroidFilter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -260,7 +274,7 @@ const QString TriangleCentroidFilter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleCentroidFilter::getGroupName() const
+QString TriangleCentroidFilter::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -268,7 +282,7 @@ const QString TriangleCentroidFilter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid TriangleCentroidFilter::getUuid()
+QUuid TriangleCentroidFilter::getUuid() const
 {
   return QUuid("{7aa33007-4186-5d7f-ba9d-d0a561b3351d}");
 }
@@ -276,7 +290,7 @@ const QUuid TriangleCentroidFilter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleCentroidFilter::getSubGroupName() const
+QString TriangleCentroidFilter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MiscFilters;
 }
@@ -284,7 +298,48 @@ const QString TriangleCentroidFilter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString TriangleCentroidFilter::getHumanLabel() const
+QString TriangleCentroidFilter::getHumanLabel() const
 {
   return "Generate Triangle Centroids";
+}
+
+// -----------------------------------------------------------------------------
+TriangleCentroidFilter::Pointer TriangleCentroidFilter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<TriangleCentroidFilter> TriangleCentroidFilter::New()
+{
+  struct make_shared_enabler : public TriangleCentroidFilter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString TriangleCentroidFilter::getNameOfClass() const
+{
+  return QString("TriangleCentroidFilter");
+}
+
+// -----------------------------------------------------------------------------
+QString TriangleCentroidFilter::ClassName()
+{
+  return QString("TriangleCentroidFilter");
+}
+
+// -----------------------------------------------------------------------------
+void TriangleCentroidFilter::setSurfaceMeshTriangleCentroidsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshTriangleCentroidsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath TriangleCentroidFilter::getSurfaceMeshTriangleCentroidsArrayPath() const
+{
+  return m_SurfaceMeshTriangleCentroidsArrayPath;
 }

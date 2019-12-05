@@ -33,17 +33,24 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "GenerateRodriguesColors.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Math/MatrixMath.h"
 #include "SIMPLib/Utilities/ColorTable.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
 #include "OrientationLib/LaueOps/CubicLowOps.h"
 #include "OrientationLib/LaueOps/CubicOps.h"
 #include "OrientationLib/LaueOps/HexagonalLowOps.h"
@@ -52,7 +59,6 @@
 #include "OrientationLib/LaueOps/OrthoRhombicOps.h"
 #include "OrientationLib/LaueOps/TetragonalLowOps.h"
 #include "OrientationLib/LaueOps/TetragonalOps.h"
-#include "OrientationLib/LaueOps/TriclinicOps.h"
 #include "OrientationLib/LaueOps/TriclinicOps.h"
 #include "OrientationLib/LaueOps/TrigonalLowOps.h"
 #include "OrientationLib/LaueOps/TrigonalOps.h"
@@ -85,7 +91,7 @@ GenerateRodriguesColors::~GenerateRodriguesColors() = default;
 // -----------------------------------------------------------------------------
 void GenerateRodriguesColors::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   QStringList linkedProps("GoodVoxelsArrayPath");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Apply to Good Voxels Only (Bad Voxels Will Be Black)", UseGoodVoxels, FilterParameter::Parameter, GenerateRodriguesColors, linkedProps));
@@ -140,10 +146,10 @@ void GenerateRodriguesColors::initialize()
 void GenerateRodriguesColors::dataCheck()
 {
   DataArrayPath tempPath;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   m_CellPhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getCellPhasesArrayPath(),
                                                                                                         dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellPhasesPtr.lock())                                                                        /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -209,11 +215,10 @@ void GenerateRodriguesColors::preflight()
 // -----------------------------------------------------------------------------
 void GenerateRodriguesColors::execute()
 {
-  int err = 0;
-  QString ss;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -256,8 +261,7 @@ void GenerateRodriguesColors::execute()
     // Make sure we are using a valid Euler Angles with valid crystal symmetry
     if((missingGoodVoxels || m_GoodVoxels[i]) && m_CrystalStructures[phase] < Ebsd::CrystalStructure::LaueGroupEnd)
     {
-      FOrientArrayType rod(4);
-      FOrientTransformsType::eu2ro(FOrientArrayType(m_CellEulerAngles + index, 3), rod);
+      OrientationF rod = OrientationTransformation::eu2ro<OrientationF, OrientationF>(OrientationF(m_CellEulerAngles + index, 3));
 
       argb = ops[m_CrystalStructures[phase]]->generateRodriguesColor(rod[0], rod[1], rod[2]);
       m_CellRodriguesColors[index] = RgbColor::dRed(argb);
@@ -285,7 +289,7 @@ AbstractFilter::Pointer GenerateRodriguesColors::newFilterInstance(bool copyFilt
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateRodriguesColors::getCompiledLibraryName() const
+QString GenerateRodriguesColors::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -293,7 +297,7 @@ const QString GenerateRodriguesColors::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateRodriguesColors::getBrandingString() const
+QString GenerateRodriguesColors::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -301,7 +305,7 @@ const QString GenerateRodriguesColors::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateRodriguesColors::getFilterVersion() const
+QString GenerateRodriguesColors::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -312,7 +316,7 @@ const QString GenerateRodriguesColors::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateRodriguesColors::getGroupName() const
+QString GenerateRodriguesColors::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -320,7 +324,7 @@ const QString GenerateRodriguesColors::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GenerateRodriguesColors::getUuid()
+QUuid GenerateRodriguesColors::getUuid() const
 {
   return QUuid("{626f6feb-68bc-537a-8f5b-c6062e72236f}");
 }
@@ -328,7 +332,7 @@ const QUuid GenerateRodriguesColors::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateRodriguesColors::getSubGroupName() const
+QString GenerateRodriguesColors::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -336,7 +340,108 @@ const QString GenerateRodriguesColors::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateRodriguesColors::getHumanLabel() const
+QString GenerateRodriguesColors::getHumanLabel() const
 {
   return "Generate Rodrigues Colors";
+}
+
+// -----------------------------------------------------------------------------
+GenerateRodriguesColors::Pointer GenerateRodriguesColors::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GenerateRodriguesColors> GenerateRodriguesColors::New()
+{
+  struct make_shared_enabler : public GenerateRodriguesColors
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateRodriguesColors::getNameOfClass() const
+{
+  return QString("GenerateRodriguesColors");
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateRodriguesColors::ClassName()
+{
+  return QString("GenerateRodriguesColors");
+}
+
+// -----------------------------------------------------------------------------
+void GenerateRodriguesColors::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateRodriguesColors::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateRodriguesColors::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateRodriguesColors::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateRodriguesColors::setCellEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_CellEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateRodriguesColors::getCellEulerAnglesArrayPath() const
+{
+  return m_CellEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateRodriguesColors::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateRodriguesColors::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateRodriguesColors::setCellRodriguesColorsArrayName(const QString& value)
+{
+  m_CellRodriguesColorsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateRodriguesColors::getCellRodriguesColorsArrayName() const
+{
+  return m_CellRodriguesColorsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateRodriguesColors::setUseGoodVoxels(bool value)
+{
+  m_UseGoodVoxels = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GenerateRodriguesColors::getUseGoodVoxels() const
+{
+  return m_UseGoodVoxels;
 }

@@ -52,12 +52,13 @@
 class OrientationConverterTest
 {
 public:
-  OrientationConverterTest()
-  {
-  }
-  virtual ~OrientationConverterTest()
-  {
-  }
+  OrientationConverterTest() = default;
+  ~OrientationConverterTest() = default;
+
+  OrientationConverterTest(const OrientationConverterTest&) = delete;            // Copy Constructor Not Implemented
+  OrientationConverterTest(OrientationConverterTest&&) = delete;                 // Move Constructor Not Implemented
+  OrientationConverterTest& operator=(const OrientationConverterTest&) = delete; // Copy Assignment Not Implemented
+  OrientationConverterTest& operator=(OrientationConverterTest&&) = delete;      // Move Assignment Not Implemented
 
   // -----------------------------------------------------------------------------
   //
@@ -66,8 +67,8 @@ public:
   {
     size_t nTuples = 2;
     int qStride = 4;
-    QVector<size_t> cDims(1, 3);
-    FloatArrayType::Pointer eulers = FloatArrayType::CreateArray(nTuples, cDims, "Eulers");
+    std::vector<size_t> cDims(1, 3);
+    FloatArrayType::Pointer eulers = FloatArrayType::CreateArray(nTuples, cDims, "Eulers", true);
     // Initialize the Eulers with some values
     eulers->setComponent(0, 0, 302.84f * SIMPLib::Constants::k_PiOver180);
     eulers->setComponent(0, 1, 51.282f * SIMPLib::Constants::k_PiOver180);
@@ -85,7 +86,7 @@ public:
 
     OrientationConverter<float>::Pointer ocEulers = EulerConverter<float>::New();
     ocEulers->setInputData(eulers);
-    ocEulers->convertRepresentationTo(OrientationConverter<float>::Quaternion);
+    ocEulers->convertRepresentationTo(OrientationRepresentation::Type::Quaternion);
 
     FloatArrayType::Pointer output = ocEulers->getOutputData();
 
@@ -105,15 +106,15 @@ public:
 
     size_t nTuples = 1;
     int qStride = 4;
-    QVector<size_t> cDims(1, 3);
-    FloatArrayType::Pointer eulers = FloatArrayType::CreateArray(nTuples, cDims, "Eulers");
+    std::vector<size_t> cDims(1, 3);
+    FloatArrayType::Pointer eulers = FloatArrayType::CreateArray(nTuples, cDims, "Eulers", true);
     // Initialize the Eulers with some values
     eulers->setComponent(0, 0, phi1);
     eulers->setComponent(0, 1, phi);
     eulers->setComponent(0, 2, phi2);
 
-    typedef OrientationConverter<float> OCType;
-    QVector<OCType::OrientationType> ocTypes = OCType::GetOrientationTypes();
+    using OCType = OrientationConverter<float>;
+    QVector<OrientationRepresentation::Type> ocTypes = OCType::GetOrientationTypes();
     QVector<QString> tStrings = OCType::GetOrientationTypeStrings();
     QVector<OCType::Pointer> converters(6);
     converters[0] = EulerConverter<float>::New();
@@ -124,8 +125,7 @@ public:
     converters[5] = HomochoricConverter<float>::New();
     // converters[6] = CubochoricConverter<float>::New();
 
-    typedef OrientationTransforms<FOrientArrayType, float> OrientationTransformType;
-    OrientationTransformType::ResultType result;
+    OrientationTransformation::ResultType result;
     QVector<int> strides = OCType::GetComponentCounts();
 
     for(int t0 = 0; t0 < 1; t0++)
@@ -192,8 +192,4 @@ public:
     DREAM3D_REGISTER_TEST(TestEulerConversion());
     DREAM3D_REGISTER_TEST(TestFilterDesign());
   }
-
-private:
-  OrientationConverterTest(const OrientationConverterTest&); // Copy Constructor Not Implemented
-  void operator=(const OrientationConverterTest&);           // Move assignment Not Implemented
 };

@@ -37,7 +37,6 @@
 #pragma once
 
 #include <QtCore/QString>
-#include <QtCore/QVector>
 #include <QtCore/QSet>
 
 #include "EbsdLib/EbsdLib.h"
@@ -129,7 +128,7 @@ class  EbsdLib_EXPORT H5EbsdVolumeInfo
      * @param zRes The resolution along the Z Axis
      * @return Error condition
      */
-    virtual int getResolution(float& xRes, float& yRes, float& zRes);
+    virtual int getSpacing(float& xRes, float& yRes, float& zRes);
 
     /**
      * @brief Returns the Manufacturer of the EBSD system

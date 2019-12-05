@@ -33,13 +33,20 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ExtractFlaggedFeatures.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingFilters/CropImageGeometry.h"
@@ -65,7 +72,7 @@ ExtractFlaggedFeatures::~ExtractFlaggedFeatures() = default;
 // -----------------------------------------------------------------------------
 void ExtractFlaggedFeatures::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -107,12 +114,12 @@ void ExtractFlaggedFeatures::initialize()
 // -----------------------------------------------------------------------------
 void ExtractFlaggedFeatures::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -149,15 +156,14 @@ void ExtractFlaggedFeatures::find_feature_bounds()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
   size_t totalFeatures = m_FlaggedFeaturesPtr.lock()->getNumberOfTuples();
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
   };
 
-  QVector<size_t> cDims(1, 6);
-  m_BoundsPtr = Int32ArrayType::CreateArray(totalFeatures, cDims, "_INTERNAL_USE_ONLY_Bounds");
+  std::vector<size_t> cDims(1, 6);
+  m_BoundsPtr = Int32ArrayType::CreateArray(totalFeatures, cDims, "_INTERNAL_USE_ONLY_Bounds", true);
   m_FeatureBounds = m_BoundsPtr->getPointer(0);
   m_BoundsPtr->initializeWithValue(-1);
 
@@ -210,10 +216,10 @@ void ExtractFlaggedFeatures::find_feature_bounds()
 // -----------------------------------------------------------------------------
 void ExtractFlaggedFeatures::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -231,7 +237,7 @@ void ExtractFlaggedFeatures::execute()
       newDCName.clear();
       newDCName = "Feature_" + QString::number(i);
       cropVol->setDataContainerArray(getDataContainerArray());
-      cropVol->setNewDataContainerName(newDCName);
+      cropVol->setNewDataContainerName(DataArrayPath(newDCName, "", ""));
       cropVol->setCellAttributeMatrixPath(m_FeatureIdsArrayPath);
       cropVol->setXMin(m_FeatureBounds[6 * i]);
       cropVol->setXMax(m_FeatureBounds[6 * i + 1]);
@@ -265,7 +271,7 @@ AbstractFilter::Pointer ExtractFlaggedFeatures::newFilterInstance(bool copyFilte
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ExtractFlaggedFeatures::getCompiledLibraryName() const
+QString ExtractFlaggedFeatures::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -273,7 +279,7 @@ const QString ExtractFlaggedFeatures::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ExtractFlaggedFeatures::getBrandingString() const
+QString ExtractFlaggedFeatures::getBrandingString() const
 {
   return "Sampling";
 }
@@ -281,7 +287,7 @@ const QString ExtractFlaggedFeatures::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ExtractFlaggedFeatures::getFilterVersion() const
+QString ExtractFlaggedFeatures::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -292,7 +298,7 @@ const QString ExtractFlaggedFeatures::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ExtractFlaggedFeatures::getGroupName() const
+QString ExtractFlaggedFeatures::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -300,7 +306,7 @@ const QString ExtractFlaggedFeatures::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ExtractFlaggedFeatures::getUuid()
+QUuid ExtractFlaggedFeatures::getUuid() const
 {
   return QUuid("{e0555de5-bdc6-5bea-ba2f-aacfbec0a022}");
 }
@@ -308,7 +314,7 @@ const QUuid ExtractFlaggedFeatures::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ExtractFlaggedFeatures::getSubGroupName() const
+QString ExtractFlaggedFeatures::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CropCutFilters;
 }
@@ -316,7 +322,60 @@ const QString ExtractFlaggedFeatures::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ExtractFlaggedFeatures::getHumanLabel() const
+QString ExtractFlaggedFeatures::getHumanLabel() const
 {
   return "Extract Flagged Features (Rogues Gallery)";
+}
+
+// -----------------------------------------------------------------------------
+ExtractFlaggedFeatures::Pointer ExtractFlaggedFeatures::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ExtractFlaggedFeatures> ExtractFlaggedFeatures::New()
+{
+  struct make_shared_enabler : public ExtractFlaggedFeatures
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ExtractFlaggedFeatures::getNameOfClass() const
+{
+  return QString("ExtractFlaggedFeatures");
+}
+
+// -----------------------------------------------------------------------------
+QString ExtractFlaggedFeatures::ClassName()
+{
+  return QString("ExtractFlaggedFeatures");
+}
+
+// -----------------------------------------------------------------------------
+void ExtractFlaggedFeatures::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ExtractFlaggedFeatures::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void ExtractFlaggedFeatures::setFlaggedFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_FlaggedFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ExtractFlaggedFeatures::getFlaggedFeaturesArrayPath() const
+{
+  return m_FlaggedFeaturesArrayPath;
 }

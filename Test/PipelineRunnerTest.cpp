@@ -48,16 +48,18 @@
 
 // Qt Includes
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
-#include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 #include <QtCore/QStringListIterator>
-#include <QtCore/QtDebug>
 
 // DREAM3DLib includes
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/H5FilterParametersReader.h"
 #include "SIMPLib/FilterParameters/JsonFilterParametersReader.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
@@ -127,7 +129,7 @@ void ExecutePipeline(const QString& pipelineFile)
   // Now actually execute the pipeline
   std::cout << "EXECUTING PIPELINE STARTING ============================================" << std::endl;
   pipeline->execute();
-  err = pipeline->getErrorCondition();
+  err = pipeline->getErrorCode();
   if(err < 0)
   {
     std::cout << "Error Condition of Pipeline: " << err << std::endl;

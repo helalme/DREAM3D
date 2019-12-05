@@ -30,13 +30,15 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
-#include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QThread>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
+
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -44,6 +46,8 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "Plugins/OrientationAnalysis/OrientationAnalysisFilters/ReadAngData.h"
@@ -74,7 +78,24 @@ public:
   virtual ~AngCachingTest()
   {
   }
-  SIMPL_TYPE_MACRO(AngCachingTest)
+  /**
+   * @brief Returns the name of the class for AngCachingTest
+   */
+  /**
+   * @brief Returns the name of the class for AngCachingTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("AngCachingTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for AngCachingTest
+   */
+  QString ClassName()
+  {
+    return QString("AngCachingTest");
+  }
 
   // -----------------------------------------------------------------------------
   //
@@ -137,7 +158,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         angReader->setDataContainerArray(dca);
         angReader->preflight();
-        int err = angReader->getErrorCondition();
+        int err = angReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -149,7 +170,7 @@ public:
 
       Ang_Private_Data data = angReader->property("Data").value<Ang_Private_Data>();
 
-      // XStep, YStep -> Resolution(x, y)
+      // XStep, YStep -> Spacing(x, y)
       DREAM3D_REQUIRE_EQUAL(data.resolution[0], xStep1)
       DREAM3D_REQUIRE_EQUAL(data.resolution[1], yStep1)
 
@@ -172,7 +193,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         angReader->setDataContainerArray(dca);
         angReader->preflight();
-        int err = angReader->getErrorCondition();
+        int err = angReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -184,7 +205,7 @@ public:
 
       Ang_Private_Data data = angReader->property("Data").value<Ang_Private_Data>();
 
-      // XStep, YStep -> Resolution(x, y)
+      // XStep, YStep -> Spacing(x, y)
       DREAM3D_REQUIRE_EQUAL(data.resolution[0], xStep1)
       DREAM3D_REQUIRE_EQUAL(data.resolution[1], yStep1)
 
@@ -207,7 +228,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         angReader->setDataContainerArray(dca);
         angReader->preflight();
-        int err = angReader->getErrorCondition();
+        int err = angReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -219,7 +240,7 @@ public:
 
       Ang_Private_Data data = angReader->property("Data").value<Ang_Private_Data>();
 
-      // XStep, YStep -> Resolution(x, y)
+      // XStep, YStep -> Spacing(x, y)
       DREAM3D_REQUIRE_EQUAL(data.resolution[0], xStep2)
       DREAM3D_REQUIRE_EQUAL(data.resolution[1], yStep2)
 
@@ -268,7 +289,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         angReader->setDataContainerArray(dca);
         angReader->preflight();
-        int err = angReader->getErrorCondition();
+        int err = angReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -280,7 +301,7 @@ public:
 
       Ang_Private_Data data = angReader->property("Data").value<Ang_Private_Data>();
 
-      // XStep, YStep -> Resolution(x, y)
+      // XStep, YStep -> Spacing(x, y)
       DREAM3D_REQUIRE_EQUAL(data.resolution[0], xStep2)
       DREAM3D_REQUIRE_EQUAL(data.resolution[1], yStep2)
 
@@ -307,7 +328,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         angReader->setDataContainerArray(dca);
         angReader->preflight();
-        int err = angReader->getErrorCondition();
+        int err = angReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -319,7 +340,7 @@ public:
 
       Ang_Private_Data data = angReader->property("Data").value<Ang_Private_Data>();
 
-      // XStep, YStep -> Resolution(x, y)
+      // XStep, YStep -> Spacing(x, y)
       DREAM3D_REQUIRE_EQUAL(data.resolution[0], xStep2)
       DREAM3D_REQUIRE_EQUAL(data.resolution[1], yStep2)
 

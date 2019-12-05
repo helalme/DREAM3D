@@ -37,7 +37,7 @@
 
 #include <QtGui/QDoubleValidator>
 
-#include "SIMPLib/Math/QuaternionMath.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
 
 // -----------------------------------------------------------------------------
 //
@@ -78,7 +78,7 @@ void QuatWidget::updateData(OrientationUtilityCalculator* calculator)
 {
   setStyleSheet("");
 
-  if(calculator->getInputType() == OrientationConverter<double>::Quaternion)
+  if(calculator->getInputType() == OrientationRepresentation::Type::Quaternion)
   {
     // The input type is the same as this widget, so don't update
     return;
@@ -93,7 +93,7 @@ void QuatWidget::updateData(OrientationUtilityCalculator* calculator)
     return;
   }
 
-  QVector<double> qValues = calculator->getValues(OrientationConverter<double>::Quaternion);
+  QVector<double> qValues = calculator->getValues(OrientationRepresentation::Type::Quaternion);
 
   if(qValues.size() == 4)
   {
@@ -111,14 +111,14 @@ void QuatWidget::valuesUpdated(const QString& text)
 {
   QVector<double> values = getValues();
 
-  QuatD quat = QuaternionMathD::New(values[0], values[1], values[2], values[3]);
-  QuaternionMathD::UnitQuaternion(quat);
-  values[0] = quat.x;
-  values[1] = quat.y;
-  values[2] = quat.z;
-  values[3] = quat.w;
+  QuatType quat(values[0], values[1], values[2], values[3]);
+  quat = quat.unitQuaternion();
+  values[0] = quat.x();
+  values[1] = quat.y();
+  values[2] = quat.z();
+  values[3] = quat.w();
 
-  OrientationTransforms<QVector<double>, double>::ResultType result = OrientationTransforms<QVector<double>, double>::qu_check(values);
+  OrientationTransformation::ResultType result = OrientationTransformation::qu_check(values);
   int errorCode = result.result;
   QString errorMsg = QString::fromStdString(result.msg);
 
@@ -126,11 +126,11 @@ void QuatWidget::valuesUpdated(const QString& text)
 
   if(errorCode >= 0)
   {
-    emit valuesChanged(values, OrientationConverter<double>::Quaternion, false);
+    emit valuesChanged(values, OrientationRepresentation::Type::Quaternion, false);
   }
   else
   {
-    emit valuesChanged(QVector<double>(), OrientationConverter<double>::Quaternion, true);
+    emit valuesChanged(QVector<double>(), OrientationRepresentation::Type::Quaternion, true);
     emit invalidValues(errorCode, errorMsg);
   }
 }

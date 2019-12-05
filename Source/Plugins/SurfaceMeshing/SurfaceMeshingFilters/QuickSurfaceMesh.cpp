@@ -33,6 +33,8 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "QuickSurfaceMesh.h"
 
 #include <array>
@@ -41,12 +43,17 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Common/TemplateHelpers.h"
 #include "SIMPLib/DataArrays/DynamicListArray.hpp"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
@@ -54,9 +61,25 @@
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataArrays/IDataArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingConstants.h"
 #include "SurfaceMeshing/SurfaceMeshingVersion.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+  AttributeMatrixID22 = 22,
+  AttributeMatrixID23 = 23,
+
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+
+  DataContainerID01 = 1,
+  DataContainerID02 = 2
+};
 
 namespace
 {
@@ -67,7 +90,7 @@ template <class T> inline void hashCombine(size_t& seed, const T& obj)
 }
 
 using Vertex = std::array<float, 3>;
-using Edge = std::array<int64_t, 2>;
+using Edge = std::array<MeshIndexType, 2>;
 
 struct VertexHasher
 {
@@ -84,14 +107,14 @@ struct EdgeHasher
 {
   size_t operator()(const Edge& edge) const
   {
-    size_t hash = std::hash<int64_t>()(edge[0]);
+    size_t hash = std::hash<MeshIndexType>()(edge[0]);
     hashCombine(hash, edge[1]);
     return hash;
   }
 };
 
-using VertexMap = std::unordered_map<Vertex, int64_t, VertexHasher>;
-using EdgeMap = std::unordered_map<Edge, int64_t, EdgeHasher>;
+using VertexMap = std::unordered_map<Vertex, MeshIndexType, VertexHasher>;
+using EdgeMap = std::unordered_map<Edge, MeshIndexType, EdgeHasher>;
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -120,7 +143,7 @@ QuickSurfaceMesh::~QuickSurfaceMesh() = default;
 // -----------------------------------------------------------------------------
 void QuickSurfaceMesh::setupFilterParameters()
 {
-  QVector<FilterParameter::Pointer> parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateRequirement(SIMPL::TypeNames::Int32, 1, AttributeMatrix::Type::Cell, IGeometry::Type::Any);
@@ -135,15 +158,15 @@ void QuickSurfaceMesh::setupFilterParameters()
     req.dcGeometryTypes = geomTypes;
     parameters.push_back(SIMPL_NEW_MDA_SELECTION_FP("Attribute Arrays to Transfer", SelectedDataArrayPaths, FilterParameter::RequiredArray, QuickSurfaceMesh, req));
   }
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", SurfaceDataContainerName, FilterParameter::CreatedArray, QuickSurfaceMesh));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", SurfaceDataContainerName, FilterParameter::CreatedArray, QuickSurfaceMesh));
   parameters.push_back(SeparatorFilterParameter::New("Vertex Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Vertex Attribute Matrix", VertexAttributeMatrixName, FilterParameter::CreatedArray, QuickSurfaceMesh));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Node Types", NodeTypesArrayName, FilterParameter::CreatedArray, QuickSurfaceMesh));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Vertex Attribute Matrix", VertexAttributeMatrixName, SurfaceDataContainerName, FilterParameter::CreatedArray, QuickSurfaceMesh));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Node Types", NodeTypesArrayName, SurfaceDataContainerName, VertexAttributeMatrixName, FilterParameter::CreatedArray, QuickSurfaceMesh));
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Attribute Matrix", FaceAttributeMatrixName, FilterParameter::CreatedArray, QuickSurfaceMesh));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Labels", FaceLabelsArrayName, FilterParameter::CreatedArray, QuickSurfaceMesh));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Face Attribute Matrix", FaceAttributeMatrixName, SurfaceDataContainerName, FilterParameter::CreatedArray, QuickSurfaceMesh));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Face Labels", FaceLabelsArrayName, SurfaceDataContainerName, VertexAttributeMatrixName, FilterParameter::CreatedArray, QuickSurfaceMesh));
   parameters.push_back(SeparatorFilterParameter::New("Face Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Feature Attribute Matrix", FeatureAttributeMatrixName, FilterParameter::CreatedArray, QuickSurfaceMesh));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Face Feature Attribute Matrix", FeatureAttributeMatrixName, SurfaceDataContainerName, FilterParameter::CreatedArray, QuickSurfaceMesh));
   setFilterParameters(parameters);
 }
 
@@ -154,7 +177,7 @@ void QuickSurfaceMesh::readFilterParameters(AbstractFilterParametersReader* read
 {
   reader->openFilterGroup(this, index);
   setSelectedDataArrayPaths(reader->readDataArrayPathVector("SelectedDataArrayPaths", getSelectedDataArrayPaths()));
-  setSurfaceDataContainerName(reader->readString("SurfaceDataContainerName", getSurfaceDataContainerName()));
+  setSurfaceDataContainerName(reader->readDataArrayPath("SurfaceDataContainerName", getSurfaceDataContainerName()));
   setVertexAttributeMatrixName(reader->readString("VertexAttributeMatrixName", getVertexAttributeMatrixName()));
   setFaceAttributeMatrixName(reader->readString("FaceAttributeMatrixName", getFaceAttributeMatrixName()));
   setNodeTypesArrayName(reader->readString("NodeTypesArrayName", getNodeTypesArrayName()));
@@ -169,8 +192,8 @@ void QuickSurfaceMesh::readFilterParameters(AbstractFilterParametersReader* read
 // -----------------------------------------------------------------------------
 void QuickSurfaceMesh::updateVertexInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   if(nullptr != m_NodeTypesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_NodeTypes = m_NodeTypesPtr.lock()->getPointer(0);
@@ -182,8 +205,8 @@ void QuickSurfaceMesh::updateVertexInstancePointers()
 // -----------------------------------------------------------------------------
 void QuickSurfaceMesh::updateFaceInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   if(nullptr != m_FaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FaceLabels = m_FaceLabelsPtr.lock()->getPointer(0);
@@ -205,10 +228,10 @@ void copyCellArraysToFaceArrays(size_t faceIndex, size_t firstcIndex, size_t sec
   T* firstCellTuplePtr = cellPtr->getTuplePointer(firstcIndex);
   T* secondCellTuplePtr = cellPtr->getTuplePointer(secondcIndex);
 
-  ::memcpy(faceTuplePtr, firstCellTuplePtr, sizeof(T) * numComps);
+  ::memcpy(faceTuplePtr, firstCellTuplePtr, sizeof(T) * static_cast<size_t>(numComps));
   if(!forceSecondToZero)
   {
-    ::memcpy(faceTuplePtr + numComps, secondCellTuplePtr, sizeof(T) * numComps);
+    ::memcpy(faceTuplePtr + numComps, secondCellTuplePtr, sizeof(T) * static_cast<size_t>(numComps));
   }
 }
 
@@ -226,8 +249,8 @@ void QuickSurfaceMesh::initialize()
 // -----------------------------------------------------------------------------
 void QuickSurfaceMesh::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   DataArrayPath tempPath;
@@ -236,14 +259,14 @@ void QuickSurfaceMesh::dataCheck()
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeatureIdsArrayPath());
   }
@@ -254,15 +277,14 @@ void QuickSurfaceMesh::dataCheck()
 
   if(!DataArrayPath::ValidateVector(paths))
   {
-    setErrorCondition(-11004);
     QString ss = QObject::tr("There are Attribute Arrays selected that are not contained in the same Attribute Matrix. All selected Attribute Arrays must belong to the same Attribute Matrix");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11004, ss);
   }
 
   for(const auto& path : paths)
   {
     IDataArray::WeakPointer ptr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, path);
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArrayPaths.push_back(path);
       m_SelectedWeakPtrVector.push_back(ptr);
@@ -272,15 +294,15 @@ void QuickSurfaceMesh::dataCheck()
   getDataContainerArray()->validateNumberOfTuples<AbstractFilter>(this, dataArrayPaths);
 
   // Create a SufaceMesh Data Container with Faces, Vertices, Feature Labels and optionally Phase labels
-  DataContainer::Pointer sm = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getSurfaceDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer sm = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getSurfaceDataContainerName(), DataContainerID01);
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  QVector<size_t> tDims(1, 0);
-  sm->createNonPrereqAttributeMatrix(this, getVertexAttributeMatrixName(), tDims, AttributeMatrix::Type::Vertex);
-  sm->createNonPrereqAttributeMatrix(this, getFaceAttributeMatrixName(), tDims, AttributeMatrix::Type::Face);
+  std::vector<size_t> tDims(1, 0);
+  sm->createNonPrereqAttributeMatrix(this, getVertexAttributeMatrixName(), tDims, AttributeMatrix::Type::Vertex, AttributeMatrixID21);
+  sm->createNonPrereqAttributeMatrix(this, getFaceAttributeMatrixName(), tDims, AttributeMatrix::Type::Face, AttributeMatrixID22);
 
   // Create a Triangle Geometry
   SharedVertexList::Pointer vertices = TriangleGeom::CreateSharedVertexList(0);
@@ -288,28 +310,26 @@ void QuickSurfaceMesh::dataCheck()
   sm->setGeometry(triangleGeom);
 
   cDims[0] = 2;
-  tempPath.update(getSurfaceDataContainerName(), getFaceAttributeMatrixName(), getFaceLabelsArrayName());
-  m_FaceLabelsPtr =
-      getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  tempPath.update(getSurfaceDataContainerName().getDataContainerName(), getFaceAttributeMatrixName(), getFaceLabelsArrayName());
+  m_FaceLabelsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_FaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FaceLabels = m_FaceLabelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   cDims[0] = 1;
-  tempPath.update(getSurfaceDataContainerName(), getVertexAttributeMatrixName(), getNodeTypesArrayName());
-  m_NodeTypesPtr =
-      getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int8_t>, AbstractFilter>(this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  tempPath.update(getSurfaceDataContainerName().getDataContainerName(), getVertexAttributeMatrixName(), getNodeTypesArrayName());
+  m_NodeTypesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int8_t>, AbstractFilter>(this, tempPath, 0, cDims, "", DataArrayID32);
   if(nullptr != m_NodeTypesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_NodeTypes = m_NodeTypesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+  for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
   {
-    tempPath.update(getSurfaceDataContainerName(), getFaceAttributeMatrixName(), m_SelectedDataArrayPaths[i].getDataArrayName());
+    tempPath.update(getSurfaceDataContainerName().getDataContainerName(), getFaceAttributeMatrixName(), m_SelectedDataArrayPaths[static_cast<int32_t>(i)].getDataArrayName());
     cDims = m_SelectedWeakPtrVector[i].lock()->getComponentDimensions();
-    QVector<size_t> faceDims;
+    std::vector<size_t> faceDims;
     // If the cell array is 1-dimensional, scale the face array accordingly
     if(cDims.size() == 1)
     {
@@ -320,24 +340,22 @@ void QuickSurfaceMesh::dataCheck()
       // If the cell array is multi-dimensional, error out for now because the Xdmf hyperslab output
       // will crash ParaView every time. This requires re-engineering the Xdmdf writing to support
       // the correct "standard" for writing "owners" of an array
-      setErrorCondition(-11005);
       QString ss = QObject::tr("Selected Cell Attribute Arrays must have a single component dimension");
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-11005, ss);
     }
     m_CreatedWeakPtrVector.push_back(TemplateHelpers::CreateNonPrereqArrayFromArrayType()(this, tempPath, faceDims, m_SelectedWeakPtrVector[i].lock()));
   }
 
   if(m_SelectedWeakPtrVector.size() != m_CreatedWeakPtrVector.size())
   {
-    setErrorCondition(-11006);
     QString ss = QObject::tr("The number of selected Cell Attribute Arrays available does not match the number of Face Attribute Arrays created");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11006, ss);
   }
 
-  sm->createNonPrereqAttributeMatrix(this, getFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::FaceFeature);
+  sm->createNonPrereqAttributeMatrix(this, getFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::FaceFeature, AttributeMatrixID23);
 
   // Create the TripleLines DataContainer
-  getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getTripleLineDataContainerName());
+  getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getTripleLineDataContainerName(), DataContainerID02);
 }
 
 // -----------------------------------------------------------------------------
@@ -368,20 +386,20 @@ void QuickSurfaceMesh::getGridCoordinates(const IGeometryGrid::Pointer& grid, si
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void QuickSurfaceMesh::flipProblemVoxelCase1(int64_t v1, int64_t v2, int64_t v3, int64_t v4, int64_t v5, int64_t v6)
+void QuickSurfaceMesh::flipProblemVoxelCase1(MeshIndexType v1, MeshIndexType v2, MeshIndexType v3, MeshIndexType v4, MeshIndexType v5, MeshIndexType v6)
 {
   SIMPL_RANDOMNG_NEW();
 
   float val = static_cast<float>(rg.genrand_res53());
-  if(val < 0.25)
+  if(val < 0.25f)
   {
     m_FeatureIds[v6] = m_FeatureIds[v4];
   }
-  else if(val < 0.5)
+  else if(val < 0.5f)
   {
     m_FeatureIds[v6] = m_FeatureIds[v5];
   }
-  else if(val < 0.75)
+  else if(val < 0.75f)
   {
     m_FeatureIds[v1] = m_FeatureIds[v2];
   }
@@ -394,36 +412,36 @@ void QuickSurfaceMesh::flipProblemVoxelCase1(int64_t v1, int64_t v2, int64_t v3,
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void QuickSurfaceMesh::flipProblemVoxelCase2(int64_t v1, int64_t v2, int64_t v3, int64_t v4)
+void QuickSurfaceMesh::flipProblemVoxelCase2(MeshIndexType v1, MeshIndexType v2, MeshIndexType v3, MeshIndexType v4)
 {
   SIMPL_RANDOMNG_NEW();
 
   float val = static_cast<float>(rg.genrand_res53());
-  if(val < 0.125)
+  if(val < 0.125f)
   {
     m_FeatureIds[v1] = m_FeatureIds[v2];
   }
-  else if(val < 0.25)
+  else if(val < 0.25f)
   {
     m_FeatureIds[v1] = m_FeatureIds[v3];
   }
-  else if(val < 0.375)
+  else if(val < 0.375f)
   {
     m_FeatureIds[v2] = m_FeatureIds[v1];
   }
-  if(val < 0.5)
+  if(val < 0.5f)
   {
     m_FeatureIds[v2] = m_FeatureIds[v4];
   }
-  else if(val < 0.625)
+  else if(val < 0.625f)
   {
     m_FeatureIds[v3] = m_FeatureIds[v1];
   }
-  else if(val < 0.75)
+  else if(val < 0.75f)
   {
     m_FeatureIds[v3] = m_FeatureIds[v4];
   }
-  else if(val < 0.875)
+  else if(val < 0.875f)
   {
     m_FeatureIds[v4] = m_FeatureIds[v2];
   }
@@ -436,12 +454,12 @@ void QuickSurfaceMesh::flipProblemVoxelCase2(int64_t v1, int64_t v2, int64_t v3,
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void QuickSurfaceMesh::flipProblemVoxelCase3(int64_t v1, int64_t v2, int64_t v3)
+void QuickSurfaceMesh::flipProblemVoxelCase3(MeshIndexType v1, MeshIndexType v2, MeshIndexType v3)
 {
   SIMPL_RANDOMNG_NEW();
 
   float val = static_cast<float>(rg.genrand_res53());
-  if(val < 0.5)
+  if(val < 0.5f)
   {
     m_FeatureIds[v2] = m_FeatureIds[v1];
   }
@@ -460,44 +478,37 @@ void QuickSurfaceMesh::correctProblemVoxels()
 
   IGeometryGrid::Pointer grid = m->getGeometryAs<IGeometryGrid>();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = grid->getDimensions();
+  SizeVec3Type udims = grid->getDimensions();
 
-  int64_t dims[3] = {
-      static_cast<int64_t>(udims[0]),
-      static_cast<int64_t>(udims[1]),
-      static_cast<int64_t>(udims[2])
-  };
+  MeshIndexType xP = udims[0];
+  MeshIndexType yP = udims[1];
+  MeshIndexType zP = udims[2];
 
-  int64_t xP = dims[0];
-  int64_t yP = dims[1];
-  int64_t zP = dims[2];
+  MeshIndexType v1 = 0, v2 = 0, v3 = 0, v4 = 0;
+  MeshIndexType v5 = 0, v6 = 0, v7 = 0, v8 = 0;
 
-  int64_t v1 = 0, v2 = 0, v3 = 0, v4 = 0;
-  int64_t v5 = 0, v6 = 0, v7 = 0, v8 = 0;
+  int32_t f1 = 0, f2 = 0, f3 = 0, f4 = 0;
+  int32_t f5 = 0, f6 = 0, f7 = 0, f8 = 0;
 
-  int64_t f1 = 0, f2 = 0, f3 = 0, f4 = 0;
-  int64_t f5 = 0, f6 = 0, f7 = 0, f8 = 0;
+  MeshIndexType row1, row2;
+  MeshIndexType plane1, plane2;
 
-  int64_t row1, row2;
-  int64_t plane1, plane2;
-
-  int64_t count = 1;
-  int64_t iter = 0;
+  MeshIndexType count = 1;
+  MeshIndexType iter = 0;
   while(count > 0 && iter < 20)
   {
     iter++;
     count = 0;
 
-    for(int64_t k = 1; k < zP; k++)
+    for(MeshIndexType k = 1; k < zP; k++)
     {
       plane1 = (k - 1) * xP * yP;
       plane2 = k * xP * yP;
-      for(int64_t j = 1; j < yP; j++)
+      for(MeshIndexType j = 1; j < yP; j++)
       {
         row1 = (j - 1) * xP;
         row2 = j * xP;
-        for(int64_t i = 1; i < xP; i++)
+        for(MeshIndexType i = 1; i < xP; i++)
         {
           v1 = plane1 + row1 + i - 1;
           v2 = plane1 + row1 + i;
@@ -621,45 +632,38 @@ void QuickSurfaceMesh::correctProblemVoxels()
       }
     }
     QString ss = QObject::tr("Correcting Problem Voxels: Iteration - '%1'; Problem Voxels - '%2'").arg(iter).arg(count);
-    notifyStatusMessage(getHumanLabel(), ss);
+    notifyStatusMessage(ss);
   }
 }
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int64_t& nodeCount, int64_t& triangleCount)
+void QuickSurfaceMesh::determineActiveNodes(std::vector<MeshIndexType>& nodeIds, MeshIndexType& nodeCount, MeshIndexType& triangleCount)
 {
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
   IGeometryGrid::Pointer grid = m->getGeometryAs<IGeometryGrid>();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = grid->getDimensions();
+  SizeVec3Type udims = grid->getDimensions();
 
-  int64_t dims[3] = {
-      static_cast<int64_t>(udims[0]),
-      static_cast<int64_t>(udims[1]),
-      static_cast<int64_t>(udims[2]),
-  };
-
-  int64_t xP = dims[0];
-  int64_t yP = dims[1];
-  int64_t zP = dims[2];
+  MeshIndexType xP = udims[0];
+  MeshIndexType yP = udims[1];
+  MeshIndexType zP = udims[2];
 
   std::vector<std::set<int32_t>> ownerLists;
 
-  int64_t point = 0, neigh1 = 0, neigh2 = 0, neigh3 = 0;
+  MeshIndexType point = 0, neigh1 = 0, neigh2 = 0, neigh3 = 0;
 
-  int64_t nodeId1 = 0, nodeId2 = 0, nodeId3 = 0, nodeId4 = 0;
+  MeshIndexType nodeId1 = 0, nodeId2 = 0, nodeId3 = 0, nodeId4 = 0;
 
   // first determining which nodes are actually boundary nodes and
   // count number of nodes and triangles that will be created
-  for(int64_t k = 0; k < zP; k++)
+  for(MeshIndexType k = 0; k < zP; k++)
   {
-    for(int64_t j = 0; j < yP; j++)
+    for(MeshIndexType j = 0; j < yP; j++)
     {
-      for(int64_t i = 0; i < xP; i++)
+      for(MeshIndexType i = 0; i < xP; i++)
       {
         point = (k * xP * yP) + (j * xP) + i;
         neigh1 = point + 1;
@@ -669,27 +673,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         if(i == 0)
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -698,27 +702,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         if(j == 0)
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -727,27 +731,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         if(k == 0)
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -756,27 +760,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         if(i == (xP - 1))
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -785,27 +789,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         else if(m_FeatureIds[point] != m_FeatureIds[neigh1])
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -814,27 +818,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         if(j == (yP - 1))
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -843,27 +847,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         else if(m_FeatureIds[point] != m_FeatureIds[neigh2])
         {
           nodeId1 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = (k * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -872,27 +876,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         if(k == (zP - 1))
         {
           nodeId1 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -901,27 +905,27 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
         else if(k < zP - 1 && m_FeatureIds[point] != m_FeatureIds[neigh3])
         {
           nodeId1 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId1] == -1)
+          if(nodeIds[nodeId1] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId1] = nodeCount;
+            nodeIds[nodeId1] = nodeCount;
             nodeCount++;
           }
           nodeId2 = ((k + 1) * (xP + 1) * (yP + 1)) + (j * (xP + 1)) + i;
-          if(m_NodeIds[nodeId2] == -1)
+          if(nodeIds[nodeId2] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId2] = nodeCount;
+            nodeIds[nodeId2] = nodeCount;
             nodeCount++;
           }
           nodeId3 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + (i + 1);
-          if(m_NodeIds[nodeId3] == -1)
+          if(nodeIds[nodeId3] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId3] = nodeCount;
+            nodeIds[nodeId3] = nodeCount;
             nodeCount++;
           }
           nodeId4 = ((k + 1) * (xP + 1) * (yP + 1)) + ((j + 1) * (xP + 1)) + i;
-          if(m_NodeIds[nodeId4] == -1)
+          if(nodeIds[nodeId4] == std::numeric_limits<size_t>::max())
           {
-            m_NodeIds[nodeId4] = nodeCount;
+            nodeIds[nodeId4] = nodeCount;
             nodeCount++;
           }
           triangleCount++;
@@ -935,7 +939,7 @@ void QuickSurfaceMesh::determineActiveNodes(std::vector<int64_t>& m_NodeIds, int
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, int64_t nodeCount, int64_t triangleCount)
+void QuickSurfaceMesh::createNodesAndTriangles(std::vector<MeshIndexType> m_NodeIds, MeshIndexType nodeCount, MeshIndexType triangleCount)
 {
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
   DataContainer::Pointer sm = getDataContainerArray()->getDataContainer(getSurfaceDataContainerName());
@@ -945,44 +949,38 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
   size_t numTuples = m_FeatureIdsPtr.lock()->getNumberOfTuples();
   for(size_t i = 0; i < numTuples; i++)
   {
-    if(m_FeatureIds[i] > numFeatures)
+    if(static_cast<size_t>(m_FeatureIds[i]) > numFeatures)
     {
-      numFeatures = m_FeatureIds[i];
+      numFeatures = static_cast<size_t>(m_FeatureIds[i]);
     }
   }
 
-  QVector<size_t> featDims(1, numFeatures + 1);
+  std::vector<size_t> featDims(1, numFeatures + 1);
   featAttrMat->setTupleDimensions(featDims);
 
   IGeometryGrid::Pointer grid = m->getGeometryAs<IGeometryGrid>();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = grid->getDimensions();
+  SizeVec3Type udims = grid->getDimensions();
 
-  int64_t dims[3] = {
-      static_cast<int64_t>(udims[0]),
-      static_cast<int64_t>(udims[1]),
-      static_cast<int64_t>(udims[2]),
-  };
 
-  int64_t xP = dims[0];
-  int64_t yP = dims[1];
-  int64_t zP = dims[2];
+  MeshIndexType xP = udims[0];
+  MeshIndexType yP = udims[1];
+  MeshIndexType zP = udims[2];
 
   std::vector<std::set<int32_t>> ownerLists;
 
-  int64_t point = 0, neigh1 = 0, neigh2 = 0, neigh3 = 0;
+  MeshIndexType point = 0, neigh1 = 0, neigh2 = 0, neigh3 = 0;
 
-  int64_t nodeId1 = 0, nodeId2 = 0, nodeId3 = 0, nodeId4 = 0;
+  MeshIndexType nodeId1 = 0, nodeId2 = 0, nodeId3 = 0, nodeId4 = 0;
 
-  int64_t cIndex1 = 0, cIndex2 = 0;
+  MeshIndexType cIndex1 = 0, cIndex2 = 0;
 
   TriangleGeom::Pointer triangleGeom = sm->getGeometryAs<TriangleGeom>();
 
   float* vertex = triangleGeom->getVertexPointer(0);
-  int64_t* triangle = triangleGeom->getTriPointer(0);
+  MeshIndexType* triangle = triangleGeom->getTriPointer(0);
 
-  QVector<size_t> tDims(1, nodeCount);
+  std::vector<size_t> tDims(1, nodeCount);
   sm->getAttributeMatrix(getVertexAttributeMatrixName())->resizeAttributeArrays(tDims);
   tDims[0] = triangleCount;
   sm->getAttributeMatrix(getFaceAttributeMatrixName())->resizeAttributeArrays(tDims);
@@ -993,12 +991,12 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
   ownerLists.resize(nodeCount);
 
   // Cycle through again assigning coordinates to each node and assigning node numbers and feature labels to each triangle
-  int64_t triangleIndex = 0;
-  for(int64_t k = 0; k < zP; k++)
+  MeshIndexType triangleIndex = 0;
+  for(MeshIndexType k = 0; k < zP; k++)
   {
-    for(int64_t j = 0; j < yP; j++)
+    for(MeshIndexType j = 0; j < yP; j++)
     {
-      for(int64_t i = 0; i < xP; i++)
+      for(MeshIndexType i = 0; i < xP; i++)
       {
         point = (k * xP * yP) + (j * xP) + i;
         neigh1 = point + 1; // <== What happens if we are at the end of a row?
@@ -1025,7 +1023,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1039,7 +1037,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1076,7 +1074,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1090,7 +1088,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1127,7 +1125,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1141,7 +1139,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1178,7 +1176,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1192,7 +1190,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1240,7 +1238,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
             cIndex2 = neigh1;
           }
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, neigh1, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock())
@@ -1265,7 +1263,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
             cIndex2 = neigh1;
           }
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, neigh1, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock())
@@ -1302,7 +1300,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1316,7 +1314,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1364,7 +1362,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
             cIndex2 = neigh2;
           }
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, neigh2, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock())
@@ -1389,7 +1387,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
             cIndex2 = neigh2;
           }
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, neigh2, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock())
@@ -1426,7 +1424,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1440,7 +1438,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
           m_FaceLabels[triangleIndex * 2] = -1;
           m_FaceLabels[triangleIndex * 2 + 1] = m_FeatureIds[point];
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, point, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock(), true)
@@ -1488,7 +1486,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
             cIndex2 = neigh3;
           }
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, neigh3, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock())
@@ -1513,7 +1511,7 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
             cIndex2 = neigh3;
           }
 
-          for(int32_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
+          for(size_t i = 0; i < m_SelectedWeakPtrVector.size(); i++)
           {
             EXECUTE_FUNCTION_TEMPLATE(this, copyCellArraysToFaceArrays, m_SelectedWeakPtrVector[i].lock(), triangleIndex, neigh3, point, m_SelectedWeakPtrVector[i].lock(),
                                       m_CreatedWeakPtrVector[i].lock())
@@ -1534,9 +1532,9 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
     }
   }
 
-  for(int64_t i = 0; i < nodeCount; i++)
+  for(size_t i = 0; i < nodeCount; i++)
   {
-    m_NodeTypes[i] = ownerLists[i].size();
+    m_NodeTypes[i] = static_cast<int8_t>(ownerLists[i].size());
     if(m_NodeTypes[i] > 4)
     {
       m_NodeTypes[i] = 4;
@@ -1554,51 +1552,44 @@ void QuickSurfaceMesh::createNodesAndTriangles(std::vector<int64_t> m_NodeIds, i
 // -----------------------------------------------------------------------------
 void QuickSurfaceMesh::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
   DataContainer::Pointer sm = getDataContainerArray()->getDataContainer(getSurfaceDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
   DataContainer::Pointer tripleLineDC = getDataContainerArray()->getDataContainer(getTripleLineDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
   IGeometryGrid::Pointer grid = m->getGeometryAs<IGeometryGrid>();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = grid->getDimensions();
+  SizeVec3Type udims = grid->getDimensions();
 
-  int64_t dims[3] = {
-      static_cast<int64_t>(udims[0]),
-      static_cast<int64_t>(udims[1]),
-      static_cast<int64_t>(udims[2]),
-  };
-
-  int64_t xP = dims[0];
-  int64_t yP = dims[1];
-  int64_t zP = dims[2];
+  size_t xP = udims[0];
+  size_t yP = udims[1];
+  size_t zP = udims[2];
 
   std::vector<std::set<int32_t>> ownerLists;
 
-  int64_t possibleNumNodes = (xP + 1) * (yP + 1) * (zP + 1);
-  std::vector<int64_t> m_NodeIds(possibleNumNodes, -1);
+  size_t possibleNumNodes = (xP + 1) * (yP + 1) * (zP + 1);
+  std::vector<size_t> m_NodeIds(possibleNumNodes, std::numeric_limits<size_t>::max());
 
-  int64_t nodeCount = 0;
-  int64_t triangleCount = 0;
+  size_t nodeCount = 0;
+  size_t triangleCount = 0;
 
   correctProblemVoxels();
 
@@ -1611,19 +1602,19 @@ void QuickSurfaceMesh::execute()
 
   createNodesAndTriangles(m_NodeIds, nodeCount, triangleCount);
 
-  int64_t* triangle = triangleGeom->getTriPointer(0);
+  MeshIndexType* triangle = triangleGeom->getTriPointer(0);
 
   FloatArrayType::Pointer vertices = triangleGeom->getVertices();
   SharedEdgeList::Pointer edges = EdgeGeom::CreateSharedEdgeList(0);
   EdgeGeom::Pointer edgeGeom = EdgeGeom::CreateGeometry(edges, vertices, SIMPL::Geometry::EdgeGeometry);
   tripleLineDC->setGeometry(edgeGeom);
 
-  int64_t edgeCount = 0;
-  for(int64_t i = 0; i < triangleCount; i++)
+  MeshIndexType edgeCount = 0;
+  for(MeshIndexType i = 0; i < triangleCount; i++)
   {
-    int64_t n1 = triangle[3 * i + 0];
-    int64_t n2 = triangle[3 * i + 1];
-    int64_t n3 = triangle[3 * i + 2];
+    MeshIndexType n1 = triangle[3 * i + 0];
+    MeshIndexType n2 = triangle[3 * i + 1];
+    MeshIndexType n3 = triangle[3 * i + 2];
     if(m_NodeTypes[n1] >= 3 && m_NodeTypes[n2] >= 3)
     {
       edgeCount++;
@@ -1639,13 +1630,13 @@ void QuickSurfaceMesh::execute()
   }
 
   edgeGeom->resizeEdgeList(edgeCount);
-  int64_t* edge = edgeGeom->getEdgePointer(0);
+  MeshIndexType* edge = edgeGeom->getEdgePointer(0);
   edgeCount = 0;
-  for(int64_t i = 0; i < triangleCount; i++)
+  for(MeshIndexType i = 0; i < triangleCount; i++)
   {
-    int64_t n1 = triangle[3 * i + 0];
-    int64_t n2 = triangle[3 * i + 1];
-    int64_t n3 = triangle[3 * i + 2];
+    MeshIndexType n1 = triangle[3 * i + 0];
+    MeshIndexType n2 = triangle[3 * i + 1];
+    MeshIndexType n3 = triangle[3 * i + 2];
     if(m_NodeTypes[n1] >= 3 && m_NodeTypes[n2] >= 3)
     {
       edge[2 * edgeCount] = n1;
@@ -1688,7 +1679,7 @@ void QuickSurfaceMesh::generateTripleLines()
   DataContainer::Pointer sm = getDataContainerArray()->getDataContainer(getSurfaceDataContainerName());
 
   AttributeMatrix::Pointer featAttrMat = sm->getAttributeMatrix(m_FeatureAttributeMatrixName);
-  size_t numFeatures = 0;
+  int32_t numFeatures = 0;
   size_t numTuples = m_FeatureIdsPtr.lock()->getNumberOfTuples();
   for(size_t i = 0; i < numTuples; i++)
   {
@@ -1698,45 +1689,37 @@ void QuickSurfaceMesh::generateTripleLines()
     }
   }
 
-  QVector<size_t> featDims(1, numFeatures + 1);
+  std::vector<size_t> featDims(1, static_cast<size_t>(numFeatures) + 1);
   featAttrMat->setTupleDimensions(featDims);
 
   IGeometryGrid::Pointer grid = m->getGeometryAs<IGeometryGrid>();
   ImageGeom::Pointer imageGeom = m->getGeometryAs<ImageGeom>();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = grid->getDimensions();
+  SizeVec3Type udims = grid->getDimensions();
 
-  int64_t dims[3] = {
-      static_cast<int64_t>(udims[0]),
-      static_cast<int64_t>(udims[1]),
-      static_cast<int64_t>(udims[2]),
-  };
 
-  int64_t xP = dims[0];
-  int64_t yP = dims[1];
-  int64_t zP = dims[2];
-  int64_t point = 0, neigh1 = 0, neigh2 = 0, neigh3 = 0;
+  MeshIndexType xP = udims[0];
+  MeshIndexType yP = udims[1];
+  MeshIndexType zP = udims[2];
+  MeshIndexType point = 0, neigh1 = 0, neigh2 = 0, neigh3 = 0;
 
   std::set<int32_t> uFeatures;
 
-  float origin[3] = {0.0f, 0.0f, 0.0f};
-  std::tie(origin[0], origin[1], origin[2]) = imageGeom->getOrigin();
-  float res[3] = {0.0f, 0.0f, 0.0f};
-  std::tie(res[0], res[1], res[2]) = imageGeom->getResolution();
+  FloatVec3Type origin = imageGeom->getOrigin();
+  FloatVec3Type res = imageGeom->getSpacing();
 
   VertexMap vertexMap;
   EdgeMap edgeMap;
-  int64_t vertCounter = 0;
-  int64_t edgeCounter = 0;
+  MeshIndexType vertCounter = 0;
+  MeshIndexType edgeCounter = 0;
 
   // Cycle through again assigning coordinates to each node and assigning node numbers and feature labels to each triangle
   // int64_t triangleIndex = 0;
-  for(int64_t k = 0; k < zP - 1; k++)
+  for(size_t k = 0; k < zP - 1; k++)
   {
-    for(int64_t j = 0; j < yP - 1; j++)
+    for(size_t j = 0; j < yP - 1; j++)
     {
-      for(int64_t i = 0; i < xP - 1; i++)
+      for(size_t i = 0; i < xP - 1; i++)
       {
 
         point = (k * xP * yP) + (j * xP) + i;
@@ -1771,8 +1754,8 @@ void QuickSurfaceMesh::generateTripleLines()
           {
             vertexMap[p1] = vertCounter++;
           }
-          int64_t i0 = vertexMap[p0];
-          int64_t i1 = vertexMap[p1];
+          MeshIndexType i0 = vertexMap[p0];
+          MeshIndexType i1 = vertexMap[p1];
 
           Edge tmpEdge = {{i0, i1}};
           auto eiter = edgeMap.find(tmpEdge);
@@ -1805,8 +1788,8 @@ void QuickSurfaceMesh::generateTripleLines()
             vertexMap[p2] = vertCounter++;
           }
 
-          int64_t i0 = vertexMap[p0];
-          int64_t i2 = vertexMap[p2];
+          MeshIndexType i0 = vertexMap[p0];
+          MeshIndexType i2 = vertexMap[p2];
 
           Edge tmpEdge = {{i0, i2}};
           auto eiter = edgeMap.find(tmpEdge);
@@ -1839,8 +1822,8 @@ void QuickSurfaceMesh::generateTripleLines()
             vertexMap[p3] = vertCounter++;
           }
 
-          int64_t i0 = vertexMap[p0];
-          int64_t i3 = vertexMap[p3];
+          MeshIndexType i0 = vertexMap[p0];
+          MeshIndexType i3 = vertexMap[p3];
 
           Edge tmpEdge = {{i0, i3}};
           auto eiter = edgeMap.find(tmpEdge);
@@ -1861,7 +1844,7 @@ void QuickSurfaceMesh::generateTripleLines()
     float v0 = vert.first[0];
     float v1 = vert.first[1];
     float v2 = vert.first[2];
-    int64_t idx = vert.second;
+    MeshIndexType idx = vert.second;
     vertices->setComponent(idx, 0, v0);
     vertices->setComponent(idx, 1, v1);
     vertices->setComponent(idx, 2, v2);
@@ -1872,9 +1855,9 @@ void QuickSurfaceMesh::generateTripleLines()
   SharedEdgeList::Pointer edges = tripleLineEdge->CreateSharedEdgeList(edgeMap.size() * 2);
   for(auto edge : edgeMap)
   {
-    int64_t i0 = edge.first[0];
-    int64_t i1 = edge.first[1];
-    int64_t idx = edge.second;
+    MeshIndexType i0 = edge.first[0];
+    MeshIndexType i1 = edge.first[1];
+    MeshIndexType idx = edge.second;
     edges->setComponent(idx, 0, i0);
     edges->setComponent(idx, 1, i1);
   }
@@ -1882,7 +1865,7 @@ void QuickSurfaceMesh::generateTripleLines()
 
   DataContainerArray::Pointer dca = getDataContainerArray();
   DataContainer::Pointer dc = DataContainer::New("Edges");
-  dca->addDataContainer(dc);
+  dca->addOrReplaceDataContainer(dc);
   dc->setGeometry(tripleLineEdge);
 }
 
@@ -1902,7 +1885,7 @@ AbstractFilter::Pointer QuickSurfaceMesh::newFilterInstance(bool copyFilterParam
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString QuickSurfaceMesh::getCompiledLibraryName() const
+QString QuickSurfaceMesh::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -1910,7 +1893,7 @@ const QString QuickSurfaceMesh::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString QuickSurfaceMesh::getBrandingString() const
+QString QuickSurfaceMesh::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -1918,7 +1901,7 @@ const QString QuickSurfaceMesh::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString QuickSurfaceMesh::getFilterVersion() const
+QString QuickSurfaceMesh::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -1928,7 +1911,7 @@ const QString QuickSurfaceMesh::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString QuickSurfaceMesh::getGroupName() const
+QString QuickSurfaceMesh::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -1936,7 +1919,7 @@ const QString QuickSurfaceMesh::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid QuickSurfaceMesh::getUuid()
+QUuid QuickSurfaceMesh::getUuid() const
 {
   return QUuid("{07b49e30-3900-5c34-862a-f1fb48bad568}");
 }
@@ -1944,7 +1927,7 @@ const QUuid QuickSurfaceMesh::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString QuickSurfaceMesh::getSubGroupName() const
+QString QuickSurfaceMesh::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GenerationFilters;
 }
@@ -1952,7 +1935,144 @@ const QString QuickSurfaceMesh::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString QuickSurfaceMesh::getHumanLabel() const
+QString QuickSurfaceMesh::getHumanLabel() const
 {
   return "Quick Surface Mesh";
+}
+
+// -----------------------------------------------------------------------------
+QuickSurfaceMesh::Pointer QuickSurfaceMesh::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<QuickSurfaceMesh> QuickSurfaceMesh::New()
+{
+  struct make_shared_enabler : public QuickSurfaceMesh
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::getNameOfClass() const
+{
+  return QString("QuickSurfaceMesh");
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::ClassName()
+{
+  return QString("QuickSurfaceMesh");
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setSelectedDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_SelectedDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> QuickSurfaceMesh::getSelectedDataArrayPaths() const
+{
+  return m_SelectedDataArrayPaths;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setSurfaceDataContainerName(const DataArrayPath& value)
+{
+  m_SurfaceDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath QuickSurfaceMesh::getSurfaceDataContainerName() const
+{
+  return m_SurfaceDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setTripleLineDataContainerName(const DataArrayPath& value)
+{
+  m_TripleLineDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath QuickSurfaceMesh::getTripleLineDataContainerName() const
+{
+  return m_TripleLineDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setVertexAttributeMatrixName(const QString& value)
+{
+  m_VertexAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::getVertexAttributeMatrixName() const
+{
+  return m_VertexAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setFaceAttributeMatrixName(const QString& value)
+{
+  m_FaceAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::getFaceAttributeMatrixName() const
+{
+  return m_FaceAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath QuickSurfaceMesh::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setFaceLabelsArrayName(const QString& value)
+{
+  m_FaceLabelsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::getFaceLabelsArrayName() const
+{
+  return m_FaceLabelsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setNodeTypesArrayName(const QString& value)
+{
+  m_NodeTypesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::getNodeTypesArrayName() const
+{
+  return m_NodeTypesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void QuickSurfaceMesh::setFeatureAttributeMatrixName(const QString& value)
+{
+  m_FeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString QuickSurfaceMesh::getFeatureAttributeMatrixName() const
+{
+  return m_FeatureAttributeMatrixName;
 }

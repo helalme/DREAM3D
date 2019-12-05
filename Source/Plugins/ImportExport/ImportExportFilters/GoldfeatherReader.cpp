@@ -33,11 +33,19 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "GoldfeatherReader.h"
 
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
@@ -45,6 +53,21 @@
 
 #include "ImportExport/ImportExportConstants.h"
 #include "ImportExport/ImportExportVersion.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+  AttributeMatrixID22 = 22,
+
+  DataContainerID = 1,
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+  DataArrayID35 = 35,
+  DataArrayID36 = 36
+};
 
 /**
  * @brief The ScopedFileMonitor class will automatically close an open FILE pointer
@@ -96,7 +119,7 @@ GoldfeatherReader::~GoldfeatherReader() = default;
 // -----------------------------------------------------------------------------
 void GoldfeatherReader::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   /*   For an input file use this code*/
   //  {
   //    FilterParameter::Pointer parameter = FilterParameter::New();
@@ -108,7 +131,7 @@ void GoldfeatherReader::setupFilterParameters()
   //  }
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input File", InputFile, FilterParameter::Parameter, GoldfeatherReader, "*.jg"));
 
-  parameters.push_back(SIMPL_NEW_STRING_FP("Surface DataContainer", SurfaceDataContainerName, FilterParameter::CreatedArray, GoldfeatherReader));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Surface DataContainer", SurfaceDataContainerName, FilterParameter::CreatedArray, GoldfeatherReader));
   parameters.push_back(SIMPL_NEW_STRING_FP("Vertex AttributeMatrix", VertexAttributeMatrixName, FilterParameter::CreatedArray, GoldfeatherReader));
   parameters.push_back(SIMPL_NEW_STRING_FP("Face AttributeMatrix", FaceAttributeMatrixName, FilterParameter::CreatedArray, GoldfeatherReader));
   parameters.push_back(SIMPL_NEW_STRING_FP("SurfaceMesh PrincipalCurvature 1 Array Name", SurfaceMeshPrincipalCurvature1sArrayName, FilterParameter::CreatedArray, GoldfeatherReader));
@@ -128,7 +151,7 @@ void GoldfeatherReader::readFilterParameters(AbstractFilterParametersReader* rea
 {
   reader->openFilterGroup(this, index);
   setInputFile(reader->readString("InputFile", getInputFile()));
-  setSurfaceDataContainerName(reader->readString("SurfaceDataContainerName", getSurfaceDataContainerName()));
+  setSurfaceDataContainerName(reader->readDataArrayPath("SurfaceDataContainerName", getSurfaceDataContainerName()));
   setVertexAttributeMatrixName(reader->readString("VertexAttributeMatrixName", getVertexAttributeMatrixName()));
   setFaceAttributeMatrixName(reader->readString("FaceAttributeMatrixName", getFaceAttributeMatrixName()));
   setSurfaceMeshPrincipalCurvature1sArrayName(reader->readString("SurfaceMeshPrincipalCurvature1sArrayName", getSurfaceMeshPrincipalCurvature1sArrayName()));
@@ -146,8 +169,8 @@ void GoldfeatherReader::readFilterParameters(AbstractFilterParametersReader* rea
 // -----------------------------------------------------------------------------
 void GoldfeatherReader::updateVertexInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_SurfaceMeshNodeNormalsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -176,8 +199,8 @@ void GoldfeatherReader::updateVertexInstancePointers()
 // -----------------------------------------------------------------------------
 void GoldfeatherReader::updateFaceInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -203,19 +226,19 @@ void GoldfeatherReader::dataCheck()
 {
   DataArrayPath tempPath;
 
-  DataContainer::Pointer sm = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getSurfaceDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer sm = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getSurfaceDataContainerName(), DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
-  QVector<size_t> tDims(1, 0);
-  AttributeMatrix::Pointer vertAttrMat = sm->createNonPrereqAttributeMatrix(this, getVertexAttributeMatrixName(), tDims, AttributeMatrix::Type::Vertex);
-  if(getErrorCondition() < 0 || nullptr == vertAttrMat.get())
+  std::vector<size_t> tDims(1, 0);
+  AttributeMatrix::Pointer vertAttrMat = sm->createNonPrereqAttributeMatrix(this, getVertexAttributeMatrixName(), tDims, AttributeMatrix::Type::Vertex, AttributeMatrixID21);
+  if(getErrorCode() < 0 || nullptr == vertAttrMat.get())
   {
     return;
   }
-  AttributeMatrix::Pointer faceAttrMat = sm->createNonPrereqAttributeMatrix(this, getFaceAttributeMatrixName(), tDims, AttributeMatrix::Type::Face);
-  if(getErrorCondition() < 0 || nullptr == faceAttrMat.get())
+  AttributeMatrix::Pointer faceAttrMat = sm->createNonPrereqAttributeMatrix(this, getFaceAttributeMatrixName(), tDims, AttributeMatrix::Type::Face, AttributeMatrixID22);
+  if(getErrorCode() < 0 || nullptr == faceAttrMat.get())
   {
     return;
   }
@@ -224,14 +247,12 @@ void GoldfeatherReader::dataCheck()
   if(getInputFile().isEmpty())
   {
     QString ss = QObject::tr("%1 needs the Input File Set and it was not.").arg(ClassName());
-    setErrorCondition(-387);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-387, ss);
   }
   else if(!fi.exists())
   {
     QString ss = QObject::tr("The input file does not exist");
-    setErrorCondition(-388);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-388, ss);
   }
 
   SharedVertexList::Pointer sharedVertList = TriangleGeom::CreateSharedVertexList(0);
@@ -239,62 +260,64 @@ void GoldfeatherReader::dataCheck()
 
   sm->setGeometry(triangleGeom);
 
-  QVector<size_t> dims(1, 3);
-  tempPath.update(getSurfaceDataContainerName(), getVertexAttributeMatrixName(), getSurfaceMeshNodeNormalsArrayName());
+  const QString surfaceDCName = getSurfaceDataContainerName().getDataContainerName();
+
+  std::vector<size_t> dims(1, 3);
+  tempPath.update(surfaceDCName, getVertexAttributeMatrixName(), getSurfaceMeshNodeNormalsArrayName());
   m_SurfaceMeshNodeNormalsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, tempPath, 0, dims);                     /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID30);  /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshNodeNormalsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshNodeNormals = m_SurfaceMeshNodeNormalsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   dims[0] = 1;
-  tempPath.update(getSurfaceDataContainerName(), getVertexAttributeMatrixName(), getSurfaceMeshPrincipalCurvature1sArrayName());
+  tempPath.update(surfaceDCName, getVertexAttributeMatrixName(), getSurfaceMeshPrincipalCurvature1sArrayName());
   m_SurfaceMeshPrincipalCurvature1sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, tempPath, 0, dims);                              /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID31);           /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshPrincipalCurvature1sPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshPrincipalCurvature1s = m_SurfaceMeshPrincipalCurvature1sPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  tempPath.update(getSurfaceDataContainerName(), getVertexAttributeMatrixName(), getSurfaceMeshPrincipalCurvature2sArrayName());
+  tempPath.update(surfaceDCName, getVertexAttributeMatrixName(), getSurfaceMeshPrincipalCurvature2sArrayName());
   m_SurfaceMeshPrincipalCurvature2sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, tempPath, 0, dims);                              /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID32);           /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshPrincipalCurvature2sPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshPrincipalCurvature2s = m_SurfaceMeshPrincipalCurvature2sPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   dims[0] = 3;
-  tempPath.update(getSurfaceDataContainerName(), getVertexAttributeMatrixName(), getSurfaceMeshPrincipalDirection1sArrayName());
+  tempPath.update(surfaceDCName, getVertexAttributeMatrixName(), getSurfaceMeshPrincipalDirection1sArrayName());
   m_SurfaceMeshPrincipalDirection1sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, tempPath, 0, dims);                              /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID33);           /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshPrincipalDirection1sPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshPrincipalDirection1s = m_SurfaceMeshPrincipalDirection1sPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
-  tempPath.update(getSurfaceDataContainerName(), getVertexAttributeMatrixName(), getSurfaceMeshPrincipalDirection2sArrayName());
+  tempPath.update(surfaceDCName, getVertexAttributeMatrixName(), getSurfaceMeshPrincipalDirection2sArrayName());
   m_SurfaceMeshPrincipalDirection2sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, tempPath, 0, dims);                              /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID34);           /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshPrincipalDirection2sPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshPrincipalDirection2s = m_SurfaceMeshPrincipalDirection2sPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   dims[0] = 2;
-  tempPath.update(getSurfaceDataContainerName(), getFaceAttributeMatrixName(), getSurfaceMeshFaceLabelsArrayName());
+  tempPath.update(surfaceDCName, getFaceAttributeMatrixName(), getSurfaceMeshFaceLabelsArrayName());
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 0, dims);                    /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID35); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshFaceLabels = m_SurfaceMeshFaceLabelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   dims[0] = 3;
-  tempPath.update(getSurfaceDataContainerName(), getFaceAttributeMatrixName(), getSurfaceMeshFaceNormalsArrayName());
+  tempPath.update(surfaceDCName, getFaceAttributeMatrixName(), getSurfaceMeshFaceNormalsArrayName());
   m_SurfaceMeshFaceNormalsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, tempPath, 0, dims);                     /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+      this, tempPath, 0, dims, "", DataArrayID36);  /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceNormalsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshFaceNormals = m_SurfaceMeshFaceNormalsPtr.lock()->getPointer(0);
@@ -319,12 +342,11 @@ void GoldfeatherReader::preflight()
 // -----------------------------------------------------------------------------
 void GoldfeatherReader::execute()
 {
-  int err = 0;
-  QString ss;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
 
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -334,8 +356,7 @@ void GoldfeatherReader::execute()
   FILE* f = fopen(m_InputFile.toLatin1().data(), "r");
   if(nullptr == f)
   {
-    setErrorCondition(-999);
-    notifyErrorMessage(getHumanLabel(), "Error opening Input file", getErrorCondition());
+    setErrorCondition(-999, "Error opening Input file");
     return;
   }
   ScopedFileMonitor fileMonitor(f);
@@ -349,7 +370,7 @@ void GoldfeatherReader::execute()
   triangleGeom->initializeWithZeros();
   float* nodes = triangleGeom->getVertexPointer(0);
 
-  QVector<size_t> tDims(1, nNodes);
+  std::vector<size_t> tDims(1, nNodes);
   sm->getAttributeMatrix(getVertexAttributeMatrixName())->resizeAttributeArrays(tDims);
   updateVertexInstancePointers();
 
@@ -378,16 +399,15 @@ void GoldfeatherReader::execute()
   }
 
   int nTriangles = 0;
-  err = fscanf(f, "%d\n", &nTriangles);
+  int err = fscanf(f, "%d\n", &nTriangles);
   if(err < 0)
   {
-    setErrorCondition(-876);
-    notifyErrorMessage(getHumanLabel(), "Error Reading the number of Triangles from the file.", getErrorCondition());
+    setErrorCondition(-876, "Error Reading the number of Triangles from the file.");
     return;
   }
 
   triangleGeom->resizeTriList(nTriangles);
-  int64_t* triangles = triangleGeom->getTriPointer(0);
+  MeshIndexType* triangles = triangleGeom->getTriPointer(0);
 
   tDims[0] = nTriangles;
   sm->getAttributeMatrix(getFaceAttributeMatrixName())->resizeAttributeArrays(tDims);
@@ -426,7 +446,7 @@ AbstractFilter::Pointer GoldfeatherReader::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GoldfeatherReader::getCompiledLibraryName() const
+QString GoldfeatherReader::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -434,7 +454,7 @@ const QString GoldfeatherReader::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GoldfeatherReader::getBrandingString() const
+QString GoldfeatherReader::getBrandingString() const
 {
   return "IO";
 }
@@ -442,7 +462,7 @@ const QString GoldfeatherReader::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GoldfeatherReader::getFilterVersion() const
+QString GoldfeatherReader::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -453,7 +473,7 @@ const QString GoldfeatherReader::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GoldfeatherReader::getGroupName() const
+QString GoldfeatherReader::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -461,7 +481,7 @@ const QString GoldfeatherReader::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GoldfeatherReader::getUuid()
+QUuid GoldfeatherReader::getUuid() const
 {
   return QUuid("{0b285734-f268-5c81-aeb0-8bfe7ad73f1f}");
 }
@@ -469,7 +489,7 @@ const QUuid GoldfeatherReader::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GoldfeatherReader::getSubGroupName() const
+QString GoldfeatherReader::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MiscFilters;
 }
@@ -477,7 +497,168 @@ const QString GoldfeatherReader::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GoldfeatherReader::getHumanLabel() const
+QString GoldfeatherReader::getHumanLabel() const
 {
   return "Goldfeather Mesh Importer";
+}
+
+// -----------------------------------------------------------------------------
+GoldfeatherReader::Pointer GoldfeatherReader::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GoldfeatherReader> GoldfeatherReader::New()
+{
+  struct make_shared_enabler : public GoldfeatherReader
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getNameOfClass() const
+{
+  return QString("GoldfeatherReader");
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::ClassName()
+{
+  return QString("GoldfeatherReader");
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceDataContainerName(const DataArrayPath& value)
+{
+  m_SurfaceDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GoldfeatherReader::getSurfaceDataContainerName() const
+{
+  return m_SurfaceDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setVertexAttributeMatrixName(const QString& value)
+{
+  m_VertexAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getVertexAttributeMatrixName() const
+{
+  return m_VertexAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setFaceAttributeMatrixName(const QString& value)
+{
+  m_FaceAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getFaceAttributeMatrixName() const
+{
+  return m_FaceAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshPrincipalCurvature1sArrayName(const QString& value)
+{
+  m_SurfaceMeshPrincipalCurvature1sArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshPrincipalCurvature1sArrayName() const
+{
+  return m_SurfaceMeshPrincipalCurvature1sArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshPrincipalCurvature2sArrayName(const QString& value)
+{
+  m_SurfaceMeshPrincipalCurvature2sArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshPrincipalCurvature2sArrayName() const
+{
+  return m_SurfaceMeshPrincipalCurvature2sArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshPrincipalDirection1sArrayName(const QString& value)
+{
+  m_SurfaceMeshPrincipalDirection1sArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshPrincipalDirection1sArrayName() const
+{
+  return m_SurfaceMeshPrincipalDirection1sArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshPrincipalDirection2sArrayName(const QString& value)
+{
+  m_SurfaceMeshPrincipalDirection2sArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshPrincipalDirection2sArrayName() const
+{
+  return m_SurfaceMeshPrincipalDirection2sArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshNodeNormalsArrayName(const QString& value)
+{
+  m_SurfaceMeshNodeNormalsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshNodeNormalsArrayName() const
+{
+  return m_SurfaceMeshNodeNormalsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshFaceLabelsArrayName(const QString& value)
+{
+  m_SurfaceMeshFaceLabelsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshFaceLabelsArrayName() const
+{
+  return m_SurfaceMeshFaceLabelsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setSurfaceMeshFaceNormalsArrayName(const QString& value)
+{
+  m_SurfaceMeshFaceNormalsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getSurfaceMeshFaceNormalsArrayName() const
+{
+  return m_SurfaceMeshFaceNormalsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GoldfeatherReader::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GoldfeatherReader::getInputFile() const
+{
+  return m_InputFile;
 }

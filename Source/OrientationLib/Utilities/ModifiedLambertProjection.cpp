@@ -36,7 +36,6 @@
 
 #include "ModifiedLambertProjection.h"
 
-#include <QtCore/QSet>
 
 
 #include "SIMPLib/Math/SIMPLibMath.h"
@@ -148,11 +147,11 @@ void ModifiedLambertProjection::initializeSquares(int dims, float sphereRadius)
   m_HalfDimension = static_cast<float>(m_Dimension) / 2.0;
   m_HalfDimensionTimesStepSize = m_HalfDimension * m_StepSize;
 
-  QVector<size_t> tDims(2, m_Dimension);
-  QVector<size_t> cDims(1, 1);
-  m_NorthSquare = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambert_NorthSquare");
+  std::vector<size_t> tDims(2, m_Dimension);
+  std::vector<size_t> cDims(1, 1);
+  m_NorthSquare = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambert_NorthSquare", true);
   m_NorthSquare->initializeWithZeros();
-  m_SouthSquare = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambert_SouthSquare");
+  m_SouthSquare = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambert_SouthSquare", true);
   m_SouthSquare->initializeWithZeros();
 
 
@@ -165,7 +164,7 @@ int ModifiedLambertProjection::writeHDF5Data(hid_t groupId)
 {
   int err = -1;
   #if 0
-  QVector<size_t> dims = { static_cast<size_t>(m_Dimension), static_cast<size_t>(m_Dimension), 1};
+  std::vector<size_t> dims = { static_cast<size_t>(m_Dimension), static_cast<size_t>(m_Dimension), 1};
   err = m_NorthSquare->writeH5Data(groupId, dims);
   std::cout << "Err: " << err << std::endl;
   err = m_SouthSquare->writeH5Data(groupId, dims);
@@ -568,7 +567,7 @@ void ModifiedLambertProjection::createStereographicProjection(int dim, DoubleArr
         {
           if(m == 1)
           {
-            MatrixMath::Multiply3x1withConstant(xyz, -1.0);
+            MatrixMath::Multiply3x1withConstant(xyz, -1.0f);
           }
           nhCheck = getSquareCoord(xyz, sqCoord);
           //sqIndex = getSquareIndex(sqCoord);
@@ -596,10 +595,65 @@ void ModifiedLambertProjection::createStereographicProjection(int dim, DoubleArr
 // -----------------------------------------------------------------------------
 DoubleArrayType::Pointer ModifiedLambertProjection::createStereographicProjection(int dim)
 {
-  QVector<size_t> tDims(2, dim);
-  QVector<size_t> cDims(1, 1);
-  DoubleArrayType::Pointer stereoIntensity = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambertProjection_StereographicProjection");
+  std::vector<size_t> tDims(2, dim);
+  std::vector<size_t> cDims(1, 1);
+  DoubleArrayType::Pointer stereoIntensity = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambertProjection_StereographicProjection", true);
   stereoIntensity->initializeWithZeros();
   createStereographicProjection(dim, stereoIntensity.get());
   return stereoIntensity;
+}
+
+// -----------------------------------------------------------------------------
+ModifiedLambertProjection::Pointer ModifiedLambertProjection::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+ModifiedLambertProjection::Pointer ModifiedLambertProjection::New()
+{
+  Pointer sharedPtr(new(ModifiedLambertProjection));
+  return sharedPtr;
+}
+
+// -----------------------------------------------------------------------------
+QString ModifiedLambertProjection::getNameOfClass() const
+{
+  return QString("ModifiedLambertProjection");
+}
+
+// -----------------------------------------------------------------------------
+QString ModifiedLambertProjection::ClassName()
+{
+  return QString("ModifiedLambertProjection");
+}
+
+// -----------------------------------------------------------------------------
+int ModifiedLambertProjection::getDimension() const
+{
+  return m_Dimension;
+}
+
+// -----------------------------------------------------------------------------
+float ModifiedLambertProjection::getStepSize() const
+{
+  return m_StepSize;
+}
+
+// -----------------------------------------------------------------------------
+float ModifiedLambertProjection::getSphereRadius() const
+{
+  return m_SphereRadius;
+}
+
+// -----------------------------------------------------------------------------
+DoubleArrayType::Pointer ModifiedLambertProjection::getNorthSquare() const
+{
+  return m_NorthSquare;
+}
+
+// -----------------------------------------------------------------------------
+DoubleArrayType::Pointer ModifiedLambertProjection::getSouthSquare() const
+{
+  return m_SouthSquare;
 }

@@ -33,11 +33,9 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
-#include <QtCore/QDir>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -45,6 +43,7 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "ImportExportTestFileLocations.h"
@@ -63,7 +62,24 @@ public:
   virtual ~VtkStruturedPointsReaderTest()
   {
   }
-  SIMPL_TYPE_MACRO(VtkStruturedPointsReaderTest)
+  /**
+   * @brief Returns the name of the class for VtkStruturedPointsReaderTest
+   */
+  /**
+   * @brief Returns the name of the class for VtkStruturedPointsReaderTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("VtkStruturedPointsReaderTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for VtkStruturedPointsReaderTest
+   */
+  QString ClassName()
+  {
+    return QString("VtkStruturedPointsReaderTest");
+  }
 
   // -----------------------------------------------------------------------------
   //
@@ -170,12 +186,12 @@ public:
     FILE* f = fopen(filePath.c_str(), "wb");
 
     int dims[3] = {10, 20, 30};
-    float origin[3] = {0.0f, 0.0f, 0.0f};
-    float scaling[3] = {0.25f, 0.35f, 0.45f};
+    FloatVec3Type origin = {0.0f, 0.0f, 0.0f};
+    FloatVec3Type scaling = {0.25f, 0.35f, 0.45f};
 
     size_t total = dims[0] * dims[1] * dims[2];
 
-    WriteHeader(f, binary, dims, origin, scaling);
+    WriteHeader(f, binary, dims, origin.data(), scaling.data());
 
     // Start the POINT_DATA Section
     fprintf(f, "POINT_DATA %lu\n", static_cast<unsigned long>(total));
@@ -244,12 +260,12 @@ public:
       DREAM3D_REQUIRE_EQUAL(propWasSet, true)
 
       filter->preflight();
-      DREAM3D_REQUIRED(filter->getErrorCondition(), >=, 0);
+      DREAM3D_REQUIRED(filter->getErrorCode(), >=, 0);
 
       filter->setDataContainerArray(DataContainerArray::New());
 
       filter->execute();
-      DREAM3D_REQUIRED(filter->getErrorCondition(), >=, 0);
+      DREAM3D_REQUIRED(filter->getErrorCode(), >=, 0);
       dca = filter->getDataContainerArray();
 
       // Need to actually check the data against what _should_ have been written

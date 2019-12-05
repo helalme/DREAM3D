@@ -41,15 +41,11 @@
 #include <iostream>
 
 //-- Qt Includes
-#include <QtConcurrent/QtConcurrentMap>
-#include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QModelIndex>
-#include <QtCore/QSettings>
 #include <QtCore/QString>
 #include <QtCore/QVector>
-#include <QtGui/QCloseEvent>
 #include <QtWidgets/QAbstractItemDelegate>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QMessageBox>
@@ -503,4 +499,40 @@ int StatsGenMDFWidget::getMisorientationData(StatsData* statsData, PhaseType::Ty
 
   StatsGeneratorUtilities::GenerateMisorientationBinData(statsData, phaseType, m_CrystalStructure, odf, angles, axes, weights, !preflight);
   return retErr;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenMDFWidget::setPhaseIndex(int value)
+{
+  m_PhaseIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int StatsGenMDFWidget::getPhaseIndex() const
+{
+  return m_PhaseIndex;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenMDFWidget::setCrystalStructure(unsigned int value)
+{
+  m_CrystalStructure = value;
+}
+
+// -----------------------------------------------------------------------------
+unsigned int StatsGenMDFWidget::getCrystalStructure() const
+{
+  return m_CrystalStructure;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGenMDFWidget::setODFTableModel(SGODFTableModel* value)
+{
+  m_ODFTableModel = value;
+}
+
+// -----------------------------------------------------------------------------
+SGODFTableModel* StatsGenMDFWidget::getODFTableModel() const
+{
+  return m_ODFTableModel;
 }

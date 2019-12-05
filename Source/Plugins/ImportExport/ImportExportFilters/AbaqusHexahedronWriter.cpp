@@ -33,12 +33,19 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "AbaqusHexahedronWriter.h"
 
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
@@ -73,7 +80,7 @@ AbaqusHexahedronWriter::~AbaqusHexahedronWriter() = default;
 // -----------------------------------------------------------------------------
 void AbaqusHexahedronWriter::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Hourglass Stiffness", HourglassStiffness, FilterParameter::Parameter, AbaqusHexahedronWriter, 0));
   parameters.push_back(SIMPL_NEW_STRING_FP("Job Name", JobName, FilterParameter::Parameter, AbaqusHexahedronWriter));
   parameters.push_back(SIMPL_NEW_OUTPUT_PATH_FP("Output Path", OutputPath, FilterParameter::Parameter, AbaqusHexahedronWriter));
@@ -112,26 +119,24 @@ void AbaqusHexahedronWriter::initialize()
 // -----------------------------------------------------------------------------
 void AbaqusHexahedronWriter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(m_OutputPath.isEmpty())
   {
-    setErrorCondition(-12001);
     QString ss = QObject::tr("The output path must be set");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-12001, ss);
   }
 
   QFileInfo fi(m_OutputPath);
   QDir parentPath = fi.path();
   if(!parentPath.exists())
   {
-    setWarningCondition(-10100);
     QString ss = QObject::tr("The directory path for the output file does not exist. DREAM.3D will attempt to create this path during execution of the filter");
-    notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+    setWarningCondition(-10100, ss);
   }
 
-  QVector<size_t> cDims(1, 1); // The component dimensions of the needed array.
+  std::vector<size_t> cDims(1, 1); // The component dimensions of the needed array.
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -140,7 +145,7 @@ void AbaqusHexahedronWriter::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -149,11 +154,10 @@ void AbaqusHexahedronWriter::dataCheck()
 
   if(volTuples != m_FeatureIdsPtr.lock()->getNumberOfTuples())
   {
-    setErrorCondition(-10200);
     QString ss = QObject::tr("The number of Tuples for the DataArray %1 is %2 and for the associated Image Geometry is %3. The number of tuples must match")
                      .arg(m_FeatureIdsPtr.lock()->getName())
-                     .arg(m_FeatureIdsPtr.lock()->getNumberOfTuples());
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+                     .arg(m_FeatureIdsPtr.lock()->getNumberOfTuples()).arg(volTuples);
+    setErrorCondition(-10200, ss);
   }
 }
 
@@ -176,10 +180,10 @@ void AbaqusHexahedronWriter::preflight()
 // -----------------------------------------------------------------------------
 void AbaqusHexahedronWriter::execute()
 {
-  int32_t err = 0;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -189,20 +193,16 @@ void AbaqusHexahedronWriter::execute()
   if(!dir.mkpath(m_OutputPath))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(m_OutputPath);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
   DataContainer::Pointer r = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
 
-  size_t cDims[3] = {0, 0, 0};
-  std::tie(cDims[0], cDims[1], cDims[2]) = r->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type cDims = r->getGeometryAs<ImageGeom>()->getDimensions();
   size_t pDims[3] = {cDims[0] + 1, cDims[1] + 1, cDims[2] + 1};
-  float origin[3] = {0.0f, 0.0f, 0.0f};
-  r->getGeometryAs<ImageGeom>()->getOrigin(origin);
-  float spacing[3] = {0.0f, 0.0f, 0.0f};
-  r->getGeometryAs<ImageGeom>()->getResolution(spacing);
+  FloatVec3Type origin = r->getGeometryAs<ImageGeom>()->getOrigin();
+  FloatVec3Type spacing = r->getGeometryAs<ImageGeom>()->getSpacing();
   size_t totalPoints = r->getGeometryAs<ImageGeom>()->getNumberOfElements();
 
   // Create file names
@@ -214,12 +214,11 @@ void AbaqusHexahedronWriter::execute()
   QList<QString> fileNames;
   fileNames << nodesFile << elemsFile << sectsFile << elsetFile << masterFile;
 
-  err = writeNodes(fileNames, cDims, origin, spacing); // Nodes file
+  int32_t err = writeNodes(fileNames, cDims.data(), origin.data(), spacing.data()); // Nodes file
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing output nodes file '%1'").arg(nodesFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
   if(getCancel()) // Filter has been cancelled
@@ -228,12 +227,11 @@ void AbaqusHexahedronWriter::execute()
     return;
   }
 
-  err = writeElems(fileNames, cDims, pDims); // Elements file
+  err = writeElems(fileNames, cDims.data(), pDims); // Elements file
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing output elems file '%1'").arg(elemsFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
   if(getCancel()) // Filter has been cancelled
@@ -246,8 +244,7 @@ void AbaqusHexahedronWriter::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing output sects file '%1'").arg(sectsFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
   if(getCancel()) // Filter has been cancelled
@@ -260,8 +257,7 @@ void AbaqusHexahedronWriter::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing output elset file '%1'").arg(elsetFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
   if(getCancel()) // Filter has been cancelled
@@ -274,8 +270,7 @@ void AbaqusHexahedronWriter::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing output master file '%1'").arg(masterFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
   if(getCancel()) // Filter has been cancelled
@@ -335,11 +330,11 @@ int32_t AbaqusHexahedronWriter::writeNodes(const QList<QString>& fileNames, size
           if(currentMillis - millis > 1000)
           {
             buf.clear();
-            ss << getMessagePrefix() << " Writing Nodes (File 1/5) " << static_cast<int>((float)(nodeIndex) / (float)(totalPoints)*100) << "% Completed ";
+            ss << "Writing Nodes (File 1/5) " << static_cast<int>((float)(nodeIndex) / (float)(totalPoints)*100) << "% Completed ";
             timeDiff = ((float)nodeIndex / (float)(currentMillis - startMillis));
             estimatedTime = (float)(totalPoints - nodeIndex) / timeDiff;
             ss << " || Est. Time Remain: " << DREAM3D::convertMillisToHrsMinSecs(estimatedTime);
-            notifyStatusMessage(getHumanLabel(), buf);
+            notifyStatusMessage(buf);
             millis = QDateTime::currentMSecsSinceEpoch();
             if(getCancel()) // Filter has been cancelled
             {
@@ -358,7 +353,7 @@ int32_t AbaqusHexahedronWriter::writeNodes(const QList<QString>& fileNames, size
   fprintf(f, "**\n** ----------------------------------------------------------------\n**\n");
 
   // Close the file
-  notifyStatusMessage(getHumanLabel(), "Writing Nodes (File 1/5) Complete");
+  notifyStatusMessage("Writing Nodes (File 1/5) Complete");
   fclose(f);
   return err;
 }
@@ -391,7 +386,7 @@ int32_t AbaqusHexahedronWriter::writeElems(const QList<QString>& fileNames, size
   }
 
   // Get a typedef to shorten up the printf codes
-  typedef long long int _lli_t_;
+  using _lli_t_ = long long int;
 
   size_t index = 1;
   fprintf(f, "** Generated by : %s\n", ImportExport::Version::PackageComplete().toLatin1().data());
@@ -411,11 +406,11 @@ int32_t AbaqusHexahedronWriter::writeElems(const QList<QString>& fileNames, size
           if(currentMillis - millis > 1000)
           {
             buf.clear();
-            ss << getMessagePrefix() << " Writing Elements (File 2/5) " << static_cast<int>((float)(index) / (float)(totalPoints)*100) << "% Completed ";
+            ss << "Writing Elements (File 2/5) " << static_cast<int>((float)(index) / (float)(totalPoints)*100) << "% Completed ";
             timeDiff = ((float)index / (float)(currentMillis - startMillis));
             estimatedTime = (float)(totalPoints - index) / timeDiff;
             ss << " || Est. Time Remain: " << DREAM3D::convertMillisToHrsMinSecs(estimatedTime);
-            notifyStatusMessage(getHumanLabel(), buf);
+            notifyStatusMessage(buf);
             millis = QDateTime::currentMSecsSinceEpoch();
             if(getCancel()) // Filter has been cancelled
             {
@@ -432,7 +427,7 @@ int32_t AbaqusHexahedronWriter::writeElems(const QList<QString>& fileNames, size
   fprintf(f, "**\n** ----------------------------------------------------------------\n**\n");
 
   // Close the file
-  notifyStatusMessage(getHumanLabel(), "Writing Elements (File 2/5) Complete");
+  notifyStatusMessage("Writing Elements (File 2/5) Complete");
   fclose(f);
   return err;
 }
@@ -463,7 +458,7 @@ int32_t AbaqusHexahedronWriter::writeElset(const QList<QString>& fileNames, size
   fprintf(f, "*Elset, elset=cube, generate\n");
   fprintf(f, "1, %llu, 1\n", static_cast<unsigned long long int>(totalPoints));
   fprintf(f, "**\n** Each Grain is made up of multiple elements\n**");
-  notifyStatusMessage(getHumanLabel(), (getMessagePrefix() + " Writing Element Sets (File 4/5) 1% Completed || Est. Time Remain: "));
+  notifyStatusMessage(("Writing Element Sets (File 4/5) 1% Completed || Est. Time Remain: "));
 
   // find total number of Grain Ids
   int32_t maxGrainId = 0;
@@ -512,11 +507,11 @@ int32_t AbaqusHexahedronWriter::writeElset(const QList<QString>& fileNames, size
       if(currentMillis - millis > 1000)
       {
         buf.clear();
-        ss << getMessagePrefix() << " Writing Element Sets (File 4/5) " << static_cast<int>((float)(voxelId) / (float)(maxGrainId)*100) << "% Completed ";
+        ss << "Writing Element Sets (File 4/5) " << static_cast<int>((float)(voxelId) / (float)(maxGrainId)*100) << "% Completed ";
         timeDiff = ((float)voxelId / (float)(currentMillis - startMillis));
         estimatedTime = (float)(maxGrainId - voxelId) / timeDiff;
         ss << " || Est. Time Remain: " << DREAM3D::convertMillisToHrsMinSecs(estimatedTime);
-        notifyStatusMessage(getHumanLabel(), buf);
+        notifyStatusMessage(buf);
         millis = QDateTime::currentMSecsSinceEpoch();
         if(getCancel()) // Filter has been cancelled
         {
@@ -530,7 +525,7 @@ int32_t AbaqusHexahedronWriter::writeElset(const QList<QString>& fileNames, size
   fprintf(f, "\n**\n** ----------------------------------------------------------------\n**\n");
 
   // Close the file
-  notifyStatusMessage(getHumanLabel(), "Writing Element Sets (File 4/5) Complete");
+  notifyStatusMessage("Writing Element Sets (File 4/5) Complete");
   fclose(f);
   return err;
 }
@@ -561,7 +556,7 @@ int32_t AbaqusHexahedronWriter::writeMaster(const QString& file)
   fprintf(f, "**\n** ----------------------------------------------------------------\n**\n");
 
   // Close the file
-  notifyStatusMessage(getHumanLabel(), "Writing Master (File 5/5) Complete");
+  notifyStatusMessage("Writing Master (File 5/5) Complete");
   fclose(f);
   return err;
 }
@@ -604,7 +599,7 @@ int32_t AbaqusHexahedronWriter::writeSects(const QString& file, size_t totalPoin
   fprintf(f, "**\n** ----------------------------------------------------------------\n**\n");
 
   // Close the file
-  notifyStatusMessage(getHumanLabel(), "Writing Sections (File 3/5) Complete");
+  notifyStatusMessage("Writing Sections (File 3/5) Complete");
   fclose(f);
   return err;
 }
@@ -626,7 +621,7 @@ std::vector<int64_t> AbaqusHexahedronWriter::getNodeIds(size_t x, size_t y, size
   nodeId[6] = static_cast<int64_t>(1 + (pDims[0] * pDims[1] * (z + 1)) + (pDims[0] * (y + 1)) + x);
   nodeId[7] = static_cast<int64_t>(1 + (pDims[0] * pDims[1] * (z + 1)) + (pDims[0] * (y + 1)) + (x + 1));
 
-  if(false)
+#if 0
   {
     printf("           %lld-------%lld  \n", static_cast<long long int>(nodeId[4]), static_cast<long long int>(nodeId[5]));
     printf("            /|        /|   \n");
@@ -638,7 +633,7 @@ std::vector<int64_t> AbaqusHexahedronWriter::getNodeIds(size_t x, size_t y, size
     printf("         |  /       | /    \n");
     printf("         | /        |/     \n");
     printf("        %lld--------%lld     \n", static_cast<long long int>(nodeId[2]), static_cast<long long int>(nodeId[3]));
-  }
+#endif
   return nodeId;
 }
 
@@ -673,7 +668,7 @@ AbstractFilter::Pointer AbaqusHexahedronWriter::newFilterInstance(bool copyFilte
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AbaqusHexahedronWriter::getCompiledLibraryName() const
+QString AbaqusHexahedronWriter::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -681,7 +676,7 @@ const QString AbaqusHexahedronWriter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AbaqusHexahedronWriter::getBrandingString() const
+QString AbaqusHexahedronWriter::getBrandingString() const
 {
   return "IO";
 }
@@ -689,7 +684,7 @@ const QString AbaqusHexahedronWriter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AbaqusHexahedronWriter::getFilterVersion() const
+QString AbaqusHexahedronWriter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -699,7 +694,7 @@ const QString AbaqusHexahedronWriter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AbaqusHexahedronWriter::getGroupName() const
+QString AbaqusHexahedronWriter::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -707,7 +702,7 @@ const QString AbaqusHexahedronWriter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AbaqusHexahedronWriter::getUuid()
+QUuid AbaqusHexahedronWriter::getUuid() const
 {
   return QUuid("{0559aa37-c5ad-549a-82d4-bff4bfcb6cc6}");
 }
@@ -715,7 +710,7 @@ const QUuid AbaqusHexahedronWriter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AbaqusHexahedronWriter::getSubGroupName() const
+QString AbaqusHexahedronWriter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -723,7 +718,96 @@ const QString AbaqusHexahedronWriter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AbaqusHexahedronWriter::getHumanLabel() const
+QString AbaqusHexahedronWriter::getHumanLabel() const
 {
   return "Abaqus Hexahedron Exporter";
+}
+
+// -----------------------------------------------------------------------------
+AbaqusHexahedronWriter::Pointer AbaqusHexahedronWriter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AbaqusHexahedronWriter> AbaqusHexahedronWriter::New()
+{
+  struct make_shared_enabler : public AbaqusHexahedronWriter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AbaqusHexahedronWriter::getNameOfClass() const
+{
+  return QString("AbaqusHexahedronWriter");
+}
+
+// -----------------------------------------------------------------------------
+QString AbaqusHexahedronWriter::ClassName()
+{
+  return QString("AbaqusHexahedronWriter");
+}
+
+// -----------------------------------------------------------------------------
+void AbaqusHexahedronWriter::setOutputPath(const QString& value)
+{
+  m_OutputPath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AbaqusHexahedronWriter::getOutputPath() const
+{
+  return m_OutputPath;
+}
+
+// -----------------------------------------------------------------------------
+void AbaqusHexahedronWriter::setFilePrefix(const QString& value)
+{
+  m_FilePrefix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AbaqusHexahedronWriter::getFilePrefix() const
+{
+  return m_FilePrefix;
+}
+
+// -----------------------------------------------------------------------------
+void AbaqusHexahedronWriter::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AbaqusHexahedronWriter::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void AbaqusHexahedronWriter::setHourglassStiffness(int value)
+{
+  m_HourglassStiffness = value;
+}
+
+// -----------------------------------------------------------------------------
+int AbaqusHexahedronWriter::getHourglassStiffness() const
+{
+  return m_HourglassStiffness;
+}
+
+// -----------------------------------------------------------------------------
+void AbaqusHexahedronWriter::setJobName(const QString& value)
+{
+  m_JobName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AbaqusHexahedronWriter::getJobName() const
+{
+  return m_JobName;
 }

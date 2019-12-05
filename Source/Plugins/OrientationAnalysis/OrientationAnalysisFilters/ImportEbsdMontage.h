@@ -32,15 +32,17 @@
 
 #pragma once
 
+#include <memory>
+
 #include <map>
 
 #include <QtCore/QString>
 
 #include "EbsdLib/TSL/AngPhase.h"
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
-#include "SIMPLib/Filtering/AbstractFilter.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/Filtering/AbstractFilter.h"
+#include "SIMPLib/FilterParameters/MontageFileListInfo.h"
 
 #include "OrientationAnalysis/FilterParameters/EbsdMontageImportFilterParameter.h"
 
@@ -53,43 +55,142 @@ class OrientationAnalysis_EXPORT ImportEbsdMontage : public AbstractFilter
 {
   Q_OBJECT
 
+#ifdef SIMPL_ENABLE_PYTHON
+  PYB11_CREATE_BINDINGS(ImportEbsdMontage SUPERCLASS AbstractFilter)
+  PYB11_SHARED_POINTERS(ImportEbsdMontage)
+  PYB11_FILTER_NEW_MACRO(ImportEbsdMontage)
+  PYB11_FILTER_PARAMETER(DataArrayPath, DataContainerName)
+  PYB11_FILTER_PARAMETER(QString, CellEnsembleAttributeMatrixName)
+  PYB11_FILTER_PARAMETER(QString, CellAttributeMatrixName)
+  PYB11_FILTER_PARAMETER(EbsdMontageListInfo, InputFileListInfo)
+  PYB11_FILTER_PARAMETER(bool, GenerateIPFColorMap)
+  PYB11_FILTER_PARAMETER(QString, CellIPFColorsArrayName)
+
+  PYB11_PROPERTY(DataArrayPath DataContainerName READ getDataContainerName WRITE setDataContainerName)
+  PYB11_PROPERTY(QString CellEnsembleAttributeMatrixName READ getCellEnsembleAttributeMatrixName WRITE setCellEnsembleAttributeMatrixName)
+  PYB11_PROPERTY(QString CellAttributeMatrixName READ getCellAttributeMatrixName WRITE setCellAttributeMatrixName)
+  PYB11_PROPERTY(EbsdMontageListInfo InputFileListInfo READ getInputFileListInfo WRITE setInputFileListInfo)
+  PYB11_PROPERTY(bool GenerateIPFColorMap READ getGenerateIPFColorMap WRITE setGenerateIPFColorMap)
+  PYB11_PROPERTY(QString CellIPFColorsArrayName READ getCellIPFColorsArrayName WRITE setCellIPFColorsArrayName)
+#endif
+
 public:
-  SIMPL_SHARED_POINTERS(ImportEbsdMontage)
-  SIMPL_FILTER_NEW_MACRO(ImportEbsdMontage)
-  SIMPL_TYPE_MACRO_SUPER_OVERRIDE(ImportEbsdMontage, AbstractFilter)
+  using Self = ImportEbsdMontage;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  
+  /**
+   * @brief Returns a NullPointer wrapped by a shared_ptr<>
+   * @return
+   */
+  static Pointer NullPointer();
+
+  /**
+   * @brief Creates a new object wrapped in a shared_ptr<>
+   * @return
+   */
+  static Pointer New();
+
+  /**
+   * @brief Returns the name of the class for ImportEbsdMontage
+   */
+  QString getNameOfClass() const override;
+  /**
+   * @brief Returns the name of the class for ImportEbsdMontage
+   */
+  static QString ClassName();
 
   ~ImportEbsdMontage() override;
 
-  SIMPL_FILTER_PARAMETER(QString, DataContainerName)
-  Q_PROPERTY(QString DataContainerName READ getDataContainerName WRITE setDataContainerName)
+  /**
+   * @brief Setter property for DataContainerName
+   */
+  void setDataContainerName(const DataArrayPath& value);
+  /**
+   * @brief Getter property for DataContainerName
+   * @return Value of DataContainerName
+   */
+  DataArrayPath getDataContainerName() const;
 
-  SIMPL_FILTER_PARAMETER(QString, CellEnsembleAttributeMatrixName)
+  Q_PROPERTY(DataArrayPath DataContainerName READ getDataContainerName WRITE setDataContainerName)
+
+  /**
+   * @brief Setter property for CellEnsembleAttributeMatrixName
+   */
+  void setCellEnsembleAttributeMatrixName(const QString& value);
+  /**
+   * @brief Getter property for CellEnsembleAttributeMatrixName
+   * @return Value of CellEnsembleAttributeMatrixName
+   */
+  QString getCellEnsembleAttributeMatrixName() const;
+
   Q_PROPERTY(QString CellEnsembleAttributeMatrixName READ getCellEnsembleAttributeMatrixName WRITE setCellEnsembleAttributeMatrixName)
 
-  SIMPL_FILTER_PARAMETER(QString, CellAttributeMatrixName)
+  /**
+   * @brief Setter property for CellAttributeMatrixName
+   */
+  void setCellAttributeMatrixName(const QString& value);
+  /**
+   * @brief Getter property for CellAttributeMatrixName
+   * @return Value of CellAttributeMatrixName
+   */
+  QString getCellAttributeMatrixName() const;
+
   Q_PROPERTY(QString CellAttributeMatrixName READ getCellAttributeMatrixName WRITE setCellAttributeMatrixName)
 
-  SIMPL_FILTER_PARAMETER(EbsdMontageListInfo_t, InputFileListInfo)
-  Q_PROPERTY(EbsdMontageListInfo_t InputFileListInfo READ getInputFileListInfo WRITE setInputFileListInfo)
+  /**
+   * @brief Setter property for InputFileListInfo
+   */
+  void setInputFileListInfo(const MontageFileListInfo& value);
+  /**
+   * @brief Getter property for InputFileListInfo
+   * @return Value of InputFileListInfo
+   */
+  MontageFileListInfo getInputFileListInfo() const;
+  Q_PROPERTY(MontageFileListInfo InputFileListInfo READ getInputFileListInfo WRITE setInputFileListInfo)
+
+  /**
+   * @brief Setter property for GenerateIPFColorMap
+   */
+  void setGenerateIPFColorMap(bool value);
+  /**
+   * @brief Getter property for GenerateIPFColorMap
+   * @return Value of GenerateIPFColorMap
+   */
+  bool getGenerateIPFColorMap() const;
+  Q_PROPERTY(bool GenerateIPFColorMap READ getGenerateIPFColorMap WRITE setGenerateIPFColorMap)
+
+  /**
+   * @brief Setter property for CellIPFColorsArrayName
+   */
+  void setCellIPFColorsArrayName(const QString& value);
+  /**
+   * @brief Getter property for CellIPFColorsArrayName
+   * @return Value of CellIPFColorsArrayName
+   */
+  QString getCellIPFColorsArrayName() const;
+  Q_PROPERTY(QString CellIPFColorsArrayName READ getCellIPFColorsArrayName WRITE setCellIPFColorsArrayName)
 
   /**
    * @brief getCompiledLibraryName Reimplemented from @see AbstractFilter class
    */
-  const QString getCompiledLibraryName() const override;
+  QString getCompiledLibraryName() const override;
 
   /**
    * @brief getBrandingString Returns the branding string for the filter, which is a tag
    * used to denote the filter's association with specific plugins
    * @return Branding string
    */
-  const QString getBrandingString() const override;
+  QString getBrandingString() const override;
 
   /**
    * @brief getFilterVersion Returns a version string for this filter. Default
    * value is an empty string.
    * @return
    */
-  const QString getFilterVersion() const override;
+  QString getFilterVersion() const override;
 
   /**
    * @brief newFilterInstance Reimplemented from @see AbstractFilter class
@@ -99,23 +200,23 @@ public:
   /**
    * @brief getGroupName Reimplemented from @see AbstractFilter class
    */
-  const QString getGroupName() const override;
+  QString getGroupName() const override;
 
   /**
    * @brief getSubGroupName Reimplemented from @see AbstractFilter class
    */
-  const QString getSubGroupName() const override;
+  QString getSubGroupName() const override;
 
   /**
    * @brief getUuid Return the unique identifier for this filter.
    * @return A QUuid object.
    */
-  const QUuid getUuid() override;
+  QUuid getUuid() const override;
 
   /**
    * @brief getHumanLabel Reimplemented from @see AbstractFilter class
    */
-  const QString getHumanLabel() const override;
+  QString getHumanLabel() const override;
 
   /**
    * @brief setupFilterParameters Reimplemented from @see AbstractFilter class
@@ -169,12 +270,18 @@ protected:
   void initialize();
 
 private:
+  DataArrayPath m_DataContainerName = {};
+  QString m_CellEnsembleAttributeMatrixName = {};
+  QString m_CellAttributeMatrixName = {};
+  MontageFileListInfo m_InputFileListInfo = {};
+
   std::map<QString, AbstractFilter::Pointer> m_FilterCache;
+  FloatVec3Type m_ReferenceDir = {0.0f, 0.0f, 1.0f};
+
+  bool m_GenerateIPFColorMap = false;
+  QString m_CellIPFColorsArrayName = QString(SIMPL::CellData::IPFColor);
 
 public:
-  /* Rule of 5: All special member functions should be defined if any are defined.
-   * https://github.com/isocpp/CppCoreGuidelines/blob/master/CppCoreGuidelines.md#c21-if-you-define-or-delete-any-default-operation-define-or-delete-them-all
-   */
   ImportEbsdMontage(const ImportEbsdMontage&) = delete;            // Copy Constructor Not Implemented
   ImportEbsdMontage& operator=(const ImportEbsdMontage&) = delete; // Copy Assignment Not Implemented
   ImportEbsdMontage(ImportEbsdMontage&&) = delete;                 // Move Constructor Not Implemented

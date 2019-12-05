@@ -33,19 +33,33 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SampleSurfaceMeshSpecifiedPoints.h"
 
 #include <fstream>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
 #include "SIMPLib/Geometry/VertexGeom.h"
 #include "SIMPLib/Utilities/FileSystemPathHelper.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingVersion.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataContainerID = 1
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -68,7 +82,7 @@ SampleSurfaceMeshSpecifiedPoints::~SampleSurfaceMeshSpecifiedPoints() = default;
 void SampleSurfaceMeshSpecifiedPoints::setupFilterParameters()
 {
   SampleSurfaceMesh::setupFilterParameters();
-  FilterParameterVector parameters = getFilterParameters();
+  FilterParameterVectorType parameters = getFilterParameters();
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Specified Points File", InputFilePath, FilterParameter::Parameter, SampleSurfaceMeshSpecifiedPoints, "*.raw, *.bin"));
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Sampled Values File", OutputFilePath, FilterParameter::Parameter, SampleSurfaceMeshSpecifiedPoints, "*.txt"));
   setFilterParameters(parameters);
@@ -91,8 +105,8 @@ void SampleSurfaceMeshSpecifiedPoints::readFilterParameters(AbstractFilterParame
 // -----------------------------------------------------------------------------
 void SampleSurfaceMeshSpecifiedPoints::updateVertexInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   if(nullptr != m_FeatureIdsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
@@ -112,22 +126,21 @@ void SampleSurfaceMeshSpecifiedPoints::initialize()
 // -----------------------------------------------------------------------------
 void SampleSurfaceMeshSpecifiedPoints::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
   if(m_InputFilePath.isEmpty())
   {
     QString ss = QObject::tr("The input file must be set");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, -1);
+    setErrorCondition(-1, ss);
   }
 
   FileSystemPathHelper::CheckOutputFile(this, "Output File Path", getOutputFilePath(), true);
 
-  DataContainer::Pointer v = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, "SpecifiedPoints");
-  if(getErrorCondition() < 0 || nullptr == v.get())
+  DataContainer::Pointer v = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, "SpecifiedPoints", DataContainerID);
+  if(getErrorCode() < 0 || nullptr == v.get())
   {
     return;
   }
@@ -135,10 +148,10 @@ void SampleSurfaceMeshSpecifiedPoints::dataCheck()
   VertexGeom::Pointer vertices = VertexGeom::CreateGeometry(0, SIMPL::Geometry::VertexGeometry, !getInPreflight());
   v->setGeometry(vertices);
 
-  QVector<size_t> tDims(1, 0);
-  v->createNonPrereqAttributeMatrix(this, "SpecifiedPointsData", tDims, AttributeMatrix::Type::Vertex);
+  std::vector<size_t> tDims(1, 0);
+  v->createNonPrereqAttributeMatrix(this, "SpecifiedPointsData", tDims, AttributeMatrix::Type::Vertex, AttributeMatrixID21);
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   tempPath.update("SpecifiedPoints", "SpecifiedPointsData", "FeatureIds");
   m_FeatureIdsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
       this, tempPath, 0, cDims);              /* Assigns the shared_ptr<>(this, tempPath, -301, dims);  Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -179,8 +192,7 @@ VertexGeom::Pointer SampleSurfaceMeshSpecifiedPoints::generate_points()
   if(m_NumPoints <= 0)
   {
     QString ss = QObject::tr("Number of points to sample (%1) must be positive").arg(m_NumPoints);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return VertexGeom::NullPointer();
   }
 
@@ -206,7 +218,7 @@ VertexGeom::Pointer SampleSurfaceMeshSpecifiedPoints::generate_points()
 // -----------------------------------------------------------------------------
 void SampleSurfaceMeshSpecifiedPoints::assign_points(Int32ArrayType::Pointer iArray)
 {
-  QVector<size_t> tDims(1, m_NumPoints);
+  std::vector<size_t> tDims(1, m_NumPoints);
   getDataContainerArray()->getDataContainer("SpecifiedPoints")->getAttributeMatrix("SpecifiedPointsData")->resizeAttributeArrays(tDims);
   updateVertexInstancePointers();
 
@@ -222,10 +234,10 @@ void SampleSurfaceMeshSpecifiedPoints::assign_points(Int32ArrayType::Pointer iAr
 // -----------------------------------------------------------------------------
 void SampleSurfaceMeshSpecifiedPoints::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -258,7 +270,7 @@ AbstractFilter::Pointer SampleSurfaceMeshSpecifiedPoints::newFilterInstance(bool
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMeshSpecifiedPoints::getCompiledLibraryName() const
+QString SampleSurfaceMeshSpecifiedPoints::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -266,7 +278,7 @@ const QString SampleSurfaceMeshSpecifiedPoints::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMeshSpecifiedPoints::getBrandingString() const
+QString SampleSurfaceMeshSpecifiedPoints::getBrandingString() const
 {
   return "Sampling";
 }
@@ -274,7 +286,7 @@ const QString SampleSurfaceMeshSpecifiedPoints::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMeshSpecifiedPoints::getFilterVersion() const
+QString SampleSurfaceMeshSpecifiedPoints::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -284,7 +296,7 @@ const QString SampleSurfaceMeshSpecifiedPoints::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMeshSpecifiedPoints::getGroupName() const
+QString SampleSurfaceMeshSpecifiedPoints::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -292,7 +304,7 @@ const QString SampleSurfaceMeshSpecifiedPoints::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SampleSurfaceMeshSpecifiedPoints::getUuid()
+QUuid SampleSurfaceMeshSpecifiedPoints::getUuid() const
 {
   return QUuid("{0f44da6f-5272-5d69-8378-9bf0bc4ae4f9}");
 }
@@ -300,7 +312,7 @@ const QUuid SampleSurfaceMeshSpecifiedPoints::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMeshSpecifiedPoints::getSubGroupName() const
+QString SampleSurfaceMeshSpecifiedPoints::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ResolutionFilters;
 }
@@ -308,7 +320,60 @@ const QString SampleSurfaceMeshSpecifiedPoints::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SampleSurfaceMeshSpecifiedPoints::getHumanLabel() const
+QString SampleSurfaceMeshSpecifiedPoints::getHumanLabel() const
 {
   return "Sample Triangle Geometry at Specified Points";
+}
+
+// -----------------------------------------------------------------------------
+SampleSurfaceMeshSpecifiedPoints::Pointer SampleSurfaceMeshSpecifiedPoints::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SampleSurfaceMeshSpecifiedPoints> SampleSurfaceMeshSpecifiedPoints::New()
+{
+  struct make_shared_enabler : public SampleSurfaceMeshSpecifiedPoints
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SampleSurfaceMeshSpecifiedPoints::getNameOfClass() const
+{
+  return QString("SampleSurfaceMeshSpecifiedPoints");
+}
+
+// -----------------------------------------------------------------------------
+QString SampleSurfaceMeshSpecifiedPoints::ClassName()
+{
+  return QString("SampleSurfaceMeshSpecifiedPoints");
+}
+
+// -----------------------------------------------------------------------------
+void SampleSurfaceMeshSpecifiedPoints::setInputFilePath(const QString& value)
+{
+  m_InputFilePath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SampleSurfaceMeshSpecifiedPoints::getInputFilePath() const
+{
+  return m_InputFilePath;
+}
+
+// -----------------------------------------------------------------------------
+void SampleSurfaceMeshSpecifiedPoints::setOutputFilePath(const QString& value)
+{
+  m_OutputFilePath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SampleSurfaceMeshSpecifiedPoints::getOutputFilePath() const
+{
+  return m_OutputFilePath;
 }

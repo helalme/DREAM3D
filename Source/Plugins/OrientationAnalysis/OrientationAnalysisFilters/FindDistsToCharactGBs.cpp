@@ -41,17 +41,26 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindDistsToCharactGBs.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 #include "OrientationLib/LaueOps/LaueOps.h"
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -61,6 +70,17 @@
 #include <tbb/parallel_for.h>
 #include <tbb/partitioner.h>
 #include <tbb/task_scheduler_init.h>
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+};
+
 #endif
 
 const double FindDistsToCharactGBs::INF_DIST = 999.0;
@@ -147,11 +167,8 @@ public:
         g2ea[whichEa] = m_Eulers[3 * feature2 + whichEa];
       }
 
-      FOrientArrayType om(9, 0.0f);
-      FOrientTransformsType::eu2om(FOrientArrayType(g1ea, 3), om);
-      om.toGMatrix(g1);
-      FOrientTransformsType::eu2om(FOrientArrayType(g2ea, 3), om);
-      om.toGMatrix(g2);
+      OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g1ea, 3)).toGMatrix(g1);
+      OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g2ea, 3)).toGMatrix(g2);
 
       int32_t cryst = m_CrystalStructures[m_Phases[feature1]];
       int32_t nsym = m_OrientationOps[cryst]->getNumSymOps();
@@ -175,8 +192,7 @@ public:
           // calculate delta g
           MatrixMath::Multiply3x3with3x3(g1s, g2sT, dg); // dg -- the misorientation between adjacent grains
 
-          FOrientArrayType omAxisAngle(4, 0.0f);
-          FOrientTransformsType::om2ax(FOrientArrayType(dg), omAxisAngle);
+          OrientationF omAxisAngle = OrientationTransformation::om2ax<OrientationF, OrientationF>(OrientationF(dg));
 
           double misorAngle = omAxisAngle[3];
           double dotProd = fabs(omAxisAngle[0] * normal_grain1[0] + omAxisAngle[1] * normal_grain1[1] + omAxisAngle[2] * normal_grain1[2]);
@@ -262,7 +278,7 @@ FindDistsToCharactGBs::~FindDistsToCharactGBs() = default;
 // -----------------------------------------------------------------------------
 void FindDistsToCharactGBs::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateRequirement(SIMPL::TypeNames::Int32, 2, AttributeMatrix::Type::Face, IGeometry::Type::Triangle);
@@ -340,11 +356,11 @@ void FindDistsToCharactGBs::initialize()
 // -----------------------------------------------------------------------------
 void FindDistsToCharactGBs::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // Crystal Structures
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CrystalStructuresPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<unsigned int>, AbstractFilter>(this, getCrystalStructuresArrayPath(),
                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -391,49 +407,45 @@ void FindDistsToCharactGBs::dataCheck()
   // Distances
   QVector<IDataArray::Pointer> dataArrays;
   cDims[0] = 1;
-  m_DistToTiltPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getDistToTiltArrayPath(), 0,
-                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_DistToTiltPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getDistToTiltArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_DistToTiltPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_DistToTilt = m_DistToTiltPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_DistToTiltPtr.lock());
   }
 
   cDims[0] = 1;
-  m_DistToTwistPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, getDistToTwistArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_DistToTwistPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getDistToTwistArrayPath(), 0, cDims, "", DataArrayID32);
   if(nullptr != m_DistToTwistPtr.lock())          /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_DistToTwist = m_DistToTwistPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_DistToTwistPtr.lock());
   }
 
   cDims[0] = 1;
-  m_DistToSymmetricPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, getDistToSymmetricArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_DistToSymmetricPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getDistToSymmetricArrayPath(), 0, cDims, "", DataArrayID33);
   if(nullptr != m_DistToSymmetricPtr.lock())          /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_DistToSymmetric = m_DistToSymmetricPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_DistToSymmetricPtr.lock());
   }
 
   cDims[0] = 1;
-  m_DistTo180TiltPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(
-      this, getDistTo180TiltArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_DistTo180TiltPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, getDistTo180TiltArrayPath(), 0, cDims, "", DataArrayID34);
   if(nullptr != m_DistTo180TiltPtr.lock())          /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_DistTo180Tilt = m_DistTo180TiltPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_DistTo180TiltPtr.lock());
   }
@@ -460,10 +472,10 @@ void FindDistsToCharactGBs::preflight()
 // -----------------------------------------------------------------------------
 void FindDistsToCharactGBs::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -497,7 +509,7 @@ void FindDistsToCharactGBs::execute()
       return;
     }
     QString ss = QObject::tr("--> %1% completed").arg(int(100.0 * float(i) / float(numMeshTris)));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     if(i + trisChunkSize >= numMeshTris)
     {
       trisChunkSize = numMeshTris - i;
@@ -535,7 +547,7 @@ AbstractFilter::Pointer FindDistsToCharactGBs::newFilterInstance(bool copyFilter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDistsToCharactGBs::getCompiledLibraryName() const
+QString FindDistsToCharactGBs::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -543,7 +555,7 @@ const QString FindDistsToCharactGBs::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDistsToCharactGBs::getBrandingString() const
+QString FindDistsToCharactGBs::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -551,7 +563,7 @@ const QString FindDistsToCharactGBs::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDistsToCharactGBs::getFilterVersion() const
+QString FindDistsToCharactGBs::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -562,7 +574,7 @@ const QString FindDistsToCharactGBs::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDistsToCharactGBs::getGroupName() const
+QString FindDistsToCharactGBs::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -570,7 +582,7 @@ const QString FindDistsToCharactGBs::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindDistsToCharactGBs::getUuid()
+QUuid FindDistsToCharactGBs::getUuid() const
 {
   return QUuid("{94f986fc-1295-5e32-9808-752855fa658a}");
 }
@@ -578,7 +590,7 @@ const QUuid FindDistsToCharactGBs::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDistsToCharactGBs::getSubGroupName() const
+QString FindDistsToCharactGBs::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -586,7 +598,144 @@ const QString FindDistsToCharactGBs::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDistsToCharactGBs::getHumanLabel() const
+QString FindDistsToCharactGBs::getHumanLabel() const
 {
   return "Find Distances to Characteristic Grain Boundaries";
+}
+
+// -----------------------------------------------------------------------------
+FindDistsToCharactGBs::Pointer FindDistsToCharactGBs::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindDistsToCharactGBs> FindDistsToCharactGBs::New()
+{
+  struct make_shared_enabler : public FindDistsToCharactGBs
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindDistsToCharactGBs::getNameOfClass() const
+{
+  return QString("FindDistsToCharactGBs");
+}
+
+// -----------------------------------------------------------------------------
+QString FindDistsToCharactGBs::ClassName()
+{
+  return QString("FindDistsToCharactGBs");
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setFeatureEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_FeatureEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getFeatureEulerAnglesArrayPath() const
+{
+  return m_FeatureEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setSurfaceMeshFaceNormalsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceNormalsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getSurfaceMeshFaceNormalsArrayPath() const
+{
+  return m_SurfaceMeshFaceNormalsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setDistToTiltArrayPath(const DataArrayPath& value)
+{
+  m_DistToTiltArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getDistToTiltArrayPath() const
+{
+  return m_DistToTiltArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setDistToTwistArrayPath(const DataArrayPath& value)
+{
+  m_DistToTwistArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getDistToTwistArrayPath() const
+{
+  return m_DistToTwistArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setDistToSymmetricArrayPath(const DataArrayPath& value)
+{
+  m_DistToSymmetricArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getDistToSymmetricArrayPath() const
+{
+  return m_DistToSymmetricArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDistsToCharactGBs::setDistTo180TiltArrayPath(const DataArrayPath& value)
+{
+  m_DistTo180TiltArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDistsToCharactGBs::getDistTo180TiltArrayPath() const
+{
+  return m_DistTo180TiltArrayPath;
 }

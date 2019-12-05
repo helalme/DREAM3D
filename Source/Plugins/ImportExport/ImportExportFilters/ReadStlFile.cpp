@@ -33,7 +33,11 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ReadStlFile.h"
+
+#include <QtCore/QFileInfo>
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
 #include <tbb/blocked_range.h>
@@ -42,9 +46,16 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
@@ -54,6 +65,15 @@
 
 #define STL_HEADER_LENGTH 80
 
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataArrayID31 = 31,
+
+  DataContainerID = 1
+};
+
 /**
  * @brief The FindUniqueIdsImpl class implements a threaded algorithm that determines the set of
  * unique vertices in the triangle geometry
@@ -61,7 +81,7 @@
 class FindUniqueIdsImpl
 {
 public:
-  FindUniqueIdsImpl(SharedVertexList::Pointer vertex, QVector<QVector<size_t>> nodesInBin, int64_t* uniqueIds)
+  FindUniqueIdsImpl(SharedVertexList::Pointer vertex, QVector<std::vector<size_t>> nodesInBin, int64_t* uniqueIds)
   : m_Vertex(vertex)
   , m_NodesInBin(nodesInBin)
   , m_UniqueIds(uniqueIds)
@@ -99,7 +119,7 @@ public:
 #endif
 private:
   SharedVertexList::Pointer m_Vertex;
-  QVector<QVector<size_t>> m_NodesInBin;
+  QVector<std::vector<size_t>> m_NodesInBin;
   int64_t* m_UniqueIds;
 };
 
@@ -130,13 +150,13 @@ ReadStlFile::~ReadStlFile() = default;
 // -----------------------------------------------------------------------------
 void ReadStlFile::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("STL File", StlFilePath, FilterParameter::Parameter, ReadStlFile, "*.stl", "STL File"));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", SurfaceMeshDataContainerName, FilterParameter::CreatedArray, ReadStlFile));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", SurfaceMeshDataContainerName, FilterParameter::CreatedArray, ReadStlFile));
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Attribute Matrix", FaceAttributeMatrixName, FilterParameter::CreatedArray, ReadStlFile));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Normals", FaceNormalsArrayName, FilterParameter::CreatedArray, ReadStlFile));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Face Attribute Matrix", FaceAttributeMatrixName, SurfaceMeshDataContainerName, FilterParameter::CreatedArray, ReadStlFile));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Face Normals", FaceNormalsArrayName, SurfaceMeshDataContainerName, FaceAttributeMatrixName, FilterParameter::CreatedArray, ReadStlFile));
   setFilterParameters(parameters);
 }
 
@@ -148,7 +168,7 @@ void ReadStlFile::readFilterParameters(AbstractFilterParametersReader* reader, i
   reader->openFilterGroup(this, index);
   setStlFilePath(reader->readString("StlFilePath", getStlFilePath()));
   setFaceAttributeMatrixName(reader->readString("FaceAttributeMatrixName", getFaceAttributeMatrixName()));
-  setSurfaceMeshDataContainerName(reader->readString("SurfaceMeshDataContainerName", getSurfaceMeshDataContainerName()));
+  setSurfaceMeshDataContainerName(reader->readDataArrayPath("SurfaceMeshDataContainerName", getSurfaceMeshDataContainerName()));
   setFaceNormalsArrayName(reader->readString("FaceNormalsArrayName", getFaceNormalsArrayName()));
   reader->closeFilterGroup();
 }
@@ -158,8 +178,8 @@ void ReadStlFile::readFilterParameters(AbstractFilterParametersReader* reader, i
 // -----------------------------------------------------------------------------
 void ReadStlFile::updateFaceInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_FaceNormalsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -186,20 +206,27 @@ void ReadStlFile::initialize()
 void ReadStlFile::dataCheck()
 {
   initialize();
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataArrayPath tempPath;
 
-  if(m_StlFilePath.isEmpty())
+  QFileInfo fi(getStlFilePath());
+
+  if(getStlFilePath().isEmpty())
   {
-    setErrorCondition(-1003);
-    notifyErrorMessage(getHumanLabel(), "The input file must be set", -1003);
+    QString ss = QObject::tr("The input file must be set");
+    setErrorCondition(-387, ss);
+  }
+  else if(!fi.exists())
+  {
+    QString ss = QObject::tr("The input file does not exist");
+    setErrorCondition(-388, ss);
   }
 
   // Create a SufaceMesh Data Container with Faces, Vertices, Feature Labels and optionally Phase labels
-  DataContainer::Pointer sm = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getSurfaceMeshDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer sm = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getSurfaceMeshDataContainerName(), DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -209,12 +236,12 @@ void ReadStlFile::dataCheck()
 
   sm->setGeometry(triangleGeom);
 
-  QVector<size_t> tDims(1, 0);
-  sm->createNonPrereqAttributeMatrix(this, getFaceAttributeMatrixName(), tDims, AttributeMatrix::Type::Face);
+  std::vector<size_t> tDims(1, 0);
+  sm->createNonPrereqAttributeMatrix(this, getFaceAttributeMatrixName(), tDims, AttributeMatrix::Type::Face, AttributeMatrixID21);
 
-  QVector<size_t> cDims(1, 3);
-  tempPath.update(getSurfaceMeshDataContainerName(), getFaceAttributeMatrixName(), getFaceNormalsArrayName());
-  m_FaceNormalsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, tempPath, 0, cDims);
+  std::vector<size_t> cDims(1, 3);
+  tempPath.update(getSurfaceMeshDataContainerName().getDataContainerName(), getFaceAttributeMatrixName(), getFaceNormalsArrayName());
+  m_FaceNormalsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<double>, AbstractFilter, double>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_FaceNormalsPtr.lock())
   {
     m_FaceNormals = m_FaceNormalsPtr.lock()->getPointer(0);
@@ -239,10 +266,10 @@ void ReadStlFile::preflight()
 // -----------------------------------------------------------------------------
 void ReadStlFile::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -250,8 +277,8 @@ void ReadStlFile::execute()
   readFile();
   eliminate_duplicate_nodes();
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -265,8 +292,7 @@ void ReadStlFile::readFile()
   FILE* f = fopen(m_StlFilePath.toLatin1().data(), "rb");
   if(nullptr == f)
   {
-    setErrorCondition(-1003);
-    notifyErrorMessage(getHumanLabel(), "Error opening STL file", -1003);
+    setErrorCondition(-1003, "Error opening STL file");
     return;
   }
 
@@ -297,10 +323,10 @@ void ReadStlFile::readFile()
   triangleGeom->resizeTriList(triCount);
   triangleGeom->resizeVertexList(triCount * 3);
   float* nodes = triangleGeom->getVertexPointer(0);
-  int64_t* triangles = triangleGeom->getTriPointer(0);
+  MeshIndexType* triangles = triangleGeom->getTriPointer(0);
 
   // Resize the triangle attribute matrix to hold the normals and update the normals pointer
-  QVector<size_t> tDims(1, static_cast<size_t>(triCount));
+  std::vector<size_t> tDims(1, static_cast<size_t>(triCount));
   sm->getAttributeMatrix(getFaceAttributeMatrixName())->resizeAttributeArrays(tDims);
   updateFaceInstancePointers();
 
@@ -417,9 +443,9 @@ void ReadStlFile::eliminate_duplicate_nodes()
 
   TriangleGeom::Pointer triangleGeom = sm->getGeometryAs<TriangleGeom>();
   float* vertex = triangleGeom->getVertexPointer(0);
-  int64_t nNodes_ = triangleGeom->getNumberOfVertices();
-  int64_t* triangles = triangleGeom->getTriPointer(0);
-  int64_t nTriangles = triangleGeom->getNumberOfTris();
+  MeshIndexType nNodes_ = triangleGeom->getNumberOfVertices();
+  MeshIndexType* triangles = triangleGeom->getTriPointer(0);
+  MeshIndexType nTriangles = triangleGeom->getNumberOfTris();
   size_t nNodes = 0;
   if(nNodes_ > 0)
   {
@@ -429,7 +455,7 @@ void ReadStlFile::eliminate_duplicate_nodes()
   float stepY = (m_maxYcoord - m_minYcoord) / 100.0f;
   float stepZ = (m_maxZcoord - m_minZcoord) / 100.0f;
 
-  QVector<QVector<size_t>> nodesInBin(100 * 100 * 100);
+  QVector<std::vector<size_t>> nodesInBin(100 * 100 * 100);
 
   // determine (xyz) bin each node falls in - used to speed up node comparison
   int32_t bin = 0, xBin = 0, yBin = 0, zBin = 0;
@@ -455,11 +481,11 @@ void ReadStlFile::eliminate_duplicate_nodes()
   }
 
   // Create array to hold unique node numbers
-  Int64ArrayType::Pointer uniqueIdsPtr = Int64ArrayType::CreateArray(nNodes, "uniqueIds");
+  Int64ArrayType::Pointer uniqueIdsPtr = Int64ArrayType::CreateArray(nNodes, "uniqueIds", true);
   int64_t* uniqueIds = uniqueIdsPtr->getPointer(0);
-  for(int64_t i = 0; i < nNodes_; i++)
+  for(MeshIndexType i = 0; i < nNodes_; i++)
   {
-    uniqueIds[i] = i;
+    uniqueIds[i] = static_cast<int64_t>(i);
   }
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -534,7 +560,7 @@ AbstractFilter::Pointer ReadStlFile::newFilterInstance(bool copyFilterParameters
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadStlFile::getCompiledLibraryName() const
+QString ReadStlFile::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -542,7 +568,7 @@ const QString ReadStlFile::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadStlFile::getBrandingString() const
+QString ReadStlFile::getBrandingString() const
 {
   return "IO";
 }
@@ -550,7 +576,7 @@ const QString ReadStlFile::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadStlFile::getFilterVersion() const
+QString ReadStlFile::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -560,7 +586,7 @@ const QString ReadStlFile::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadStlFile::getGroupName() const
+QString ReadStlFile::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -568,7 +594,7 @@ const QString ReadStlFile::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ReadStlFile::getUuid()
+QUuid ReadStlFile::getUuid() const
 {
   return QUuid("{980c7bfd-20b2-5711-bc3b-0190b9096c34}");
 }
@@ -576,7 +602,7 @@ const QUuid ReadStlFile::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadStlFile::getSubGroupName() const
+QString ReadStlFile::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -584,7 +610,84 @@ const QString ReadStlFile::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReadStlFile::getHumanLabel() const
+QString ReadStlFile::getHumanLabel() const
 {
   return "Import STL File";
+}
+
+// -----------------------------------------------------------------------------
+ReadStlFile::Pointer ReadStlFile::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ReadStlFile> ReadStlFile::New()
+{
+  struct make_shared_enabler : public ReadStlFile
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadStlFile::getNameOfClass() const
+{
+  return QString("ReadStlFile");
+}
+
+// -----------------------------------------------------------------------------
+QString ReadStlFile::ClassName()
+{
+  return QString("ReadStlFile");
+}
+
+// -----------------------------------------------------------------------------
+void ReadStlFile::setSurfaceMeshDataContainerName(const DataArrayPath& value)
+{
+  m_SurfaceMeshDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ReadStlFile::getSurfaceMeshDataContainerName() const
+{
+  return m_SurfaceMeshDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadStlFile::setFaceAttributeMatrixName(const QString& value)
+{
+  m_FaceAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadStlFile::getFaceAttributeMatrixName() const
+{
+  return m_FaceAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void ReadStlFile::setStlFilePath(const QString& value)
+{
+  m_StlFilePath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadStlFile::getStlFilePath() const
+{
+  return m_StlFilePath;
+}
+
+// -----------------------------------------------------------------------------
+void ReadStlFile::setFaceNormalsArrayName(const QString& value)
+{
+  m_FaceNormalsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString ReadStlFile::getFaceNormalsArrayName() const
+{
+  return m_FaceNormalsArrayName;
 }

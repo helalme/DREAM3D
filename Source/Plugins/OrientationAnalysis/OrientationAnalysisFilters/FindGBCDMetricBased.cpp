@@ -43,11 +43,16 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindGBCDMetricBased.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AxisAngleFilterParameter.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
@@ -58,9 +63,11 @@
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Utilities/FileSystemPathHelper.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationLib/LaueOps/LaueOps.h"
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -120,7 +127,7 @@ public:
 class TrisSelector
 {
   bool m_ExcludeTripleLines;
-  int64_t* m_Triangles;
+  MeshIndexType* m_Triangles;
   int8_t* m_NodeTypes;
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -137,7 +144,6 @@ class TrisSelector
   uint32_t cryst;
   int32_t nsym;
 
-  uint32_t* m_CrystalStructures;
   float* m_Eulers;
   int32_t* m_Phases;
   int32_t* m_FaceLabels;
@@ -145,7 +151,7 @@ class TrisSelector
   double* m_FaceAreas;
 
 public:
-  TrisSelector(bool __m_ExcludeTripleLines, int64_t* __m_Triangles, int8_t* __m_NodeTypes,
+  TrisSelector(bool __m_ExcludeTripleLines, MeshIndexType* __m_Triangles, int8_t* __m_NodeTypes,
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
                tbb::concurrent_vector<TriAreaAndNormals>* __selectedTris,
@@ -162,7 +168,6 @@ public:
   , m_misorResol(__m_misorResol)
   , m_PhaseOfInterest(__m_PhaseOfInterest)
   , gFixedT(__gFixedT)
-  , m_CrystalStructures(__m_CrystalStructures)
   , m_Eulers(__m_Eulers)
   , m_Phases(__m_Phases)
   , m_FaceLabels(__m_FaceLabels)
@@ -244,11 +249,8 @@ public:
         g2ea[whichEa] = m_Eulers[3 * feature2 + whichEa];
       }
 
-      FOrientArrayType om(9, 0.0f);
-      FOrientTransformsType::eu2om(FOrientArrayType(g1ea, 3), om);
-      om.toGMatrix(g1);
-      FOrientTransformsType::eu2om(FOrientArrayType(g2ea, 3), om);
-      om.toGMatrix(g2);
+      OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g1ea, 3)).toGMatrix(g1);
+      OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(g2ea, 3)).toGMatrix(g2);
 
       for(int j = 0; j < nsym; j++)
       {
@@ -317,8 +319,8 @@ public:
  */
 class ProbeDistrib
 {
-  QVector<double>* distribValues;
-  QVector<double>* errorValues;
+  QVector<double>* distribValues = nullptr;
+  QVector<double>* errorValues = nullptr;
   QVector<float> samplPtsX;
   QVector<float> samplPtsY;
   QVector<float> samplPtsZ;
@@ -442,7 +444,7 @@ FindGBCDMetricBased::~FindGBCDMetricBased() = default;
 // -----------------------------------------------------------------------------
 void FindGBCDMetricBased::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Phase of Interest", PhaseOfInterest, FilterParameter::Parameter, FindGBCDMetricBased));
   parameters.push_back(SIMPL_NEW_AXISANGLE_FP("Fixed Misorientation", MisorientationRotation, FilterParameter::Parameter, FindGBCDMetricBased));
   {
@@ -556,39 +558,35 @@ void FindGBCDMetricBased::initialize()
 // -----------------------------------------------------------------------------
 void FindGBCDMetricBased::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // Fixed Misorientation (filter params.)
   if(getMisorientationRotation().angle <= 0.0 || getMisorientationRotation().angle > 180.0)
   {
     QString degSymbol = QChar(0x00B0);
-    setErrorCondition(-1000);
     QString ss = "The misorientation angle should be in the range (0, 180" + degSymbol + "]";
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1000, ss);
   }
 
   if(getMisorientationRotation().h == 0.0f && getMisorientationRotation().k == 0.0f && getMisorientationRotation().l == 0.0f)
   {
-    setErrorCondition(-1001);
     QString ss = QObject::tr("All three indices of the misorientation axis cannot be 0");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1001, ss);
   }
 
   // Number of Sampling Points (filter params.)
   if(getNumSamplPts() < 1)
   {
-    setErrorCondition(-1002);
     QString ss = QObject::tr("The number of sampling points must be greater than zero");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1002, ss);
   }
 
   // Set some reasonable value, but allow user to use more if he/she knows what he/she does
   if(getNumSamplPts() > 5000)
   {
-    setWarningCondition(-1003);
     QString ss = QObject::tr("The number of sampling points is greater than 5000, but it is unlikely that many are needed");
-    notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+    setWarningCondition(-1003, ss);
   }
 
   // Output files (filter params.)
@@ -627,13 +625,12 @@ void FindGBCDMetricBased::dataCheck()
 
   if(!getDistOutputFile().isEmpty() && getDistOutputFile() == getErrOutputFile())
   {
-    setErrorCondition(-1008);
     QString ss = QObject::tr("The output files must be different");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1008, ss);
   }
 
   // Crystal Structures
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CrystalStructuresPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<unsigned int>, AbstractFilter>(this, getCrystalStructuresArrayPath(),
                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -646,9 +643,8 @@ void FindGBCDMetricBased::dataCheck()
   {
     if(getPhaseOfInterest() >= static_cast<int>(m_CrystalStructuresPtr.lock()->getNumberOfTuples()) || getPhaseOfInterest() <= 0)
     {
-      setErrorCondition(-1009);
       QString ss = QObject::tr("The phase index is either larger than the number of Ensembles or smaller than 1");
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1009, ss);
     }
   }
 
@@ -735,10 +731,10 @@ void FindGBCDMetricBased::preflight()
 // -----------------------------------------------------------------------------
 void FindGBCDMetricBased::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -764,7 +760,7 @@ void FindGBCDMetricBased::execute()
   DataContainer::Pointer sm = getDataContainerArray()->getDataContainer(getSurfaceMeshFaceAreasArrayPath().getDataContainerName());
   TriangleGeom::Pointer triangleGeom = sm->getGeometryAs<TriangleGeom>();
   SharedTriList::Pointer m_TrianglesPtr = triangleGeom->getTriangles();
-  int64_t* m_Triangles = m_TrianglesPtr->getPointer(0);
+  MeshIndexType* m_Triangles = m_TrianglesPtr->getPointer(0);
 
   // -------------------- check if directiories are ok and if output files can be opened -----------
 
@@ -776,8 +772,7 @@ void FindGBCDMetricBased::execute()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(distOutFileDir.path());
-    notifyErrorMessage(getHumanLabel(), ss, -1);
-    setErrorCondition(-1);
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -785,8 +780,7 @@ void FindGBCDMetricBased::execute()
   if(!distOutFile.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getDistOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-100, ss);
     return;
   }
 
@@ -797,8 +791,7 @@ void FindGBCDMetricBased::execute()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(errOutFileDir.path());
-    notifyErrorMessage(getHumanLabel(), ss, -1);
-    setErrorCondition(-1);
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -806,8 +799,7 @@ void FindGBCDMetricBased::execute()
   if(!errOutFile.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getDistOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-100, ss);
     return;
   }
 
@@ -817,8 +809,7 @@ void FindGBCDMetricBased::execute()
   if(nullptr == fDist)
   {
     QString ss = QObject::tr("Error opening distribution output file '%1'").arg(m_DistOutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -827,8 +818,7 @@ void FindGBCDMetricBased::execute()
   if(nullptr == fErr)
   {
     QString ss = QObject::tr("Error opening distribution errors output file '%1'").arg(m_ErrOutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -849,7 +839,7 @@ void FindGBCDMetricBased::execute()
 
   // ------------------------------ generation of sampling points ----------------------------------
   QString ss = QObject::tr("|| Generating sampling points");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 
   // generate "Golden Section Spiral", see http://www.softimageblog.com/archives/115
   int numSamplPts_WholeSph = 2 * m_NumSamplPts; // here we generate points on the whole sphere
@@ -897,9 +887,7 @@ void FindGBCDMetricBased::execute()
     float gFixedAngle = static_cast<float>(m_MisorientationRotation.angle * SIMPLib::Constants::k_PiOver180);
     float gFixedAxis[3] = {m_MisorientationRotation.h, m_MisorientationRotation.k, m_MisorientationRotation.l};
     MatrixMath::Normalize3x1(gFixedAxis);
-    FOrientArrayType om(9);
-    FOrientTransformsType::ax2om(FOrientArrayType(gFixedAxis[0], gFixedAxis[1], gFixedAxis[2], gFixedAngle), om);
-    om.toGMatrix(gFixed);
+    OrientationTransformation::ax2om<OrientationF, OrientationF>(OrientationF(gFixedAxis[0], gFixedAxis[1], gFixedAxis[2], gFixedAngle)).toGMatrix(gFixed);
   }
 
   MatrixMath::Transpose3x3(gFixed, gFixedT);
@@ -930,7 +918,7 @@ void FindGBCDMetricBased::execute()
       return;
     }
     ss = QObject::tr("|| Step 1/2: Selecting Triangles with the Specified Misorientation (%1% completed)").arg(int(100.0 * float(i) / float(numMeshTris)));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     if(i + trisChunkSize >= numMeshTris)
     {
       trisChunkSize = numMeshTris - i;
@@ -1001,7 +989,7 @@ void FindGBCDMetricBased::execute()
       return;
     }
     ss = QObject::tr("|| Step 2/2: Computing Distribution Values at the Section of Interest (%1% completed)").arg(int(100.0 * float(i) / float(samplPtsX.size())));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     if(i + pointsChunkSize >= samplPtsX.size())
     {
       pointsChunkSize = samplPtsX.size() - i;
@@ -1072,7 +1060,7 @@ AbstractFilter::Pointer FindGBCDMetricBased::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCDMetricBased::getCompiledLibraryName() const
+QString FindGBCDMetricBased::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -1080,7 +1068,7 @@ const QString FindGBCDMetricBased::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCDMetricBased::getBrandingString() const
+QString FindGBCDMetricBased::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -1088,7 +1076,7 @@ const QString FindGBCDMetricBased::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCDMetricBased::getFilterVersion() const
+QString FindGBCDMetricBased::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -1099,7 +1087,7 @@ const QString FindGBCDMetricBased::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCDMetricBased::getGroupName() const
+QString FindGBCDMetricBased::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -1107,7 +1095,7 @@ const QString FindGBCDMetricBased::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindGBCDMetricBased::getUuid()
+QUuid FindGBCDMetricBased::getUuid() const
 {
   return QUuid("{d67e9f28-2fe5-5188-b0f8-323a7e603de6}");
 }
@@ -1115,7 +1103,7 @@ const QUuid FindGBCDMetricBased::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCDMetricBased::getSubGroupName() const
+QString FindGBCDMetricBased::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -1123,7 +1111,228 @@ const QString FindGBCDMetricBased::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindGBCDMetricBased::getHumanLabel() const
+QString FindGBCDMetricBased::getHumanLabel() const
 {
   return "Find GBCD (Metric-Based Approach)";
+}
+
+// -----------------------------------------------------------------------------
+FindGBCDMetricBased::Pointer FindGBCDMetricBased::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindGBCDMetricBased> FindGBCDMetricBased::New()
+{
+  struct make_shared_enabler : public FindGBCDMetricBased
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCDMetricBased::getNameOfClass() const
+{
+  return QString("FindGBCDMetricBased");
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCDMetricBased::ClassName()
+{
+  return QString("FindGBCDMetricBased");
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setPhaseOfInterest(int value)
+{
+  m_PhaseOfInterest = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindGBCDMetricBased::getPhaseOfInterest() const
+{
+  return m_PhaseOfInterest;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setMisorientationRotation(const AxisAngleInput_t& value)
+{
+  m_MisorientationRotation = value;
+}
+
+// -----------------------------------------------------------------------------
+AxisAngleInput_t FindGBCDMetricBased::getMisorientationRotation() const
+{
+  return m_MisorientationRotation;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setChosenLimitDists(int value)
+{
+  m_ChosenLimitDists = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindGBCDMetricBased::getChosenLimitDists() const
+{
+  return m_ChosenLimitDists;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setNumSamplPts(int value)
+{
+  m_NumSamplPts = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindGBCDMetricBased::getNumSamplPts() const
+{
+  return m_NumSamplPts;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setExcludeTripleLines(bool value)
+{
+  m_ExcludeTripleLines = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindGBCDMetricBased::getExcludeTripleLines() const
+{
+  return m_ExcludeTripleLines;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setDistOutputFile(const QString& value)
+{
+  m_DistOutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCDMetricBased::getDistOutputFile() const
+{
+  return m_DistOutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setErrOutputFile(const QString& value)
+{
+  m_ErrOutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindGBCDMetricBased::getErrOutputFile() const
+{
+  return m_ErrOutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setSaveRelativeErr(bool value)
+{
+  m_SaveRelativeErr = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindGBCDMetricBased::getSaveRelativeErr() const
+{
+  return m_SaveRelativeErr;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setFeatureEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_FeatureEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getFeatureEulerAnglesArrayPath() const
+{
+  return m_FeatureEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setSurfaceMeshFaceNormalsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceNormalsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getSurfaceMeshFaceNormalsArrayPath() const
+{
+  return m_SurfaceMeshFaceNormalsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setSurfaceMeshFaceAreasArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceAreasArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getSurfaceMeshFaceAreasArrayPath() const
+{
+  return m_SurfaceMeshFaceAreasArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setSurfaceMeshFeatureFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFeatureFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getSurfaceMeshFeatureFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFeatureFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindGBCDMetricBased::setNodeTypesArrayPath(const DataArrayPath& value)
+{
+  m_NodeTypesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindGBCDMetricBased::getNodeTypesArrayPath() const
+{
+  return m_NodeTypesArrayPath;
 }

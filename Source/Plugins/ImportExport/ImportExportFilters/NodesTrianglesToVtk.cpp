@@ -33,13 +33,17 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "NodesTrianglesToVtk.h"
 
-#include <QtCore/QDir>
 #include <QtCore/QFile>
-#include <QtCore/QtEndian>
+#include <QtCore/QFileInfo>
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
@@ -71,7 +75,7 @@ NodesTrianglesToVtk::~NodesTrianglesToVtk() = default;
 // -----------------------------------------------------------------------------
 void NodesTrianglesToVtk::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Nodes File", NodesFile, FilterParameter::Parameter, NodesTrianglesToVtk));
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Triangles File", TrianglesFile, FilterParameter::Parameter, NodesTrianglesToVtk));
@@ -109,50 +113,44 @@ void NodesTrianglesToVtk::initialize()
 // -----------------------------------------------------------------------------
 void NodesTrianglesToVtk::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QFileInfo fi(m_TrianglesFile);
   if(m_TrianglesFile.isEmpty())
   {
-    setErrorCondition(-1000);
-    notifyErrorMessage(getHumanLabel(), "Triangles file is not set correctly", -1001);
+    setErrorCondition(-1001, "Triangles file is not set correctly");
   }
   else if(!fi.exists())
   {
 
     if(getInPreflight())
     {
-      setWarningCondition(-1001);
       QString ss = "Triangles file does not exist currently.\nYou must have another filter that creates these files before this filter in your pipeline";
-      notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+      setWarningCondition(-1002, ss);
     }
     else
     {
-      setErrorCondition(-1002);
-      notifyErrorMessage(getHumanLabel(), "Triangles file does not exist currently.\nYou must have another filter that creates these files before this filter in your pipeline", -1004);
+      setErrorCondition(-1003, "Triangles file does not exist currently.\nYou must have another filter that creates these files before this filter in your pipeline");
     }
   }
 
   QFileInfo fii(m_NodesFile);
   if(m_NodesFile.isEmpty())
   {
-    setErrorCondition(-1003);
-    notifyErrorMessage(getHumanLabel(), "Nodes file path or name is emtpy", -1002);
+    setErrorCondition(-1004, "Nodes file path or name is emtpy");
   }
   else if(!fii.exists())
   {
 
     if(getInPreflight())
     {
-      setWarningCondition(-1004);
       QString ss = "Nodes file does not exist currently. You must have another filter that creates these files before this filter in your pipeline";
-      notifyWarningMessage(getHumanLabel(), ss, getWarningCondition());
+      setWarningCondition(-1005, ss);
     }
     else
     {
-      setErrorCondition(-1005);
-      notifyErrorMessage(getHumanLabel(), "Nodes file does not exist currently. You must have another filter that creates these files before this filter in your pipeline", -1005);
+      setErrorCondition(-1006, "Nodes file does not exist currently. You must have another filter that creates these files before this filter in your pipeline");
     }
   }
 
@@ -180,7 +178,7 @@ void NodesTrianglesToVtk::execute()
   // int err = 0;
 
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -192,8 +190,7 @@ void NodesTrianglesToVtk::execute()
   {
 
     QString ss = QObject::tr("Error opening nodes file '%1'").arg(m_NodesFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, -666);
+    setErrorCondition(-666, ss);
     return;
   }
 
@@ -202,7 +199,7 @@ void NodesTrianglesToVtk::execute()
   fscanf(nodesFile, "%d", &nNodes);
   {
     QString ss = QObject::tr("Node Count from %1 File: %2").arg(getNodesFile()).arg(nNodes);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
   }
 
   // Open the triangles file for reading
@@ -211,8 +208,7 @@ void NodesTrianglesToVtk::execute()
   {
 
     QString ss = QObject::tr(": Error opening Triangles file '%1'").arg(m_TrianglesFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, -666);
+    setErrorCondition(-667, ss);
     return;
   }
   // how many triangles are in the file
@@ -221,7 +217,7 @@ void NodesTrianglesToVtk::execute()
 
   {
     QString ss = QObject::tr("Triangle Count from %1 File: %2").arg(getTrianglesFile()).arg(nTriangles);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
   }
   // Open the output VTK File for writing
   FILE* vtkFile = nullptr;
@@ -230,8 +226,7 @@ void NodesTrianglesToVtk::execute()
   {
 
     QString ss = QObject::tr(": Error creating Triangles VTK Visualization '%1'").arg(getOutputVtkFile());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, -666);
+    setErrorCondition(-668, ss);
     return;
   }
   fprintf(vtkFile, "# vtk DataFile Version 2.0\n");
@@ -331,7 +326,7 @@ void NodesTrianglesToVtk::execute()
     err = writeBinaryCellData(m_TrianglesFile, vtkFile, nTriangles, m_WriteConformalMesh);
     if(err < 0)
     {
-      setErrorCondition(-9000);
+      setErrorCondition(err, tr("Could not write binary cell data to file '%1'").arg(getOutputVtkFile()));
     }
   }
   else
@@ -339,7 +334,7 @@ void NodesTrianglesToVtk::execute()
     err = writeASCIICellData(m_TrianglesFile, vtkFile, nTriangles, m_WriteConformalMesh);
     if(err < 0)
     {
-      setErrorCondition(-9001);
+      setErrorCondition(err, tr("Could not write ASCII cell data to file '%1'").arg(getOutputVtkFile()));
     }
   }
 
@@ -349,7 +344,7 @@ void NodesTrianglesToVtk::execute()
     err = writeBinaryPointData(m_NodesFile, vtkFile, nNodes, m_WriteConformalMesh);
     if(err < 0)
     {
-      setErrorCondition(-9002);
+      setErrorCondition(err, tr("Could not write binary point data to file '%1'").arg(getOutputVtkFile()));
     }
   }
   else
@@ -357,7 +352,7 @@ void NodesTrianglesToVtk::execute()
     err = writeASCIIPointData(m_NodesFile, vtkFile, nNodes, m_WriteConformalMesh);
     if(err < 0)
     {
-      setErrorCondition(-9003);
+      setErrorCondition(err, tr("Could not write ASCII point data to file '%1'").arg(getOutputVtkFile()));
     }
   }
 
@@ -366,8 +361,8 @@ void NodesTrianglesToVtk::execute()
   // Close the input and output files
   fclose(vtkFile);
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -587,7 +582,7 @@ AbstractFilter::Pointer NodesTrianglesToVtk::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NodesTrianglesToVtk::getCompiledLibraryName() const
+QString NodesTrianglesToVtk::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -595,7 +590,7 @@ const QString NodesTrianglesToVtk::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NodesTrianglesToVtk::getBrandingString() const
+QString NodesTrianglesToVtk::getBrandingString() const
 {
   return "IO";
 }
@@ -603,7 +598,7 @@ const QString NodesTrianglesToVtk::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NodesTrianglesToVtk::getFilterVersion() const
+QString NodesTrianglesToVtk::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -614,7 +609,7 @@ const QString NodesTrianglesToVtk::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NodesTrianglesToVtk::getGroupName() const
+QString NodesTrianglesToVtk::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -622,7 +617,7 @@ const QString NodesTrianglesToVtk::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid NodesTrianglesToVtk::getUuid()
+QUuid NodesTrianglesToVtk::getUuid() const
 {
   return QUuid("{a1d2eddd-6420-53e3-823b-b44d4a5965bb}");
 }
@@ -630,7 +625,7 @@ const QUuid NodesTrianglesToVtk::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NodesTrianglesToVtk::getSubGroupName() const
+QString NodesTrianglesToVtk::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -638,7 +633,96 @@ const QString NodesTrianglesToVtk::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString NodesTrianglesToVtk::getHumanLabel() const
+QString NodesTrianglesToVtk::getHumanLabel() const
 {
   return "Convert Nodes & Triangles To Vtk";
+}
+
+// -----------------------------------------------------------------------------
+NodesTrianglesToVtk::Pointer NodesTrianglesToVtk::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<NodesTrianglesToVtk> NodesTrianglesToVtk::New()
+{
+  struct make_shared_enabler : public NodesTrianglesToVtk
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString NodesTrianglesToVtk::getNameOfClass() const
+{
+  return QString("NodesTrianglesToVtk");
+}
+
+// -----------------------------------------------------------------------------
+QString NodesTrianglesToVtk::ClassName()
+{
+  return QString("NodesTrianglesToVtk");
+}
+
+// -----------------------------------------------------------------------------
+void NodesTrianglesToVtk::setNodesFile(const QString& value)
+{
+  m_NodesFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString NodesTrianglesToVtk::getNodesFile() const
+{
+  return m_NodesFile;
+}
+
+// -----------------------------------------------------------------------------
+void NodesTrianglesToVtk::setTrianglesFile(const QString& value)
+{
+  m_TrianglesFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString NodesTrianglesToVtk::getTrianglesFile() const
+{
+  return m_TrianglesFile;
+}
+
+// -----------------------------------------------------------------------------
+void NodesTrianglesToVtk::setOutputVtkFile(const QString& value)
+{
+  m_OutputVtkFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString NodesTrianglesToVtk::getOutputVtkFile() const
+{
+  return m_OutputVtkFile;
+}
+
+// -----------------------------------------------------------------------------
+void NodesTrianglesToVtk::setWriteBinaryFile(bool value)
+{
+  m_WriteBinaryFile = value;
+}
+
+// -----------------------------------------------------------------------------
+bool NodesTrianglesToVtk::getWriteBinaryFile() const
+{
+  return m_WriteBinaryFile;
+}
+
+// -----------------------------------------------------------------------------
+void NodesTrianglesToVtk::setWriteConformalMesh(bool value)
+{
+  m_WriteConformalMesh = value;
+}
+
+// -----------------------------------------------------------------------------
+bool NodesTrianglesToVtk::getWriteConformalMesh() const
+{
+  return m_WriteConformalMesh;
 }

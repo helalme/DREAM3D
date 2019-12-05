@@ -33,58 +33,76 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "MergeColonies.h"
 
 #include <chrono>
+#include <cmath>
 #include <random>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Math/GeometryMath.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
 
 #include "EbsdLib/EbsdConstants.h"
 
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
+
 namespace
 {
-const float unit110 = 1.0 / sqrtf(2.0);
-const float unit111 = 1.0 / sqrtf(3.0);
-const float unit112_1 = 1.0 / sqrtf(6.0);
-const float unit112_2 = 2.0 / sqrtf(6.0);
+const double unit110 = 1.0 / std::sqrt(2.0);
+const double unit111 = 1.0 / std::sqrt(3.0);
+const double unit112_1 = 1.0 / std::sqrt(6.0);
+const double unit112_2 = 2.0 / std::sqrt(6.0);
 
-float crystalDirections[12][3][3] = {{{unit111, unit112_1, unit110}, {-unit111, -unit112_1, unit110}, {unit111, -unit112_2, 0}},
+double crystalDirections[12][3][3] = {{{unit111, unit112_1, unit110}, {-unit111, -unit112_1, unit110}, {unit111, -unit112_2, 0}},
 
-                                     {{-unit111, unit112_1, unit110}, {unit111, -unit112_1, unit110}, {unit111, unit112_2, 0}},
+                                      {{-unit111, unit112_1, unit110}, {unit111, -unit112_1, unit110}, {unit111, unit112_2, 0}},
 
-                                     {{unit111, -unit112_1, unit110}, {unit111, -unit112_1, -unit110}, {unit111, unit112_2, 0}},
+                                      {{unit111, -unit112_1, unit110}, {unit111, -unit112_1, -unit110}, {unit111, unit112_2, 0}},
 
-                                     {{unit111, unit112_1, unit110}, {unit111, unit112_1, -unit110}, {-unit111, unit112_2, 0}},
+                                      {{unit111, unit112_1, unit110}, {unit111, unit112_1, -unit110}, {-unit111, unit112_2, 0}},
 
-                                     {{unit111, unit112_1, unit110}, {unit111, -unit112_2, 0}, {unit111, unit112_1, -unit110}},
+                                      {{unit111, unit112_1, unit110}, {unit111, -unit112_2, 0}, {unit111, unit112_1, -unit110}},
 
-                                     {{unit111, -unit112_1, unit110}, {-unit111, -unit112_2, 0}, {unit111, -unit112_1, -unit110}},
+                                      {{unit111, -unit112_1, unit110}, {-unit111, -unit112_2, 0}, {unit111, -unit112_1, -unit110}},
 
-                                     {{unit111, -unit112_1, unit110}, {unit111, unit112_2, 0}, {-unit111, unit112_1, unit110}},
+                                      {{unit111, -unit112_1, unit110}, {unit111, unit112_2, 0}, {-unit111, unit112_1, unit110}},
 
-                                     {{-unit111, -unit112_1, unit110}, {unit111, -unit112_2, 0}, {unit111, unit112_1, unit110}},
+                                      {{-unit111, -unit112_1, unit110}, {unit111, -unit112_2, 0}, {unit111, unit112_1, unit110}},
 
-                                     {{unit111, -unit112_2, 0}, {unit111, unit112_1, unit110}, {-unit111, -unit112_1, unit110}},
+                                      {{unit111, -unit112_2, 0}, {unit111, unit112_1, unit110}, {-unit111, -unit112_1, unit110}},
 
-                                     {{unit111, unit112_2, 0}, {-unit111, unit112_1, unit110}, {unit111, -unit112_1, unit110}},
+                                      {{unit111, unit112_2, 0}, {-unit111, unit112_1, unit110}, {unit111, -unit112_1, unit110}},
 
-                                     {{unit111, unit112_2, 0}, {unit111, -unit112_1, unit110}, {unit111, -unit112_1, -unit110}},
+                                      {{unit111, unit112_2, 0}, {unit111, -unit112_1, unit110}, {unit111, -unit112_1, -unit110}},
 
-                                     {{-unit111, unit112_2, 0}, {unit111, unit112_1, unit110}, {unit111, unit112_1, -unit110}}};
+                                      {{-unit111, unit112_2, 0}, {unit111, unit112_1, unit110}, {unit111, unit112_1, -unit110}}};
 }
 
 // -----------------------------------------------------------------------------
@@ -124,7 +142,7 @@ void MergeColonies::setupFilterParameters()
 {
   GroupFeatures::setupFilterParameters();
 
-  FilterParameterVector parameters = getFilterParameters();
+  FilterParameterVectorType parameters = getFilterParameters();
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Axis Tolerance (Degrees)", AxisTolerance, FilterParameter::Parameter, MergeColonies));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Angle Tolerance (Degrees)", AngleTolerance, FilterParameter::Parameter, MergeColonies));
   QStringList linkedProps("GlobAlphaArrayName");
@@ -152,12 +170,12 @@ void MergeColonies::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Crystal Structures", CrystalStructuresArrayPath, FilterParameter::RequiredArray, MergeColonies, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Parent Ids", CellParentIdsArrayName, FilterParameter::CreatedArray, MergeColonies));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Glob Alpha", GlobAlphaArrayName, FilterParameter::CreatedArray, MergeColonies));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Parent Ids", CellParentIdsArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, MergeColonies));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Glob Alpha", GlobAlphaArrayName, FeatureIdsArrayPath, FeatureIdsArrayPath, FilterParameter::CreatedArray, MergeColonies));
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Feature Attribute Matrix", NewCellFeatureAttributeMatrixName, FilterParameter::CreatedArray, MergeColonies));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Parent Ids", FeatureParentIdsArrayName, FilterParameter::CreatedArray, MergeColonies));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Active", ActiveArrayName, FilterParameter::CreatedArray, MergeColonies));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Feature Attribute Matrix", NewCellFeatureAttributeMatrixName, FeatureIdsArrayPath, FilterParameter::CreatedArray, MergeColonies));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Parent Ids", FeatureParentIdsArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, MergeColonies));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Active", ActiveArrayName, FeatureIdsArrayPath, NewCellFeatureAttributeMatrixName, FilterParameter::CreatedArray, MergeColonies));
   setFilterParameters(parameters);
 }
 
@@ -189,8 +207,8 @@ void MergeColonies::readFilterParameters(AbstractFilterParametersReader* reader,
 // -----------------------------------------------------------------------------
 void MergeColonies::updateFeatureInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_ActivePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -211,28 +229,28 @@ void MergeColonies::initialize()
 // -----------------------------------------------------------------------------
 void MergeColonies::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   DataArrayPath tempPath;
 
   GroupFeatures::dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getPrereqDataContainer(this, m_FeatureIdsArrayPath.getDataContainerName(), false);
-  if(getErrorCondition() < 0 || nullptr == m.get())
+  if(getErrorCode() < 0 || nullptr == m.get())
   {
     return;
   }
 
-  QVector<size_t> tDims(1, 0);
-  m->createNonPrereqAttributeMatrix(this, getNewCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature);
+  std::vector<size_t> tDims(1, 0);
+  m->createNonPrereqAttributeMatrix(this, getNewCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature, AttributeMatrixID21);
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
 
   QVector<DataArrayPath> cellDataArrayPaths;
   QVector<DataArrayPath> featureDataArrayPaths;
@@ -244,7 +262,7 @@ void MergeColonies::dataCheck()
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     cellDataArrayPaths.push_back(getFeatureIdsArrayPath());
   }
@@ -255,7 +273,7 @@ void MergeColonies::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     cellDataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -286,7 +304,7 @@ void MergeColonies::dataCheck()
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     featureDataArrayPaths.push_back(getFeaturePhasesArrayPath());
   }
@@ -306,7 +324,7 @@ void MergeColonies::dataCheck()
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     featureDataArrayPaths.push_back(getAvgQuatsArrayPath());
   }
@@ -314,8 +332,7 @@ void MergeColonies::dataCheck()
   // NewFeature Data
   cDims[0] = 1;
   tempPath.update(m_FeatureIdsArrayPath.getDataContainerName(), getNewCellFeatureAttributeMatrixName(), getActiveArrayName());
-  m_ActivePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, true,
-                                                                                                             cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_ActivePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, true, cDims, "", DataArrayID31);
   if(nullptr != m_ActivePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Active = m_ActivePtr.lock()->getPointer(0);
@@ -348,8 +365,8 @@ void MergeColonies::preflight()
 // -----------------------------------------------------------------------------
 int32_t MergeColonies::getSeed(int32_t newFid)
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   int32_t numfeatures = static_cast<int32_t>(m_FeaturePhasesPtr.lock()->getNumberOfTuples());
 
@@ -378,7 +395,7 @@ int32_t MergeColonies::getSeed(int32_t newFid)
   if(seed >= 0)
   {
     m_FeatureParentIds[seed] = newFid;
-    QVector<size_t> tDims(1, newFid + 1);
+    std::vector<size_t> tDims(1, newFid + 1);
     getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName())->getAttributeMatrix(getNewCellFeatureAttributeMatrixName())->resizeAttributeArrays(tDims);
     updateFeatureInstancePointers();
   }
@@ -390,58 +407,58 @@ int32_t MergeColonies::getSeed(int32_t newFid)
 // -----------------------------------------------------------------------------
 bool MergeColonies::determineGrouping(int32_t referenceFeature, int32_t neighborFeature, int32_t newFid)
 {
-  float w = 0.0f;
-  float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
+  double w = 0.0f;
+  double n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
   bool colony = false;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+
+  // QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
   if(m_FeatureParentIds[neighborFeature] == -1 && m_FeaturePhases[referenceFeature] > 0 && m_FeaturePhases[neighborFeature] > 0)
   {
-    w = std::numeric_limits<float>::max();
-    QuaternionMathF::Copy(avgQuats[referenceFeature], q1);
+    w = std::numeric_limits<double>::max();
+    float* avgQuatPtr = m_AvgQuats + referenceFeature * 4;
+    QuatType q1(avgQuatPtr[0], avgQuatPtr[1], avgQuatPtr[2], avgQuatPtr[3]);
+    avgQuatPtr = m_AvgQuats + neighborFeature * 4;
+    QuatType q2(avgQuatPtr[0], avgQuatPtr[1], avgQuatPtr[2], avgQuatPtr[3]);
+
     uint32_t phase1 = m_CrystalStructures[m_FeaturePhases[referenceFeature]];
-    QuaternionMathF::Copy(avgQuats[neighborFeature], q2);
     uint32_t phase2 = m_CrystalStructures[m_FeaturePhases[neighborFeature]];
     if(phase1 == phase2 && (phase1 == Ebsd::CrystalStructure::Hexagonal_High))
     {
       w = m_OrientationOps[phase1]->getMisoQuat(q1, q2, n1, n2, n3);
 
-      FOrientArrayType ax(n1, n2, n3, w);
-      FOrientArrayType rod(4);
-      OrientationTransforms<FOrientArrayType, float>::ax2ro(ax, rod);
+      OrientationD ax(n1, n2, n3, w);
+      OrientationD rod = OrientationTransformation::ax2ro<OrientationD, OrientationD>(ax);
       rod = m_OrientationOps[phase1]->getMDFFZRod(rod);
-      OrientationTransforms<FOrientArrayType, float>::ro2ax(rod, ax);
-      ax.toAxisAngle(n1, n2, n3, w);
+      OrientationTransformation::ro2ax<OrientationD, OrientationD>(rod).toAxisAngle(n1, n2, n3, w);
 
       w = w * (180.0f / SIMPLib::Constants::k_Pi);
-      float angdiff1 = fabsf(w - 10.53f);
-      float axisdiff1 = acosf(fabsf(n1) * 0.0000f + fabsf(n2) * 0.0000f + fabsf(n3) * 1.0000f);
+      float angdiff1 = std::fabs(w - 10.53f);
+      float axisdiff1 = std::acos(/*std::fabs(n1) * 0.0000f + std::fabs(n2) * 0.0000f +*/ std::fabs(n3) /* * 1.0000f */);
       if(angdiff1 < m_AngleTolerance && axisdiff1 < m_AxisToleranceRad)
       {
         colony = true;
       }
-      float angdiff2 = fabsf(w - 90.00f);
-      float axisdiff2 = acosf(fabsf(n1) * 0.9958f + fabsf(n2) * 0.0917f + fabsf(n3) * 0.0000f);
+      float angdiff2 = std::fabs(w - 90.00f);
+      float axisdiff2 = std::acos(std::fabs(n1) * 0.9958f + std::fabs(n2) * 0.0917f /* + std::fabs(n3) * 0.0000f */);
       if(angdiff2 < m_AngleTolerance && axisdiff2 < m_AxisToleranceRad)
       {
         colony = true;
       }
-      float angdiff3 = fabsf(w - 60.00f);
-      float axisdiff3 = acosf(fabsf(n1) * 1.0000f + fabsf(n2) * 0.0000f + fabsf(n3) * 0.0000f);
+      float angdiff3 = std::fabs(w - 60.00f);
+      float axisdiff3 = std::acos(std::fabs(n1) /* * 1.0000f + std::fabs(n2) * 0.0000f + std::fabs(n3) * 0.0000f*/);
       if(angdiff3 < m_AngleTolerance && axisdiff3 < m_AxisToleranceRad)
       {
         colony = true;
       }
-      float angdiff4 = fabsf(w - 60.83f);
-      float axisdiff4 = acosf(fabsf(n1) * 0.9834f + fabsf(n2) * 0.0905f + fabsf(n3) * 0.1570f);
+      float angdiff4 = std::fabs(w - 60.83f);
+      float axisdiff4 = std::acos(std::fabs(n1) * 0.9834f + std::fabs(n2) * 0.0905f + std::fabs(n3) * 0.1570f);
       if(angdiff4 < m_AngleTolerance && axisdiff4 < m_AxisToleranceRad)
       {
         colony = true;
       }
-      float angdiff5 = fabsf(w - 63.26f);
-      float axisdiff5 = acosf(fabsf(n1) * 0.9549f + fabsf(n2) * 0.0000f + fabsf(n3) * 0.2969f);
+      float angdiff5 = std::fabs(w - 63.26f);
+      float axisdiff5 = std::acos(std::fabs(n1) * 0.9549f /* + std::fabs(n2) * 0.0000f */+ std::fabs(n3) * 0.2969f);
       if(angdiff5 < m_AngleTolerance && axisdiff5 < m_AxisToleranceRad)
       {
         colony = true;
@@ -484,32 +501,29 @@ void MergeColonies::characterize_colonies()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-bool MergeColonies::check_for_burgers(QuatF betaQuat, QuatF alphaQuat)
+bool MergeColonies::check_for_burgers(const QuatType& betaQuat, const QuatType& alphaQuat) const
 {
-  float dP = 0.0f;
-  float angle = 0.0f;
-  float radToDeg = 180.0f / SIMPLib::Constants::k_Pi;
+  double dP = 0.0;
+  double angle = 0.0;
+  double radToDeg = 180.0 / SIMPLib::Constants::k_Pi;
 
-  float gBeta[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  float gBetaT[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  FOrientArrayType om(9);
-  FOrientTransformsType::qu2om(FOrientArrayType(betaQuat), om);
-  om.toGMatrix(gBeta);
+  double gBeta[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+  double gBetaT[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+  OrientationTransformation::qu2om<QuatType, OrientationD>(betaQuat).toGMatrix(gBeta);
   // transpose gBeta so the sample direction is the output when
   // gBeta is multiplied by the crystal directions below
   MatrixMath::Transpose3x3(gBeta, gBetaT);
 
-  float gAlpha[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  float gAlphaT[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  FOrientTransformsType::qu2om(FOrientArrayType(alphaQuat), om);
-  om.toGMatrix(gAlpha);
+  double gAlpha[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+  double gAlphaT[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+  OrientationTransformation::qu2om<QuatType, OrientationD>(alphaQuat).toGMatrix(gAlpha);
   // transpose gBeta so the sample direction is the output when
   // gBeta is multiplied by the crystal directions below
   MatrixMath::Transpose3x3(gAlpha, gAlphaT);
 
-  float mat[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  float a[3] = {0.0f, 0.0f, 0.0f};
-  float b[3] = {0.0f, 0.0f, 0.0f};
+  double mat[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+  double a[3] = {0.0, 0.0, 0.0};
+  double b[3] = {0.0, 0.0, 0.0};
   for(int32_t i = 0; i < 12; i++)
   {
     MatrixMath::Multiply3x3with3x3(gBetaT, crystalDirections[i], mat);
@@ -520,7 +534,7 @@ bool MergeColonies::check_for_burgers(QuatF betaQuat, QuatF alphaQuat)
     b[1] = gAlphaT[1][2];
     b[2] = gAlphaT[2][2];
     dP = GeometryMath::CosThetaBetweenVectors(a, b);
-    angle = acosf(dP);
+    angle = std::acos(dP);
     if((angle * radToDeg) < m_AngleTolerance || (180.0f - (angle * radToDeg)) < m_AngleTolerance)
     {
       a[0] = mat[0][0];
@@ -530,7 +544,7 @@ bool MergeColonies::check_for_burgers(QuatF betaQuat, QuatF alphaQuat)
       b[1] = gAlphaT[1][0];
       b[2] = gAlphaT[2][0];
       dP = GeometryMath::CosThetaBetweenVectors(a, b);
-      angle = acosf(dP);
+      angle = std::acos(dP);
       if((angle * radToDeg) < m_AngleTolerance)
       {
         return true;
@@ -543,7 +557,7 @@ bool MergeColonies::check_for_burgers(QuatF betaQuat, QuatF alphaQuat)
       b[1] = -0.5 * gAlphaT[1][0] + 0.866025 * gAlphaT[1][1];
       b[2] = -0.5 * gAlphaT[2][0] + 0.866025 * gAlphaT[2][1];
       dP = GeometryMath::CosThetaBetweenVectors(a, b);
-      angle = acosf(dP);
+      angle = std::acos(dP);
       if((angle * radToDeg) < m_AngleTolerance)
       {
         return true;
@@ -556,7 +570,7 @@ bool MergeColonies::check_for_burgers(QuatF betaQuat, QuatF alphaQuat)
       b[1] = -0.5 * gAlphaT[1][0] - 0.866025 * gAlphaT[1][1];
       b[2] = -0.5 * gAlphaT[2][0] - 0.866025 * gAlphaT[2][1];
       dP = GeometryMath::CosThetaBetweenVectors(a, b);
-      angle = acosf(dP);
+      angle = std::acos(dP);
       if((angle * radToDeg) < m_AngleTolerance)
       {
         return true;
@@ -601,10 +615,10 @@ void MergeColonies::identify_globAlpha()
 // -----------------------------------------------------------------------------
 void MergeColonies::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -616,8 +630,7 @@ void MergeColonies::execute()
   size_t totalFeatures = m_ActivePtr.lock()->getNumberOfTuples();
   if(totalFeatures < 2)
   {
-    setErrorCondition(-87000);
-    notifyErrorMessage(getHumanLabel(), "The number of Grouped Features was 0 or 1 which means no grouped Features were detected. A grouping value may be set too high", getErrorCondition());
+    setErrorCondition(-87000, "The number of Grouped Features was 0 or 1 which means no grouped Features were detected. A grouping value may be set too high");
     return;
   }
 
@@ -634,7 +647,7 @@ void MergeColonies::execute()
   }
   numParents += 1;
 
-  notifyStatusMessage(getHumanLabel(), "Characterizing Colonies");
+  notifyStatusMessage("Characterizing Colonies");
   characterize_colonies();
 
   if(m_RandomizeParentIds)
@@ -646,7 +659,7 @@ void MergeColonies::execute()
     std::mt19937_64 generator(seed); // Standard mersenne_twister_engine seeded with milliseconds
     std::uniform_int_distribution<int32_t> distribution(rangeMin, rangeMax);
 
-    DataArray<int32_t>::Pointer rndNumbers = DataArray<int32_t>::CreateArray(numParents, "_INTERNAL_USE_ONLY_NewParentIds");
+    DataArray<int32_t>::Pointer rndNumbers = DataArray<int32_t>::CreateArray(numParents, "_INTERNAL_USE_ONLY_NewParentIds", true);
     int32_t* pid = rndNumbers->getPointer(0);
     pid[0] = 0;
     QSet<int32_t> parentIdSet;
@@ -704,7 +717,7 @@ AbstractFilter::Pointer MergeColonies::newFilterInstance(bool copyFilterParamete
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MergeColonies::getCompiledLibraryName() const
+QString MergeColonies::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -712,7 +725,7 @@ const QString MergeColonies::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MergeColonies::getBrandingString() const
+QString MergeColonies::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -720,7 +733,7 @@ const QString MergeColonies::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MergeColonies::getFilterVersion() const
+QString MergeColonies::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -730,7 +743,7 @@ const QString MergeColonies::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MergeColonies::getGroupName() const
+QString MergeColonies::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -738,7 +751,7 @@ const QString MergeColonies::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid MergeColonies::getUuid()
+QUuid MergeColonies::getUuid() const
 {
   return QUuid("{2c4a6d83-6a1b-56d8-9f65-9453b28845b9}");
 }
@@ -746,7 +759,7 @@ const QUuid MergeColonies::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MergeColonies::getSubGroupName() const
+QString MergeColonies::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GroupingFilters;
 }
@@ -754,7 +767,204 @@ const QString MergeColonies::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MergeColonies::getHumanLabel() const
+QString MergeColonies::getHumanLabel() const
 {
   return "Merge Colonies";
+}
+
+// -----------------------------------------------------------------------------
+MergeColonies::Pointer MergeColonies::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<MergeColonies> MergeColonies::New()
+{
+  struct make_shared_enabler : public MergeColonies
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::getNameOfClass() const
+{
+  return QString("MergeColonies");
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::ClassName()
+{
+  return QString("MergeColonies");
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setNewCellFeatureAttributeMatrixName(const QString& value)
+{
+  m_NewCellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::getNewCellFeatureAttributeMatrixName() const
+{
+  return m_NewCellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MergeColonies::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MergeColonies::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MergeColonies::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MergeColonies::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath MergeColonies::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setCellParentIdsArrayName(const QString& value)
+{
+  m_CellParentIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::getCellParentIdsArrayName() const
+{
+  return m_CellParentIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setGlobAlphaArrayName(const QString& value)
+{
+  m_GlobAlphaArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::getGlobAlphaArrayName() const
+{
+  return m_GlobAlphaArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setFeatureParentIdsArrayName(const QString& value)
+{
+  m_FeatureParentIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::getFeatureParentIdsArrayName() const
+{
+  return m_FeatureParentIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setActiveArrayName(const QString& value)
+{
+  m_ActiveArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString MergeColonies::getActiveArrayName() const
+{
+  return m_ActiveArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setAxisTolerance(float value)
+{
+  m_AxisTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float MergeColonies::getAxisTolerance() const
+{
+  return m_AxisTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setAngleTolerance(float value)
+{
+  m_AngleTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float MergeColonies::getAngleTolerance() const
+{
+  return m_AngleTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setRandomizeParentIds(bool value)
+{
+  m_RandomizeParentIds = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MergeColonies::getRandomizeParentIds() const
+{
+  return m_RandomizeParentIds;
+}
+
+// -----------------------------------------------------------------------------
+void MergeColonies::setIdentifyGlobAlpha(bool value)
+{
+  m_IdentifyGlobAlpha = value;
+}
+
+// -----------------------------------------------------------------------------
+bool MergeColonies::getIdentifyGlobAlpha() const
+{
+  return m_IdentifyGlobAlpha;
 }

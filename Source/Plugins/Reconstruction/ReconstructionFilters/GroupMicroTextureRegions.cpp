@@ -33,11 +33,16 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "GroupMicroTextureRegions.h"
 
 #include <chrono>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -48,13 +53,28 @@
 #include "SIMPLib/Math/GeometryMath.h"
 #include "SIMPLib/Math/MatrixMath.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
-
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "EbsdLib/EbsdConstants.h"
 
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
+
+using QuatF = Quaternion<float>;
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -73,7 +93,6 @@ GroupMicroTextureRegions::GroupMicroTextureRegions()
 , m_FeatureParentIdsArrayName(SIMPL::FeatureData::ParentIds)
 , m_ActiveArrayName(SIMPL::FeatureData::Active)
 {
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
   m_AvgCAxes[0] = 0.0f;
   m_AvgCAxes[1] = 0.0f;
   m_AvgCAxes[2] = 0.0f;
@@ -93,7 +112,7 @@ void GroupMicroTextureRegions::setupFilterParameters()
 {
   GroupFeatures::setupFilterParameters();
 
-  FilterParameterVector parameters = getFilterParameters();
+  FilterParameterVectorType parameters = getFilterParameters();
 
   parameters.push_back(SIMPL_NEW_BOOL_FP("Group C-Axes With Running Average", UseRunningAverage, FilterParameter::Parameter, GroupMicroTextureRegions));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("C-Axis Alignment Tolerance (Degrees)", CAxisTolerance, FilterParameter::Parameter, GroupMicroTextureRegions));
@@ -153,8 +172,8 @@ void GroupMicroTextureRegions::readFilterParameters(AbstractFilterParametersRead
 // -----------------------------------------------------------------------------
 void GroupMicroTextureRegions::updateFeatureInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_ActivePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -178,29 +197,29 @@ void GroupMicroTextureRegions::initialize()
 // -----------------------------------------------------------------------------
 void GroupMicroTextureRegions::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
   GroupFeatures::dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getPrereqDataContainer(this, m_FeatureIdsArrayPath.getDataContainerName(), false);
-  if(getErrorCondition() < 0 || nullptr == m)
+  if(getErrorCode() < 0 || nullptr == m)
   {
     return;
   }
 
-  QVector<size_t> tDims(1, 0);
-  m->createNonPrereqAttributeMatrix(this, getNewCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature);
+  std::vector<size_t> tDims(1, 0);
+  m->createNonPrereqAttributeMatrix(this, getNewCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature, AttributeMatrixID21);
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   // Cell Data
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -224,7 +243,7 @@ void GroupMicroTextureRegions::dataCheck()
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeaturePhasesArrayPath());
   }
@@ -243,7 +262,7 @@ void GroupMicroTextureRegions::dataCheck()
   {
     m_Volumes = m_VolumesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getVolumesArrayPath());
   }
@@ -255,7 +274,7 @@ void GroupMicroTextureRegions::dataCheck()
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getVolumesArrayPath());
   }
@@ -263,8 +282,7 @@ void GroupMicroTextureRegions::dataCheck()
   // New Feature Data
   cDims[0] = 1;
   tempPath.update(m_FeatureIdsArrayPath.getDataContainerName(), getNewCellFeatureAttributeMatrixName(), getActiveArrayName());
-  m_ActivePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, true,
-                                                                                                             cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_ActivePtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<bool>, AbstractFilter, bool>(this, tempPath, true, cDims, "", DataArrayID31);
   if(nullptr != m_ActivePtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Active = m_ActivePtr.lock()->getPointer(0);
@@ -300,13 +318,13 @@ void GroupMicroTextureRegions::preflight()
 // -----------------------------------------------------------------------------
 void GroupMicroTextureRegions::randomizeFeatureIds(int64_t totalPoints, int64_t totalFeatures)
 {
-  notifyStatusMessage(getHumanLabel(), "Randomizing Parent Ids");
+  notifyStatusMessage("Randomizing Parent Ids");
   // Generate an even distribution of numbers between the min and max range
   const int32_t rangeMin = 0;
   const int32_t rangeMax = totalFeatures - 1;
   initializeVoxelSeedGenerator(rangeMin, rangeMax);
 
-  DataArray<int32_t>::Pointer rndNumbers = DataArray<int32_t>::CreateArray(totalFeatures, "_INTERNAL_USE_ONLY_NewFeatureIds");
+  DataArray<int32_t>::Pointer rndNumbers = DataArray<int32_t>::CreateArray(totalFeatures, "_INTERNAL_USE_ONLY_NewFeatureIds", true);
 
   int32_t* gid = rndNumbers->getPointer(0);
   gid[0] = 0;
@@ -344,16 +362,17 @@ void GroupMicroTextureRegions::randomizeFeatureIds(int64_t totalPoints, int64_t 
 // -----------------------------------------------------------------------------
 int32_t GroupMicroTextureRegions::getSeed(int32_t newFid)
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   int32_t numfeatures = static_cast<int32_t>(m_FeaturePhasesPtr.lock()->getNumberOfTuples());
 
   float c1[3] = {0.0f, 0.0f, 0.0f};
   uint32_t phase1 = 0;
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+
+  // QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+
   float caxis[3] = {0.0f, 0.0f, 1.0f};
-  QuatF q1 = QuaternionMathF::New();
   float g1[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float g1t[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
 
@@ -382,17 +401,15 @@ int32_t GroupMicroTextureRegions::getSeed(int32_t newFid)
   if(seed >= 0)
   {
     m_FeatureParentIds[seed] = newFid;
-    QVector<size_t> tDims(1, newFid + 1);
+    std::vector<size_t> tDims(1, newFid + 1);
     getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName())->getAttributeMatrix(getNewCellFeatureAttributeMatrixName())->resizeAttributeArrays(tDims);
     updateFeatureInstancePointers();
 
     if(m_UseRunningAverage)
     {
-      QuaternionMathF::Copy(avgQuats[seed], q1);
+      QuatF q1(m_AvgQuats + seed * 4);
       phase1 = m_CrystalStructures[m_FeaturePhases[seed]];
-      FOrientArrayType om(9);
-      FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-      om.toGMatrix(g1);
+      OrientationTransformation::qu2om<QuatF, Orientation<float>>(q1).toGMatrix(g1);
       // transpose the g matrix so when caxis is multiplied by it
       // it will give the sample direction that the caxis is along
       MatrixMath::Transpose3x3(g1, g1t);
@@ -421,19 +438,17 @@ bool GroupMicroTextureRegions::determineGrouping(int32_t referenceFeature, int32
   float c1[3] = {0.0f, 0.0f, 0.0f};
   float c2[3] = {0.0f, 0.0f, 0.0f};
   float caxis[3] = {0.0f, 0.0f, 1.0f};
-  QuatF q1 = QuaternionMathF::New(0.0f, 0.0f, 0.0f, 0.0f);
-  QuatF q2 = QuaternionMathF::New(0.0f, 0.0f, 0.0f, 0.0f);
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  //  QuatF q1 = QuaternionMathF::New(0.0f, 0.0f, 0.0f, 0.0f);
+  //  QuatF q2 = QuaternionMathF::New(0.0f, 0.0f, 0.0f, 0.0f);
+  //  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
   if(m_FeatureParentIds[neighborFeature] == -1 && m_FeaturePhases[referenceFeature] > 0 && m_FeaturePhases[neighborFeature] > 0)
   {
     if(!m_UseRunningAverage)
     {
-      QuaternionMathF::Copy(avgQuats[referenceFeature], q1);
+      QuatF q1(m_AvgQuats + referenceFeature * 4);
       phase1 = m_CrystalStructures[m_FeaturePhases[referenceFeature]];
-      FOrientArrayType om(9);
-      FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-      om.toGMatrix(g1);
+      OrientationTransformation::qu2om<QuatF, Orientation<float>>(q1).toGMatrix(g1);
       // transpose the g matrix so when caxis is multiplied by it
       // it will give the sample direction that the caxis is along
       MatrixMath::Transpose3x3(g1, g1t);
@@ -445,10 +460,9 @@ bool GroupMicroTextureRegions::determineGrouping(int32_t referenceFeature, int32
     phase2 = m_CrystalStructures[m_FeaturePhases[neighborFeature]];
     if(phase1 == phase2 && (phase1 == Ebsd::CrystalStructure::Hexagonal_High))
     {
-      QuaternionMathF::Copy(avgQuats[neighborFeature], q2);
-      FOrientArrayType om(9);
-      FOrientTransformsType::qu2om(FOrientArrayType(q2), om);
-      om.toGMatrix(g2);
+      QuatF q2(m_AvgQuats + neighborFeature * 4);
+      OrientationTransformation::qu2om<QuatF, Orientation<float>>(q2).toGMatrix(g2);
+
       // transpose the g matrix so when caxis is multiplied by it
       // it will give the sample direction that the caxis is along
       MatrixMath::Transpose3x3(g2, g2t);
@@ -465,7 +479,7 @@ bool GroupMicroTextureRegions::determineGrouping(int32_t referenceFeature, int32
       {
         w = GeometryMath::CosThetaBetweenVectors(c1, c2);
       }
-      SIMPLibMath::boundF(w, -1, 1);
+      SIMPLibMath::bound(w, -1.0f, 1.0f);
       w = acosf(w);
       if(w <= m_CAxisToleranceRad || (SIMPLib::Constants::k_Pi - w) <= m_CAxisToleranceRad)
       {
@@ -498,10 +512,10 @@ void GroupMicroTextureRegions::initializeVoxelSeedGenerator(const int32_t rangeM
 // -----------------------------------------------------------------------------
 void GroupMicroTextureRegions::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -518,8 +532,7 @@ void GroupMicroTextureRegions::execute()
   size_t totalFeatures = m_ActivePtr.lock()->getNumberOfTuples();
   if(totalFeatures < 2)
   {
-    setErrorCondition(-87000);
-    notifyErrorMessage(getHumanLabel(), "The number of grouped Features was 0 or 1 which means no grouped Features were detected. A grouping value may be set too high", getErrorCondition());
+    setErrorCondition(-87000, "The number of grouped Features was 0 or 1 which means no grouped Features were detected. A grouping value may be set too high");
     return;
   }
 
@@ -555,7 +568,7 @@ AbstractFilter::Pointer GroupMicroTextureRegions::newFilterInstance(bool copyFil
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GroupMicroTextureRegions::getCompiledLibraryName() const
+QString GroupMicroTextureRegions::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -563,7 +576,7 @@ const QString GroupMicroTextureRegions::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GroupMicroTextureRegions::getBrandingString() const
+QString GroupMicroTextureRegions::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -571,7 +584,7 @@ const QString GroupMicroTextureRegions::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GroupMicroTextureRegions::getFilterVersion() const
+QString GroupMicroTextureRegions::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -581,7 +594,7 @@ const QString GroupMicroTextureRegions::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GroupMicroTextureRegions::getGroupName() const
+QString GroupMicroTextureRegions::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -589,7 +602,7 @@ const QString GroupMicroTextureRegions::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GroupMicroTextureRegions::getUuid()
+QUuid GroupMicroTextureRegions::getUuid() const
 {
   return QUuid("{5e18a9e2-e342-56ac-a54e-3bd0ca8b9c53}");
 }
@@ -597,7 +610,7 @@ const QUuid GroupMicroTextureRegions::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GroupMicroTextureRegions::getSubGroupName() const
+QString GroupMicroTextureRegions::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GroupingFilters;
 }
@@ -605,7 +618,180 @@ const QString GroupMicroTextureRegions::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GroupMicroTextureRegions::getHumanLabel() const
+QString GroupMicroTextureRegions::getHumanLabel() const
 {
   return "Group MicroTexture Regions";
+}
+
+// -----------------------------------------------------------------------------
+GroupMicroTextureRegions::Pointer GroupMicroTextureRegions::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GroupMicroTextureRegions> GroupMicroTextureRegions::New()
+{
+  struct make_shared_enabler : public GroupMicroTextureRegions
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GroupMicroTextureRegions::getNameOfClass() const
+{
+  return QString("GroupMicroTextureRegions");
+}
+
+// -----------------------------------------------------------------------------
+QString GroupMicroTextureRegions::ClassName()
+{
+  return QString("GroupMicroTextureRegions");
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setNewCellFeatureAttributeMatrixName(const QString& value)
+{
+  m_NewCellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GroupMicroTextureRegions::getNewCellFeatureAttributeMatrixName() const
+{
+  return m_NewCellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setCAxisTolerance(float value)
+{
+  m_CAxisTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float GroupMicroTextureRegions::getCAxisTolerance() const
+{
+  return m_CAxisTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setUseRunningAverage(bool value)
+{
+  m_UseRunningAverage = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GroupMicroTextureRegions::getUseRunningAverage() const
+{
+  return m_UseRunningAverage;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setRandomizeParentIds(bool value)
+{
+  m_RandomizeParentIds = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GroupMicroTextureRegions::getRandomizeParentIds() const
+{
+  return m_RandomizeParentIds;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GroupMicroTextureRegions::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GroupMicroTextureRegions::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setVolumesArrayPath(const DataArrayPath& value)
+{
+  m_VolumesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GroupMicroTextureRegions::getVolumesArrayPath() const
+{
+  return m_VolumesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GroupMicroTextureRegions::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GroupMicroTextureRegions::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setCellParentIdsArrayName(const QString& value)
+{
+  m_CellParentIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GroupMicroTextureRegions::getCellParentIdsArrayName() const
+{
+  return m_CellParentIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setFeatureParentIdsArrayName(const QString& value)
+{
+  m_FeatureParentIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GroupMicroTextureRegions::getFeatureParentIdsArrayName() const
+{
+  return m_FeatureParentIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void GroupMicroTextureRegions::setActiveArrayName(const QString& value)
+{
+  m_ActiveArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GroupMicroTextureRegions::getActiveArrayName() const
+{
+  return m_ActiveArrayName;
 }

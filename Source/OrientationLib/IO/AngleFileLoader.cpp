@@ -41,27 +41,20 @@
 
 #include <QtCore/QFileInfo>
 #include <QtCore/QFile>
-#include <QtCore/QTextStream>
 #include <QtCore/QByteArray>
-
-#include "SIMPLib/Math/QuaternionMath.hpp"
-
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include <QtCore/QDebug>
 
 
-
-
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
 AngleFileLoader::AngleFileLoader():
-
   m_ErrorMessage(""),
-  m_ErrorCode(0),
   m_InputFile(""),
-  m_FileAnglesInDegrees(false),
-  m_OutputAnglesInDegrees(false),
   m_AngleRepresentation(AngleFileLoader::EulerAngles),
   m_IgnoreMultipleDelimiters(true)
 {
@@ -153,8 +146,8 @@ FloatArrayType::Pointer AngleFileLoader::loadData()
   numOrients = tokens[1].toInt(&ok, 10);
 
   // Allocate enough for the angles
-  QVector<size_t> dims(1, 5);
-  angles = FloatArrayType::CreateArray(numOrients, dims, "EulerAngles_From_File");
+  std::vector<size_t> dims(1, 5);
+  angles = FloatArrayType::CreateArray(numOrients, dims, "EulerAngles_From_File", true);
 
   for(int i = 0; i < numOrients; i++)
   {
@@ -175,9 +168,9 @@ FloatArrayType::Pointer AngleFileLoader::loadData()
     {
       setDelimiter(" ");
     }
-    tokens = buf.split( *(getDelimiter().toLatin1().data()));
+    tokens = buf.split(*(getDelimiter().toLatin1().data()));
 
-    FOrientArrayType euler(3);
+    OrientationF euler(3);
     if (m_AngleRepresentation == EulerAngles)
     {
       euler[0] = tokens[0].trimmed().toFloat(&ok);
@@ -188,22 +181,22 @@ FloatArrayType::Pointer AngleFileLoader::loadData()
     }
     else if (m_AngleRepresentation == QuaternionAngles)
     {
-      FOrientArrayType quat(4);
+      QuatF quat(4);
       quat[0] = tokens[0].trimmed().toFloat(&ok);
       quat[1] = tokens[1].trimmed().toFloat(&ok);
       quat[2] = tokens[2].trimmed().toFloat(&ok);
       quat[3] = tokens[3].trimmed().toFloat(&ok);
-      FOrientTransformsType::qu2eu(quat, euler);
+      euler = OrientationTransformation::qu2eu<QuatF, OrientationF>(quat);
       weight = tokens[4].trimmed().toFloat(&ok);
       sigma = tokens[5].trimmed().toFloat(&ok);
     }
     else if (m_AngleRepresentation == RodriguezAngles)
     {
-      FOrientArrayType rod(4, 0.0);
+      Orientation<float> rod(4, 0.0);
       rod[0] = tokens[0].trimmed().toFloat(&ok);
       rod[1] = tokens[1].trimmed().toFloat(&ok);
       rod[2] = tokens[2].trimmed().toFloat(&ok);
-      FOrientTransformsType::ro2eu(rod, euler);
+      euler = OrientationTransformation::ro2eu<OrientationF, OrientationF>(rod);
       weight = tokens[3].trimmed().toFloat(&ok);
       sigma = tokens[4].trimmed().toFloat(&ok);
     }
@@ -235,4 +228,125 @@ FloatArrayType::Pointer AngleFileLoader::loadData()
 
 
   return angles;
+}
+
+// -----------------------------------------------------------------------------
+AngleFileLoader::Pointer AngleFileLoader::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+AngleFileLoader::Pointer AngleFileLoader::New()
+{
+  Pointer sharedPtr(new(AngleFileLoader));
+  return sharedPtr;
+}
+
+// -----------------------------------------------------------------------------
+QString AngleFileLoader::getNameOfClass() const
+{
+  return QString("AngleFileLoader");
+}
+
+// -----------------------------------------------------------------------------
+QString AngleFileLoader::ClassName()
+{
+  return QString("AngleFileLoader");
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setErrorMessage(const QString& value)
+{
+  m_ErrorMessage = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AngleFileLoader::getErrorMessage() const
+{
+  return m_ErrorMessage;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setErrorCode(int value)
+{
+  m_ErrorCode = value;
+}
+
+// -----------------------------------------------------------------------------
+int AngleFileLoader::getErrorCode() const
+{
+  return m_ErrorCode;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AngleFileLoader::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setFileAnglesInDegrees(bool value)
+{
+  m_FileAnglesInDegrees = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AngleFileLoader::getFileAnglesInDegrees() const
+{
+  return m_FileAnglesInDegrees;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setOutputAnglesInDegrees(bool value)
+{
+  m_OutputAnglesInDegrees = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AngleFileLoader::getOutputAnglesInDegrees() const
+{
+  return m_OutputAnglesInDegrees;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setAngleRepresentation(uint32_t value)
+{
+  m_AngleRepresentation = value;
+}
+
+// -----------------------------------------------------------------------------
+uint32_t AngleFileLoader::getAngleRepresentation() const
+{
+  return m_AngleRepresentation;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setDelimiter(const QString& value)
+{
+  m_Delimiter = value;
+}
+
+// -----------------------------------------------------------------------------
+QString AngleFileLoader::getDelimiter() const
+{
+  return m_Delimiter;
+}
+
+// -----------------------------------------------------------------------------
+void AngleFileLoader::setIgnoreMultipleDelimiters(bool value)
+{
+  m_IgnoreMultipleDelimiters = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AngleFileLoader::getIgnoreMultipleDelimiters() const
+{
+  return m_IgnoreMultipleDelimiters;
 }

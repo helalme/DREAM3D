@@ -33,15 +33,24 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindCAxisLocations.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/LaueOps.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -53,8 +62,6 @@ FindCAxisLocations::FindCAxisLocations()
 : m_QuatsArrayPath("", "", "")
 , m_CAxisLocationsArrayName(SIMPL::CellData::CAxisLocation)
 {
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
-
 }
 
 // -----------------------------------------------------------------------------
@@ -67,14 +74,14 @@ FindCAxisLocations::~FindCAxisLocations() = default;
 // -----------------------------------------------------------------------------
 void FindCAxisLocations::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateCategoryRequirement(SIMPL::TypeNames::Float, 4, AttributeMatrix::Category::Element);
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Quaternions", QuatsArrayPath, FilterParameter::RequiredArray, FindCAxisLocations, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("C-Axis Locations", CAxisLocationsArrayName, FilterParameter::CreatedArray, FindCAxisLocations));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("C-Axis Locations", CAxisLocationsArrayName, QuatsArrayPath, QuatsArrayPath, FilterParameter::CreatedArray, FindCAxisLocations));
   setFilterParameters(parameters);
 }
 
@@ -101,11 +108,11 @@ void FindCAxisLocations::initialize()
 // -----------------------------------------------------------------------------
 void FindCAxisLocations::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
-  QVector<size_t> cDims(1, 4);
+  std::vector<size_t> cDims(1, 4);
   m_QuatsPtr =
       getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getQuatsArrayPath(), cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_QuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -141,18 +148,20 @@ void FindCAxisLocations::preflight()
 // -----------------------------------------------------------------------------
 void FindCAxisLocations::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
+  QVector<LaueOps::Pointer> m_OrientationOps = LaueOps::getOrientationOpsQVector();
+
+  FloatArrayType::Pointer quatsPtr = m_QuatsPtr.lock();
+
   size_t totalPoints = m_QuatsPtr.lock()->getNumberOfTuples();
 
-  QuatF q1 = QuaternionMathF::New();
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
   float g1[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float g1t[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float caxis[3] = {0.0f, 0.0f, 1.0f};
@@ -162,10 +171,8 @@ void FindCAxisLocations::execute()
   for(size_t i = 0; i < totalPoints; i++)
   {
     index = 3 * i;
-    QuaternionMathF::Copy(quats[i], q1);
-    FOrientArrayType om(9);
-    FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-    om.toGMatrix(g1);
+    QuatF q1(quatsPtr->getTuplePointer(i));
+    OrientationTransformation::qu2om<QuatF, Orientation<float>>(q1).toGMatrix(g1);
     // transpose the g matricies so when caxis is multiplied by it
     // it will give the sample direction that the caxis is along
     MatrixMath::Transpose3x3(g1, g1t);
@@ -174,7 +181,7 @@ void FindCAxisLocations::execute()
     MatrixMath::Normalize3x1(c1);
     if(c1[2] < 0)
     {
-      MatrixMath::Multiply3x1withConstant(c1, -1);
+      MatrixMath::Multiply3x1withConstant(c1, -1.0f);
     }
     m_CAxisLocations[index] = c1[0];
     m_CAxisLocations[index + 1] = c1[1];
@@ -199,7 +206,7 @@ AbstractFilter::Pointer FindCAxisLocations::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindCAxisLocations::getCompiledLibraryName() const
+QString FindCAxisLocations::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -207,7 +214,7 @@ const QString FindCAxisLocations::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindCAxisLocations::getBrandingString() const
+QString FindCAxisLocations::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -215,7 +222,7 @@ const QString FindCAxisLocations::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindCAxisLocations::getFilterVersion() const
+QString FindCAxisLocations::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -225,7 +232,7 @@ const QString FindCAxisLocations::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindCAxisLocations::getGroupName() const
+QString FindCAxisLocations::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -233,7 +240,7 @@ const QString FindCAxisLocations::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindCAxisLocations::getUuid()
+QUuid FindCAxisLocations::getUuid() const
 {
   return QUuid("{68ae7b7e-b9f7-5799-9f82-ce21d0ccd55e}");
 }
@@ -241,7 +248,7 @@ const QUuid FindCAxisLocations::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindCAxisLocations::getSubGroupName() const
+QString FindCAxisLocations::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -249,7 +256,60 @@ const QString FindCAxisLocations::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindCAxisLocations::getHumanLabel() const
+QString FindCAxisLocations::getHumanLabel() const
 {
   return "Find C-Axis Locations";
+}
+
+// -----------------------------------------------------------------------------
+FindCAxisLocations::Pointer FindCAxisLocations::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindCAxisLocations> FindCAxisLocations::New()
+{
+  struct make_shared_enabler : public FindCAxisLocations
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindCAxisLocations::getNameOfClass() const
+{
+  return QString("FindCAxisLocations");
+}
+
+// -----------------------------------------------------------------------------
+QString FindCAxisLocations::ClassName()
+{
+  return QString("FindCAxisLocations");
+}
+
+// -----------------------------------------------------------------------------
+void FindCAxisLocations::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindCAxisLocations::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindCAxisLocations::setCAxisLocationsArrayName(const QString& value)
+{
+  m_CAxisLocationsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindCAxisLocations::getCAxisLocationsArrayName() const
+{
+  return m_CAxisLocationsArrayName;
 }

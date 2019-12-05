@@ -33,20 +33,35 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindTriangleGeomNeighbors.h"
 
 #include <QtCore/QDateTime>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingConstants.h"
 #include "SurfaceMeshing/SurfaceMeshingVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -71,7 +86,7 @@ FindTriangleGeomNeighbors::~FindTriangleGeomNeighbors() = default;
 // -----------------------------------------------------------------------------
 void FindTriangleGeomNeighbors::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -85,8 +100,8 @@ void FindTriangleGeomNeighbors::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_AM_SELECTION_FP("Face Feature Attribute Matrix", FeatureAttributeMatrixPath, FilterParameter::RequiredArray, FindTriangleGeomNeighbors, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Face Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Number of Neighbors", NumNeighborsArrayName, FilterParameter::CreatedArray, FindTriangleGeomNeighbors));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Neighbor List", NeighborListArrayName, FilterParameter::CreatedArray, FindTriangleGeomNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Number of Neighbors", NumNeighborsArrayName, FeatureAttributeMatrixPath, FeatureAttributeMatrixPath, FilterParameter::CreatedArray, FindTriangleGeomNeighbors));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Neighbor List", NeighborListArrayName, FeatureAttributeMatrixPath, FeatureAttributeMatrixPath, FilterParameter::CreatedArray, FindTriangleGeomNeighbors));
   setFilterParameters(parameters);
 }
 
@@ -103,14 +118,14 @@ void FindTriangleGeomNeighbors::initialize()
 // -----------------------------------------------------------------------------
 void FindTriangleGeomNeighbors::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getFaceLabelsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
   m_FaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFaceLabelsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FaceLabelsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -135,8 +150,12 @@ void FindTriangleGeomNeighbors::dataCheck()
   // because we are just creating an empty NeighborList object.
   // Now we are going to get a "Pointer" to the NeighborList object out of the DataContainer
   tempPath.update(getFeatureAttributeMatrixPath().getDataContainerName(), getFeatureAttributeMatrixPath().getAttributeMatrixName(), getNeighborListArrayName());
-  m_NeighborList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_NeighborList = getDataContainerArray()->createNonPrereqArrayFromPath<NeighborList<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID31);
+  if(getErrorCode() < 0)
+  {
+    return;
+  }
+  m_NeighborList.lock()->setNumNeighborsArrayName(getNumNeighborsArrayName());
 }
 
 // -----------------------------------------------------------------------------
@@ -157,10 +176,10 @@ void FindTriangleGeomNeighbors::preflight()
 // -----------------------------------------------------------------------------
 void FindTriangleGeomNeighbors::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -187,7 +206,7 @@ void FindTriangleGeomNeighbors::execute()
     if(currentMillis - millis > 1000)
     {
       QString ss = QObject::tr("Finding Neighbors || Initializing Neighbor Lists || %1% Complete").arg((static_cast<float>(i) / totalFeatures) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       millis = QDateTime::currentMSecsSinceEpoch();
     }
 
@@ -206,7 +225,7 @@ void FindTriangleGeomNeighbors::execute()
     if(currentMillis - millis > 1000)
     {
       QString ss = QObject::tr("Finding Neighbors || Determining Neighbor Lists || %1% Complete").arg((static_cast<float>(j) / totalFaces) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       millis = QDateTime::currentMSecsSinceEpoch();
     }
 
@@ -246,7 +265,7 @@ void FindTriangleGeomNeighbors::execute()
     if(currentMillis - millis > 1000)
     {
       QString ss = QObject::tr("Finding Neighbors || Calculating Surface Areas || %1% Complete").arg(((float)i / totalFeatures) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       millis = QDateTime::currentMSecsSinceEpoch();
     }
 
@@ -304,7 +323,7 @@ AbstractFilter::Pointer FindTriangleGeomNeighbors::newFilterInstance(bool copyFi
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomNeighbors::getCompiledLibraryName() const
+QString FindTriangleGeomNeighbors::getCompiledLibraryName() const
 {
 	return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -312,7 +331,7 @@ const QString FindTriangleGeomNeighbors::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomNeighbors::getBrandingString() const
+QString FindTriangleGeomNeighbors::getBrandingString() const
 {
   return "Statistics";
 }
@@ -320,7 +339,7 @@ const QString FindTriangleGeomNeighbors::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomNeighbors::getFilterVersion() const
+QString FindTriangleGeomNeighbors::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -330,7 +349,7 @@ const QString FindTriangleGeomNeighbors::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomNeighbors::getGroupName() const
+QString FindTriangleGeomNeighbors::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -338,7 +357,7 @@ const QString FindTriangleGeomNeighbors::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindTriangleGeomNeighbors::getUuid()
+QUuid FindTriangleGeomNeighbors::getUuid() const
 {
   return QUuid("{749dc8ae-a402-5ee7-bbca-28d5734c60df}");
 }
@@ -346,7 +365,7 @@ const QUuid FindTriangleGeomNeighbors::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomNeighbors::getSubGroupName() const
+QString FindTriangleGeomNeighbors::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -354,7 +373,84 @@ const QString FindTriangleGeomNeighbors::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomNeighbors::getHumanLabel() const
+QString FindTriangleGeomNeighbors::getHumanLabel() const
 {
   return "Find Feature Neighbors from Triangle Geometry";
+}
+
+// -----------------------------------------------------------------------------
+FindTriangleGeomNeighbors::Pointer FindTriangleGeomNeighbors::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindTriangleGeomNeighbors> FindTriangleGeomNeighbors::New()
+{
+  struct make_shared_enabler : public FindTriangleGeomNeighbors
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomNeighbors::getNameOfClass() const
+{
+  return QString("FindTriangleGeomNeighbors");
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomNeighbors::ClassName()
+{
+  return QString("FindTriangleGeomNeighbors");
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomNeighbors::setFeatureAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_FeatureAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTriangleGeomNeighbors::getFeatureAttributeMatrixPath() const
+{
+  return m_FeatureAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomNeighbors::setNeighborListArrayName(const QString& value)
+{
+  m_NeighborListArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomNeighbors::getNeighborListArrayName() const
+{
+  return m_NeighborListArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomNeighbors::setFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_FaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTriangleGeomNeighbors::getFaceLabelsArrayPath() const
+{
+  return m_FaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomNeighbors::setNumNeighborsArrayName(const QString& value)
+{
+  m_NumNeighborsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomNeighbors::getNumNeighborsArrayName() const
+{
+  return m_NumNeighborsArrayName;
 }

@@ -109,20 +109,15 @@ if(SIMPL_USE_MKDOCS)
   foreach(DocGroup ${DREAM3DDoc_GROUPS})
     file(APPEND "${docsCmakeFile}" "# ${DocGroup}\n")
     if(${DocGroup} STREQUAL "Core" OR ${DocGroup} STREQUAL "Test")
-      #message(STATUS "${DocGroup}_SOURCE_DIR: ${${DocGroup}_SOURCE_DIR}")
-      string(REPLACE "/${DocGroup}Filters" "/Documentation/SIMPLibFilters" tempstring ${${DocGroup}_SOURCE_DIR})
-      #message(STATUS "tempstring: ${tempstring}")
+      set(DREAM3D_${DocGroup}_SOURCE_DIR ${${DocGroup}_SOURCE_DIR})
+      string(REPLACE "/${DocGroup}Filters" "/Documentation/SIMPLibFilters" tempstring ${DREAM3D_${DocGroup}_SOURCE_DIR})
       file(APPEND "${docsCmakeFile}" "file(COPY \n       \"${tempstring}/${DocGroup}Filters\"
      DESTINATION
      \"${docsDestDir}/Filters\")\n")
     else()
-      file(APPEND "${docsCmakeFile}" "file(COPY \n      \"${${DocGroup}_SOURCE_DIR}/Documentation/${DocGroup}Filters\"
+      file(APPEND "${docsCmakeFile}" "file(COPY \n      \"${DREAM3D_${DocGroup}_SOURCE_DIR}/Documentation/${DocGroup}Filters\"
      DESTINATION
       \"${docsDestDir}/Filters\")\n")
-    #   file(APPEND "${docsCmakeFile}"
-    #  "file(RENAME
-    #  \"${docsDestDir}/Filters/${DocGroup}Filters\"
-    #  \"${docsDestDir}/Filters/${DocGroup}\")\n")
     endif()
   endforeach()
 
@@ -167,7 +162,8 @@ if(SIMPL_USE_MKDOCS)
 
   if(APPLE)
     set(MKDOCS_EXECUTABLE_SCRIPT "${DREAM3DDocRoot}/ReferenceManual/mkdocs")
-    file(WRITE "${MKDOCS_EXECUTABLE_SCRIPT}" "#!/usr/bin/python\n")
+    #file(WRITE "${MKDOCS_EXECUTABLE_SCRIPT}" "#!/usr/bin/python\n")
+    file(WRITE "${MKDOCS_EXECUTABLE_SCRIPT}" "#!${PYTHON_EXECUTABLE}\n")
     file(APPEND "${MKDOCS_EXECUTABLE_SCRIPT}" "# -*- coding: utf-8 -*-\n")
     file(APPEND "${MKDOCS_EXECUTABLE_SCRIPT}" "#    This script is generated automatically from CMake for macOS systems to get the encoding correct.\n")
     file(APPEND "${MKDOCS_EXECUTABLE_SCRIPT}" "#    Generated in code from ${CMAKE_CURRENT_LIST_FILE}\n")
@@ -293,7 +289,7 @@ if(SIMPL_USE_DISCOUNT)
     get_property(DREAM3DDoc_GROUPS GLOBAL PROPERTY DREAM3DDoc_GROUPS)
     set(NEED_COMMA_DOC_GROUP 0)
     foreach(DocGroup ${DREAM3DDoc_GROUPS})
-      #message(STATUS "  DocGroup: ${${DocGroup}_SOURCE_DIR}" )
+      #message(STATUS "  DocGroup: ${DREAM3D_${DocGroup}_SOURCE_DIR}" )
 
       if(NEED_COMMA_DOC_GROUP)
         file(APPEND "${PluginJsonFile}" " ,\n")
@@ -304,7 +300,7 @@ if(SIMPL_USE_DISCOUNT)
       file(APPEND "${PluginJsonFile}" "  \"${DocGroup}\": { \n")
 
       if(${DocGroup} STREQUAL "Core" OR ${DocGroup} STREQUAL "Test")
-        get_filename_component(core_PARENT ${${DocGroup}_SOURCE_DIR} DIRECTORY)
+        get_filename_component(core_PARENT ${DREAM3D_${DocGroup}_SOURCE_DIR} DIRECTORY)
 
         file(APPEND "${PluginJsonFile}" "    \"SOURCE_DIR\": \"${core_PARENT}\",\n")
         file(APPEND "${PluginJsonFile}" "    \"DOC_DIR\": \"Documentation/SIMPLibFilters/${DocGroup}Filters\",\n")
@@ -313,9 +309,9 @@ if(SIMPL_USE_DISCOUNT)
         endif()
 
       else()
-        file(APPEND "${PluginJsonFile}" "    \"SOURCE_DIR\": \"${${DocGroup}_SOURCE_DIR}\",\n")
+        file(APPEND "${PluginJsonFile}" "    \"SOURCE_DIR\": \"${DREAM3D_${DocGroup}_SOURCE_DIR}\",\n")
         file(APPEND "${PluginJsonFile}" "    \"DOC_DIR\": \"Documentation/${DocGroup}Filters\",\n")
-        if(EXISTS "${${DocGroup}_SOURCE_DIR}/Documentation/${DocGroup}Filters/Images")
+        if(EXISTS "${DREAM3D_${DocGroup}_SOURCE_DIR}/Documentation/${DocGroup}Filters/Images")
           file(APPEND "${PluginJsonFile}" "    \"IMAGES_DIR\": \"Documentation/${DocGroup}Filters/Images\",\n")
         endif()
 
@@ -335,14 +331,14 @@ if(SIMPL_USE_DISCOUNT)
         endif()
 
         if(${DocGroup} STREQUAL "Core" OR ${DocGroup} STREQUAL "Test")
-          string(REPLACE "/${DocGroup}Filters" "/Documentation/SIMPLibFilters/${DocGroup}Filters" tempstring ${${DocGroup}_SOURCE_DIR})
+          string(REPLACE "/${DocGroup}Filters" "/Documentation/SIMPLibFilters/${DocGroup}Filters" tempstring ${DREAM3D_${DocGroup}_SOURCE_DIR})
           string(REPLACE "${tempstring}/" "" tempstring ${docListItem})
           string(REPLACE "Filters" "" tempstring ${tempstring})
           string(REPLACE "Plugins/${DocGroup}/" "" filterName ${tempstring})
           string(REPLACE ".md" "" filterName ${filterName})
           file(APPEND "${PluginJsonFile}" "        \"${filterName}\"")
         else()
-          string(REPLACE "${${DocGroup}_SOURCE_DIR}/Documentation/" "" tempstring ${docListItem})
+          string(REPLACE "${DREAM3D_${DocGroup}_SOURCE_DIR}/Documentation/" "" tempstring ${docListItem})
           string(REPLACE "Filters" "" tempstring ${tempstring})
           string(REPLACE "${DocGroup}/" "" filterName ${tempstring})
           string(REPLACE ".md" "" filterName ${filterName})

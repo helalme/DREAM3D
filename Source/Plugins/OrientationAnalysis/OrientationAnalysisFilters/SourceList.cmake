@@ -22,6 +22,7 @@ set(_PublicFilters
   ChangeAngleRepresentation
   ConvertHexGridToSquareGrid
   ConvertOrientations
+  ConvertQuaternion
   CreateEnsembleInfo
   CreateLambertSphere
   EbsdToH5Ebsd
@@ -50,6 +51,7 @@ set(_PublicFilters
   GenerateIPFColors
   GenerateOrientationMatrixTranspose
   GenerateQuaternionConjugate
+  ImportEbsdMontage
   ImportH5EspritData
   ImportH5OimData
   INLWriter

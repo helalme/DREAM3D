@@ -33,13 +33,16 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "LammpsFileWriter.h"
 
-#include <QtCore/QDir>
-#include <QtCore/QFile>
-#include <QtCore/QtEndian>
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/DataContainerSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
 #include "SIMPLib/Geometry/VertexGeom.h"
@@ -68,7 +71,7 @@ LammpsFileWriter::~LammpsFileWriter() = default;
 // -----------------------------------------------------------------------------
 void LammpsFileWriter::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Lammps File", LammpsFile, FilterParameter::Parameter, LammpsFileWriter));
 
@@ -87,7 +90,7 @@ void LammpsFileWriter::readFilterParameters(AbstractFilterParametersReader* read
 {
   reader->openFilterGroup(this, index);
   setLammpsFile(reader->readString("LammpsFile", getLammpsFile()));
-  setVertexDataContainerName(reader->readString("VertexDataContainerName", getVertexDataContainerName()));
+  setVertexDataContainerName(reader->readDataArrayPath("VertexDataContainerName", getVertexDataContainerName()));
   reader->closeFilterGroup();
 }
 
@@ -103,19 +106,19 @@ void LammpsFileWriter::initialize()
 // -----------------------------------------------------------------------------
 void LammpsFileWriter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   FileSystemPathHelper::CheckOutputFile(this, "Output LAMMPS File", getLammpsFile(), true);
 
   DataContainer::Pointer v = getDataContainerArray()->getPrereqDataContainer(this, m_VertexDataContainerName);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   VertexGeom::Pointer vertices = v->getPrereqGeometry<VertexGeom, AbstractFilter>(this);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -123,8 +126,7 @@ void LammpsFileWriter::dataCheck()
   // We MUST have Nodes
   if(nullptr == vertices->getVertices().get())
   {
-    setErrorCondition(-384);
-    notifyErrorMessage(getHumanLabel(), "VertexDataContainer missing Nodes", getErrorCondition());
+    setErrorCondition(-384, "VertexDataContainer missing Nodes");
   }
 }
 
@@ -149,7 +151,7 @@ void LammpsFileWriter::execute()
   // int err = 0;
 
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -166,8 +168,7 @@ void LammpsFileWriter::execute()
   if(nullptr == lammpsFile)
   {
     QString ss = QObject::tr(": Error creating LAMMPS output file '%1'").arg(getLammpsFile());
-    setErrorCondition(-11000);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11000, ss);
     return;
   }
 
@@ -239,8 +240,8 @@ void LammpsFileWriter::execute()
   // Close the input and output files
   fclose(lammpsFile);
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -266,7 +267,7 @@ AbstractFilter::Pointer LammpsFileWriter::newFilterInstance(bool copyFilterParam
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LammpsFileWriter::getCompiledLibraryName() const
+QString LammpsFileWriter::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -274,7 +275,7 @@ const QString LammpsFileWriter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LammpsFileWriter::getBrandingString() const
+QString LammpsFileWriter::getBrandingString() const
 {
   return "IO";
 }
@@ -282,7 +283,7 @@ const QString LammpsFileWriter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LammpsFileWriter::getFilterVersion() const
+QString LammpsFileWriter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -293,7 +294,7 @@ const QString LammpsFileWriter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LammpsFileWriter::getGroupName() const
+QString LammpsFileWriter::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -301,7 +302,7 @@ const QString LammpsFileWriter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid LammpsFileWriter::getUuid()
+QUuid LammpsFileWriter::getUuid() const
 {
   return QUuid("{01364630-cd73-5ad8-b882-17d34ec900f2}");
 }
@@ -309,7 +310,7 @@ const QUuid LammpsFileWriter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LammpsFileWriter::getSubGroupName() const
+QString LammpsFileWriter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -317,7 +318,60 @@ const QString LammpsFileWriter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString LammpsFileWriter::getHumanLabel() const
+QString LammpsFileWriter::getHumanLabel() const
 {
   return "Export Lammps File";
+}
+
+// -----------------------------------------------------------------------------
+LammpsFileWriter::Pointer LammpsFileWriter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<LammpsFileWriter> LammpsFileWriter::New()
+{
+  struct make_shared_enabler : public LammpsFileWriter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString LammpsFileWriter::getNameOfClass() const
+{
+  return QString("LammpsFileWriter");
+}
+
+// -----------------------------------------------------------------------------
+QString LammpsFileWriter::ClassName()
+{
+  return QString("LammpsFileWriter");
+}
+
+// -----------------------------------------------------------------------------
+void LammpsFileWriter::setVertexDataContainerName(const DataArrayPath& value)
+{
+  m_VertexDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath LammpsFileWriter::getVertexDataContainerName() const
+{
+  return m_VertexDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void LammpsFileWriter::setLammpsFile(const QString& value)
+{
+  m_LammpsFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString LammpsFileWriter::getLammpsFile() const
+{
+  return m_LammpsFile;
 }

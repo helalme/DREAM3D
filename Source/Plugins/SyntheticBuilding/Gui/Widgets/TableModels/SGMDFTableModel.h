@@ -38,7 +38,6 @@
 #include <QtCore/QAbstractTableModel>
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
-#include <QtGui/QColor>
 
 class QAbstractItemDelegate;
 
@@ -58,7 +57,7 @@ public:
     ColumnCount
   };
 
-  SGMDFTableModel(QObject* parent = 0);
+  SGMDFTableModel(QObject* parent = nullptr);
   virtual ~SGMDFTableModel();
 
   /**

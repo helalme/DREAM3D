@@ -2,10 +2,8 @@
 // Insert your license & copyright information here
 // -----------------------------------------------------------------------------
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
@@ -15,6 +13,9 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "ReconstructionTestFileLocations.h"
@@ -66,18 +67,18 @@ public:
   {
     DataContainerArray::Pointer dca = DataContainerArray::New();
     DataContainer::Pointer dc = DataContainer::New("Test");
-    dca->addDataContainer(dc);
+    dca->addOrReplaceDataContainer(dc);
 
     ImageGeom::Pointer igeom = ImageGeom::New();
     size_t dims_in[3] = {5, 5, 1};
     igeom->setDimensions(dims_in);
     dc->setGeometry(igeom);
-    QVector<size_t> dims(3, 0);
+    std::vector<size_t> dims(3, 0);
     dims[0] = 5;
     dims[1] = 5;
     dims[2] = 1;
     AttributeMatrix::Pointer cellAM = AttributeMatrix::New(dims, "CellData", AttributeMatrix::Type::Cell);
-    dc->addAttributeMatrix(cellAM->getName(), cellAM);
+    dc->addOrReplaceAttributeMatrix(cellAM);
 
     Int32ArrayType::Pointer featureIds = Int32ArrayType::CreateArray(25, "FeatureIds", true);
     featureIds->initializeWithZeros();
@@ -93,12 +94,12 @@ public:
     featureIds->setValue(17, 1);
     featureIds->setValue(18, 1);
 
-    cellAM->addAttributeArray(featureIds->getName(), featureIds);
+    cellAM->insertOrAssign(featureIds);
 
     dims.resize(1);
     dims[0] = 2;
     AttributeMatrix::Pointer featureAM = AttributeMatrix::New(dims, "FeatureData", AttributeMatrix::Type::CellFeature);
-    dc->addAttributeMatrix(featureAM->getName(), featureAM);
+    dc->addOrReplaceAttributeMatrix(featureAM);
 
 #if 0
       0, 0, 0, 0, 0,
@@ -107,7 +108,7 @@ public:
       0, 1, 1, 1, 0,
       0, 0, 0, 0, 0;
 #endif
-    QVector<size_t> compDims(1, 6);
+    std::vector<size_t> compDims(1, 6);
     UInt32ArrayType::Pointer rect = UInt32ArrayType::CreateArray(2, compDims, "Rect Coords", true);
     rect->initializeWithZeros();
     rect->setValue(6, 1);
@@ -116,7 +117,7 @@ public:
     rect->setValue(9, 3);
     rect->setValue(10, 3);
     rect->setValue(11, 0);
-    // featureAM->addAttributeArray(rect->getName(), rect);
+    // featureAM->insertOrAssign(rect);
 
     return dca;
   }
@@ -136,7 +137,7 @@ public:
     filter->setDataContainerArray(dca);
 
     Observer obs;
-    obs.connect(filter.get(), SIGNAL(filterGeneratedMessage(const PipelineMessage&)), &obs, SLOT(processPipelineMessage(const PipelineMessage&)));
+    obs.connect(filter.get(), SIGNAL(messageGenerated(const AbstractMessage::Pointer&)), &obs, SLOT(processPipelineMessage(const AbstractMessage::Pointer&)));
 
     DataArrayPath path("Test", "CellData", "FeatureIds");
     QVariant variant;
@@ -151,14 +152,14 @@ public:
     DREAM3D_REQUIRE_EQUAL(ok, true)
 
     filter->preflight();
-    int err = filter->getErrorCondition();
+    int err = filter->getErrorCode();
     DREAM3D_REQUIRE(err >= 0)
 
     dca = CreateTestData();
     filter->setDataContainerArray(dca);
 
     filter->execute();
-    err = filter->getErrorCondition();
+    err = filter->getErrorCode();
     DREAM3D_REQUIRE(err >= 0)
 
     AttributeMatrix::Pointer featureAM = dca->getAttributeMatrix(DataArrayPath("Test", "FeatureData", ""));

@@ -32,6 +32,8 @@
  *    United States Prime Contract Navy N00173-07-C-2068
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+#include <memory>
+
 #include "VtkRectilinearGridWriter.h"
 
 #include <sstream>
@@ -40,8 +42,16 @@
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Common/ScopedFileMonitor.hpp"
+
 #include "SIMPLib/Common/TemplateHelpers.h"
+#include "SIMPLib/DataArrays/IDataArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
@@ -144,7 +154,7 @@ template <typename T> int WriteCoords(FILE* f, const char* axis, const char* typ
 template <typename T> void WriteDataArray(AbstractFilter* filter, FILE* f, IDataArray::Pointer iDataPtr, bool writeBinary)
 {
   QString ss = QObject::tr("Writing Cell Data %1").arg(iDataPtr->getName());
-  filter->notifyStatusMessage(filter->getMessagePrefix(), filter->getHumanLabel(), ss);
+  filter->notifyStatusMessage(ss);
   // qDebug() << "Writing DataArray " << iDataPtr->getName() << " To a VTK File";
 
   typedef DataArray<T> ArrayType;
@@ -228,7 +238,7 @@ VtkRectilinearGridWriter::~VtkRectilinearGridWriter() = default;
 // -----------------------------------------------------------------------------
 void VtkRectilinearGridWriter::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output File", OutputFile, FilterParameter::Parameter, VtkRectilinearGridWriter, "*.vtk", "VTK Rectilinear Grid"));
   parameters.push_back(SIMPL_NEW_BOOL_FP("Write Binary File", WriteBinaryFile, FilterParameter::Parameter, VtkRectilinearGridWriter));
@@ -264,8 +274,8 @@ void VtkRectilinearGridWriter::initialize()
 // -----------------------------------------------------------------------------
 void VtkRectilinearGridWriter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   FileSystemPathHelper::CheckOutputFile(this, "Output VTK File", getOutputFile(), true);
@@ -275,15 +285,13 @@ void VtkRectilinearGridWriter::dataCheck()
   if(fi.isDir())
   {
     QString ss = QObject::tr("The output file path is a path to an existing directory. Please change the path to point to a file");
-    setErrorCondition(-1012);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1012, ss);
   }
 
   if(m_SelectedDataArrayPaths.isEmpty())
   {
-    setErrorCondition(-11001);
     QString ss = QObject::tr("At least one Attribute Array must be selected");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
 
@@ -291,9 +299,8 @@ void VtkRectilinearGridWriter::dataCheck()
 
   if(!DataArrayPath::ValidateVector(paths))
   {
-    setErrorCondition(-11004);
     QString ss = QObject::tr("There are Attribute Arrays selected that are not contained in the same Attribute Matrix. All selected Attribute Arrays must belong to the same Attribute Matrix");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11004, ss);
     return;
   }
 
@@ -307,7 +314,7 @@ void VtkRectilinearGridWriter::dataCheck()
   QString dcName = DataArrayPath::GetAttributeMatrixPath(getSelectedDataArrayPaths()).getDataContainerName();
 
   ImageGeom::Pointer image = getDataContainerArray()->getDataContainer(dcName)->getPrereqGeometry<ImageGeom, AbstractFilter>(this);
-  if(getErrorCondition() < 0 || nullptr == image.get())
+  if(getErrorCode() < 0 || nullptr == image.get())
   {
     return;
   }
@@ -331,10 +338,10 @@ void VtkRectilinearGridWriter::preflight()
 // -----------------------------------------------------------------------------
 void VtkRectilinearGridWriter::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -347,8 +354,7 @@ void VtkRectilinearGridWriter::execute()
   if(!dir.mkpath(parentPath))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(parentPath);
-    setErrorCondition(-2031000);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-2031000, ss);
     return;
   }
 
@@ -357,12 +363,9 @@ void VtkRectilinearGridWriter::execute()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(dcName);
 
   ImageGeom::Pointer image = m->getGeometryAs<ImageGeom>();
-  size_t dims[3] = {0, 0, 0};
-  std::tie(dims[0], dims[1], dims[2]) = image->getDimensions();
-  float res[3] = {0.0f, 0.0f, 0.0f};
-  image->getResolution(res);
-  float origin[3] = {0.0f, 0.0f, 0.0f};
-  image->getOrigin(origin);
+  SizeVec3Type dims = image->getDimensions();
+  FloatVec3Type res = image->getSpacing();
+  FloatVec3Type origin = image->getOrigin();
 
   int err = 0;
   FILE* f = nullptr;
@@ -371,8 +374,7 @@ void VtkRectilinearGridWriter::execute()
   if(nullptr == f)
   {
     QString ss = QObject::tr("Error opening output vtk file '%1'\n ").arg(m_OutputFile);
-    setErrorCondition(-2031001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-2031001, ss);
     return;
   }
 
@@ -384,24 +386,21 @@ void VtkRectilinearGridWriter::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing X Coordinates in vtk file %s'\n ").arg(m_OutputFile);
-    setErrorCondition(-2031002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-2031002, ss);
     return;
   }
   err = Detail::WriteCoords<float>(f, "Y_COORDINATES", "float", dims[1] + 1, origin[1] - res[1] * 0.5f, (float)(dims[1] + 1 * res[1]), res[1], m_WriteBinaryFile);
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing Y Coordinates in vtk file %s'\n ").arg(m_OutputFile);
-    setErrorCondition(-2031002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-2031002, ss);
     return;
   }
   err = Detail::WriteCoords<float>(f, "Z_COORDINATES", "float", dims[2] + 1, origin[0] - res[2] * 0.5f, (float)(dims[2] + 1 * res[2]), res[2], m_WriteBinaryFile);
   if(err < 0)
   {
     QString ss = QObject::tr("Error writing Z Coordinates in vtk file %s'\n ").arg(m_OutputFile);
-    setErrorCondition(-2031002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-2031002, ss);
     return;
   }
 
@@ -420,7 +419,7 @@ void VtkRectilinearGridWriter::execute()
     if (className.startsWith("DataArray"))
     {
       QString ss = QObject::tr("Writing Cell Data %1").arg(iDataPtr->getName());
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       //qDebug() << "Writing DataArray " << iDataPtr->getName() << " To a VTK File";
       VTK_WRITE_RECTILINEAR_DATA(UInt8ArrayType, iDataPtr, "unsigned_char", quint8, "%d ");
       VTK_WRITE_RECTILINEAR_DATA(Int8ArrayType, iDataPtr, "char", int8_t, "%d ");
@@ -462,7 +461,7 @@ AbstractFilter::Pointer VtkRectilinearGridWriter::newFilterInstance(bool copyFil
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VtkRectilinearGridWriter::getCompiledLibraryName() const
+QString VtkRectilinearGridWriter::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -470,7 +469,7 @@ const QString VtkRectilinearGridWriter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VtkRectilinearGridWriter::getBrandingString() const
+QString VtkRectilinearGridWriter::getBrandingString() const
 {
   return "IO";
 }
@@ -478,7 +477,7 @@ const QString VtkRectilinearGridWriter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VtkRectilinearGridWriter::getFilterVersion() const
+QString VtkRectilinearGridWriter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -489,7 +488,7 @@ const QString VtkRectilinearGridWriter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VtkRectilinearGridWriter::getGroupName() const
+QString VtkRectilinearGridWriter::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -497,7 +496,7 @@ const QString VtkRectilinearGridWriter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid VtkRectilinearGridWriter::getUuid()
+QUuid VtkRectilinearGridWriter::getUuid() const
 {
   return QUuid("{a043bd66-2681-5126-82e1-5fdc46694bf4}");
 }
@@ -505,7 +504,7 @@ const QUuid VtkRectilinearGridWriter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VtkRectilinearGridWriter::getSubGroupName() const
+QString VtkRectilinearGridWriter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -513,7 +512,72 @@ const QString VtkRectilinearGridWriter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VtkRectilinearGridWriter::getHumanLabel() const
+QString VtkRectilinearGridWriter::getHumanLabel() const
 {
   return "Vtk Rectilinear Grid Exporter";
+}
+
+// -----------------------------------------------------------------------------
+VtkRectilinearGridWriter::Pointer VtkRectilinearGridWriter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<VtkRectilinearGridWriter> VtkRectilinearGridWriter::New()
+{
+  struct make_shared_enabler : public VtkRectilinearGridWriter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString VtkRectilinearGridWriter::getNameOfClass() const
+{
+  return QString("VtkRectilinearGridWriter");
+}
+
+// -----------------------------------------------------------------------------
+QString VtkRectilinearGridWriter::ClassName()
+{
+  return QString("VtkRectilinearGridWriter");
+}
+
+// -----------------------------------------------------------------------------
+void VtkRectilinearGridWriter::setOutputFile(const QString& value)
+{
+  m_OutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString VtkRectilinearGridWriter::getOutputFile() const
+{
+  return m_OutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void VtkRectilinearGridWriter::setWriteBinaryFile(bool value)
+{
+  m_WriteBinaryFile = value;
+}
+
+// -----------------------------------------------------------------------------
+bool VtkRectilinearGridWriter::getWriteBinaryFile() const
+{
+  return m_WriteBinaryFile;
+}
+
+// -----------------------------------------------------------------------------
+void VtkRectilinearGridWriter::setSelectedDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_SelectedDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> VtkRectilinearGridWriter::getSelectedDataArrayPaths() const
+{
+  return m_SelectedDataArrayPaths;
 }

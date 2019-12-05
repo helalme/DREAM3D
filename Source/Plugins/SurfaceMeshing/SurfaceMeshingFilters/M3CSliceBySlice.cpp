@@ -33,10 +33,16 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "M3CSliceBySlice.h"
 
 // Include this FIRST because there is a needed define for some compiles
 // to expose some of the constants needed below
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Math/SIMPLibMath.h"
 
 // C Includes
@@ -51,12 +57,14 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
-#include <QtCore/QFileInfo>
 #include <QtCore/QMap>
 
 #include "SIMPLib/Common/PipelineMessage.h"
 #include "SIMPLib/Common/ScopedFileMonitor.hpp"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "SurfaceMeshing/SurfaceMeshingFilters/BinaryNodesTrianglesReader.h"
 
 #define WRITE_BINARY_TEMP_FILES 1
@@ -108,8 +116,19 @@ int nsTable_2d[20][8] = {{-1, -1, -1, -1, -1, -1, -1, -1},
 class SMTempFile
 {
 public:
-  SIMPL_SHARED_POINTERS(SMTempFile)
-  SIMPL_STATIC_NEW_MACRO(SMTempFile)
+  using Self = SMTempFile;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer();
+  Pointer NullPointer()
+  {
+    return Pointer(static_cast<Self*>(nullptr));
+  }
+
+    static Pointer New();
+
   virtual ~SMTempFile()
   {
     if(m_AutoDelete == true)
@@ -119,8 +138,29 @@ public:
     }
   }
 
-  SIMPL_INSTANCE_STRING_PROPERTY(FilePath)
-  SIMPL_INSTANCE_PROPERTY(bool, AutoDelete)
+  // -----------------------------------------------------------------------------
+  void M3CSliceBySlice::setFilePath(const QString& value)
+  {
+    m_FilePath = value;
+  }
+
+  // -----------------------------------------------------------------------------
+  QString M3CSliceBySlice::getFilePath() const
+  {
+    return m_FilePath;
+  }
+
+  // -----------------------------------------------------------------------------
+  void setAutoDelete(bool value)
+  {
+    m_AutoDelete = value;
+  }
+
+  // -----------------------------------------------------------------------------
+  bool getAutoDelete() const
+  {
+    return m_AutoDelete;
+  }
 
 protected:
   SMTempFile()
@@ -135,8 +175,19 @@ private:
 class FeatureChecker
 {
 public:
-  SIMPL_SHARED_POINTERS(FeatureChecker)
-  SIMPL_STATIC_NEW_MACRO(FeatureChecker)
+  using Self = FeatureChecker;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer();
+  Pointer NullPointer()
+  {
+    return Pointer(static_cast<Self*>(nullptr));
+  }
+
+    static Pointer New();
+
   virtual ~FeatureChecker()
   {
   }
@@ -289,6 +340,11 @@ protected:
   }
 
 private:
+
+  QString m_FilePath = {};
+
+  bool m_AutoDelete = {};
+
   QVector<MapType> featureMaps;
   QVector<MapType> tCounts;
 
@@ -322,13 +378,13 @@ M3CSliceBySlice::~M3CSliceBySlice() = default;
 // -----------------------------------------------------------------------------
 void M3CSliceBySlice::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_BOOL_FP("Delete Temp Files", DeleteTempFiles, FilterParameter::Uncategorized, M3CSliceBySlice));
   parameters.push_back(SeparatorFilterParameter::New("Required Information", FilterParameter::Uncategorized));
   parameters.push_back(DataArraySelectionFilterParameter::New("FeatureIds", "FeatureIdsArrayPath", getFeatureIdsArrayPath(), FilterParameter::Uncategorized,
                                                               SIMPL_BIND_SETTER(M3CSliceBySlice, this, FeatureIdsArrayPath), SIMPL_BIND_GETTER(M3CSliceBySlice, this, FeatureIdsArrayPath)));
   parameters.push_back(SeparatorFilterParameter::New("Created Information", FilterParameter::Uncategorized));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Surface Data Container", SurfaceDataContainerName, FilterParameter::Uncategorized, M3CSliceBySlice));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Surface Data Container", SurfaceDataContainerName, FilterParameter::Uncategorized, M3CSliceBySlice));
   parameters.push_back(SIMPL_NEW_STRING_FP("Vertex Attribute Matrix", VertexAttributeMatrixName, FilterParameter::Uncategorized, M3CSliceBySlice));
   parameters.push_back(SIMPL_NEW_STRING_FP("Face Attribute Matrix", FaceAttributeMatrixName, FilterParameter::Uncategorized, M3CSliceBySlice));
   parameters.push_back(SIMPL_NEW_STRING_FP("Face Labels", FaceLabelsArrayName, FilterParameter::Uncategorized, M3CSliceBySlice));
@@ -342,7 +398,7 @@ void M3CSliceBySlice::setupFilterParameters()
 void M3CSliceBySlice::readFilterParameters(AbstractFilterParametersReader* reader, int index)
 {
   reader->openFilterGroup(this, index);
-  setSurfaceDataContainerName(reader->readString("SurfaceDataContainerName", getSurfaceDataContainerName()));
+  setSurfaceDataContainerName(reader->readDataArrayPath("SurfaceDataContainerName", getSurfaceDataContainerName()));
   setVertexAttributeMatrixName(reader->readString("VertexAttributeMatrixName", getVertexAttributeMatrixName()));
   setFaceAttributeMatrixName(reader->readString("FaceAttributeMatrixName", getFaceAttributeMatrixName()));
   setSurfaceMeshNodeTypesArrayName(reader->readString("SurfaceMeshNodeTypesArrayName", getSurfaceMeshNodeTypesArrayName()));
@@ -365,10 +421,10 @@ void M3CSliceBySlice::initialize()
 void M3CSliceBySlice::dataCheck()
 {
   DataArrayPath tempPath;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                        /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -411,7 +467,7 @@ void M3CSliceBySlice::preflight()
   binaryReader->preflight();
   if(binaryReader->getErrorCondition() < 0)
   {
-    setErrorCondition(binaryReader->getErrorCondition());
+    setErrorCondition(binaryReader->getErrorCondition(), "Binary Reader failed its preflight.");
   }
   setInPreflight(false);
 }
@@ -422,8 +478,8 @@ void M3CSliceBySlice::preflight()
 void M3CSliceBySlice::execute()
 {
   int err = 0;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
   if(getErrorCondition() < 0)
   {
@@ -495,22 +551,22 @@ void M3CSliceBySlice::execute()
   DataArray<int32_t>::Pointer neighCSiteIdPtr = DataArray<int32_t>::CreateArray(2 * NSP + 1, "M3CSliceBySlice_SurfaceMesh::M3C::Neighbor_CSiteId_Array");
   neighCSiteIdPtr->initializeWithZeros();
 
-  StructArray<SurfaceMesh::M3C::Face>::Pointer cSquarePtr = StructArray<SurfaceMesh::M3C::Face>::CreateArray(3 * 2 * NSP, "M3CSliceBySlice_SurfaceMesh::M3C::Face_Array");
+  StructArray<SurfaceMesh::M3C::Face>::Pointer cSquarePtr = StructArray<SurfaceMesh::M3C::Face>::CreateArray(3 * 2 * NSP, "M3CSliceBySlice_SurfaceMesh::M3C::Face_Array", true);
   cSquarePtr->initializeWithZeros();
 
-  VertexArray::Pointer cVertexPtr = VertexArray::CreateArray(2 * 7 * NSP, "M3CSliceBySlice_Node_Array");
+  VertexArray::Pointer cVertexPtr = VertexArray::CreateArray(2 * 7 * NSP, "M3CSliceBySlice_Node_Array", true);
   cVertexPtr->initializeWithZeros();
 
-  DataArray<int32_t>::Pointer cVertexNodeIdPtr = DataArray<int32_t>::CreateArray(2 * 7 * NSP, "M3CSliceBySlice_Node_NodeId_Array");
+  DataArray<int32_t>::Pointer cVertexNodeIdPtr = DataArray<int32_t>::CreateArray(2 * 7 * NSP, "M3CSliceBySlice_Node_NodeId_Array", true);
   cVertexNodeIdPtr->initializeWithZeros();
 
-  DataArray<int8_t>::Pointer cVertexNodeTypePtr = DataArray<int8_t>::CreateArray(2 * 7 * NSP, "M3CSliceBySlice_Node_NodeKind_Array");
+  DataArray<int8_t>::Pointer cVertexNodeTypePtr = DataArray<int8_t>::CreateArray(2 * 7 * NSP, "M3CSliceBySlice_Node_NodeKind_Array", true);
   cVertexNodeTypePtr->initializeWithValue(SIMPL::SurfaceMesh::NodeType::Unused);
 
-  StructArray<SurfaceMesh::M3C::Patch>::Pointer cTrianglePtr = StructArray<SurfaceMesh::M3C::Patch>::CreateArray(0, "M3CSliceBySlice_Triangle_Array");
+  StructArray<SurfaceMesh::M3C::Patch>::Pointer cTrianglePtr = StructArray<SurfaceMesh::M3C::Patch>::CreateArray(0, "M3CSliceBySlice_Triangle_Array", true);
   cTrianglePtr->initializeWithZeros();
 
-  StructArray<SurfaceMesh::M3C::Segment>::Pointer cEdgePtr = StructArray<SurfaceMesh::M3C::Segment>::CreateArray(0, "M3CSliceBySlice_SurfaceMesh::M3C::Segment_Array");
+  StructArray<SurfaceMesh::M3C::Segment>::Pointer cEdgePtr = StructArray<SurfaceMesh::M3C::Segment>::CreateArray(0, "M3CSliceBySlice_SurfaceMesh::M3C::Segment_Array", true);
   cEdgePtr->initializeWithZeros();
 
   // Prime the working voxels (2 layers worth) with -3 values indicating border voxels if the
@@ -536,14 +592,13 @@ void M3CSliceBySlice::execute()
   {
     QString ss = QObject::tr(" Layers %1 and %2 of %3").arg(i).arg(i + 1).arg(sliceCount);
     // notifyProgressValue((i * 90 / sliceCount));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
 
     if(getCancel())
     {
 
       ss = QObject::tr("Cancelling filter");
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
       break;
     }
 
@@ -610,8 +665,7 @@ void M3CSliceBySlice::execute()
     {
 
       ss = QObject::tr("Error writing Nodes file '%1'").arg(nodesFile);
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
       return;
     }
 
@@ -620,8 +674,7 @@ void M3CSliceBySlice::execute()
     {
 
       ss = QObject::tr("Error writing triangles file '%1'").arg(trianglesFile);
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
       return;
     }
     cNodeID = nNodes;
@@ -660,7 +713,7 @@ void M3CSliceBySlice::execute()
   binaryReader->execute();
   if(binaryReader->getErrorCondition() < 0)
   {
-    setErrorCondition(binaryReader->getErrorCondition());
+    setErrorCondition(binaryReader->getErrorCondition(), "Binary Reader failed during execution.");
   }
 
   // This will possibly delete the triangles and Nodes file depending on the
@@ -673,7 +726,7 @@ void M3CSliceBySlice::execute()
     renumberVoxelFeatureIds(renumberFeatureValue);
   }
 
-  notifyStatusMessage(getHumanLabel(), "Surface Meshing Complete");
+  notifyStatusMessage("Surface Meshing Complete");
 }
 
 // -----------------------------------------------------------------------------
@@ -3093,7 +3146,7 @@ QVector<int> M3CSliceBySlice::findAdjacentTriangles(SurfaceMesh::M3C::Triangle* 
 AbstractFilter::Pointer M3CSliceBySlice::newFilterInstance(bool copyFilterParameters) const
 {
   M3CSliceBySlice::Pointer filter = M3CSliceBySlice::New();
-  if(true == copyFilterParameters)
+  if(copyFilterParameters)
   {
     copyFilterParameterInstanceVariables(filter.get());
   }
@@ -3103,7 +3156,7 @@ AbstractFilter::Pointer M3CSliceBySlice::newFilterInstance(bool copyFilterParame
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString M3CSliceBySlice::getCompiledLibraryName() const
+QString M3CSliceBySlice::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -3111,7 +3164,7 @@ const QString M3CSliceBySlice::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString M3CSliceBySlice::getBrandingString() const
+QString M3CSliceBySlice::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -3119,7 +3172,7 @@ const QString M3CSliceBySlice::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString M3CSliceBySlice::getFilterVersion() const
+QString M3CSliceBySlice::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -3130,7 +3183,7 @@ const QString M3CSliceBySlice::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString M3CSliceBySlice::getGroupName() const
+QString M3CSliceBySlice::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -3138,7 +3191,7 @@ const QString M3CSliceBySlice::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid M3CSliceBySlice::getUuid()
+QUuid M3CSliceBySlice::getUuid() const
 {
   return QUuid("{86d77279-5a18-5b75-a411-c4e0c50bc4a4}");
 }
@@ -3146,7 +3199,7 @@ const QUuid M3CSliceBySlice::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString M3CSliceBySlice::getSubGroupName() const
+QString M3CSliceBySlice::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GenerationFilters;
 }
@@ -3154,7 +3207,120 @@ const QString M3CSliceBySlice::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString M3CSliceBySlice::getHumanLabel() const
+QString M3CSliceBySlice::getHumanLabel() const
 {
   return "M3C Surface Meshing (Slice at a time)";
+}
+
+// -----------------------------------------------------------------------------
+M3CSliceBySlice::Pointer M3CSliceBySlice::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<M3CSliceBySlice> M3CSliceBySlice::New()
+{
+  struct make_shared_enabler : public M3CSliceBySlice
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CSliceBySlice::getNameOfClass() const
+{
+  return QString("M3CSliceBySlice");
+}
+
+// -----------------------------------------------------------------------------
+QString M3CSliceBySlice::ClassName()
+{
+  return QString("M3CSliceBySlice");
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setSurfaceDataContainerName(const DataArrayPath& value)
+{
+  m_SurfaceDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath M3CSliceBySlice::getSurfaceDataContainerName() const
+{
+  return m_SurfaceDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setVertexAttributeMatrixName(const QString& value)
+{
+  m_VertexAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CSliceBySlice::getVertexAttributeMatrixName() const
+{
+  return m_VertexAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setFaceAttributeMatrixName(const QString& value)
+{
+  m_FaceAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CSliceBySlice::getFaceAttributeMatrixName() const
+{
+  return m_FaceAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setFaceLabelsArrayName(const QString& value)
+{
+  m_FaceLabelsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CSliceBySlice::getFaceLabelsArrayName() const
+{
+  return m_FaceLabelsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setSurfaceMeshNodeTypesArrayName(const QString& value)
+{
+  m_SurfaceMeshNodeTypesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString M3CSliceBySlice::getSurfaceMeshNodeTypesArrayName() const
+{
+  return m_SurfaceMeshNodeTypesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setDeleteTempFiles(bool value)
+{
+  m_DeleteTempFiles = value;
+}
+
+// -----------------------------------------------------------------------------
+bool M3CSliceBySlice::getDeleteTempFiles() const
+{
+  return m_DeleteTempFiles;
+}
+
+// -----------------------------------------------------------------------------
+void M3CSliceBySlice::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath M3CSliceBySlice::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
 }

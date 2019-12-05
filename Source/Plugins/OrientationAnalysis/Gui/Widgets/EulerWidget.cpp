@@ -39,6 +39,8 @@
 
 #include "SIMPLib/Math/SIMPLibMath.h"
 
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
@@ -76,7 +78,7 @@ void EulerWidget::updateData(OrientationUtilityCalculator* calculator)
 {
   setStyleSheet("");
 
-  if(calculator->getInputType() == OrientationConverter<double>::Euler)
+  if(calculator->getInputType() == OrientationRepresentation::Type::Euler)
   {
     // The input type is the same as this widget, so don't update
     return;
@@ -90,7 +92,7 @@ void EulerWidget::updateData(OrientationUtilityCalculator* calculator)
     return;
   }
 
-  QVector<double> eValues = calculator->getValues(OrientationConverter<double>::Euler);
+  QVector<double> eValues = calculator->getValues(OrientationRepresentation::Type::Euler);
 
   if(m_AngleMeasurement == Degrees)
   {
@@ -117,7 +119,7 @@ void EulerWidget::valuesUpdated(const QString& text)
     values = toRadians(values);
   }
 
-  OrientationTransforms<QVector<double>, double>::ResultType result = OrientationTransforms<QVector<double>, double>::eu_check(values);
+  OrientationTransformation::ResultType result = OrientationTransformation::eu_check(values);
   int errorCode = result.result;
   QString errorMsg = QString::fromStdString(result.msg);
 
@@ -125,11 +127,11 @@ void EulerWidget::valuesUpdated(const QString& text)
 
   if(errorCode >= 0)
   {
-    emit valuesChanged(values, OrientationConverter<double>::Euler, false);
+    emit valuesChanged(values, OrientationRepresentation::Type::Euler, false);
   }
   else
   {
-    emit valuesChanged(QVector<double>(), OrientationConverter<double>::Euler, true);
+    emit valuesChanged(QVector<double>(), OrientationRepresentation::Type::Euler, true);
     emit invalidValues(errorCode, errorMsg);
   }
 }

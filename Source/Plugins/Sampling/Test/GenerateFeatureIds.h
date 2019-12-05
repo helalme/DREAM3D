@@ -1,8 +1,11 @@
 #pragma once
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <memory>
+
 #include "SIMPLib/Filtering/AbstractFilter.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataArrays/DataArray.hpp"
+#include "SIMPLib/DataContainers/AttributeMatrix.h"
 
 #include "TestFileLocations.h"
 
@@ -13,18 +16,76 @@ class GenerateFeatureIds : public AbstractFilter
 {
   Q_OBJECT
 public:
-  SIMPL_SHARED_POINTERS(GenerateFeatureIds)
-  SIMPL_FILTER_NEW_MACRO(GenerateFeatureIds)
-  SIMPL_TYPE_MACRO_SUPER_OVERRIDE(GenerateFeatureIds, AbstractFilter)
+  using Self = GenerateFeatureIds;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  
+  /**
+   * @brief Returns a NullPointer wrapped by a shared_ptr<>
+   * @return
+   */
+  static Pointer NullPointer();
+
+  /**
+   * @brief Creates a new object wrapped in a shared_ptr<>
+   * @return
+   */
+  static Pointer New();
+
+  /**
+   * @brief Returns the name of the class for GenerateFeatureIds
+   */
+  QString getNameOfClass() const override;
+  /**
+   * @brief Returns the name of the class for GenerateFeatureIds
+   */
+  static QString ClassName();
 
   ~GenerateFeatureIds()
   {
   }
-  SIMPL_INSTANCE_STRING_PROPERTY(DataContainerName)
+  /**
+   * @brief Setter property for DataContainerName
+   */
+  void setDataContainerName(const QString& value);
+  /**
+   * @brief Getter property for DataContainerName
+   * @return Value of DataContainerName
+   */
+  QString getDataContainerName() const;
+
   //------ Created Cell Data
-  SIMPL_INSTANCE_STRING_PROPERTY(CellAttributeMatrixName)
-  SIMPL_INSTANCE_STRING_PROPERTY(CellFeatureAttributeMatrixName)
-  SIMPL_INSTANCE_STRING_PROPERTY(CellEnsembleAttributeMatrixName)
+  /**
+   * @brief Setter property for CellAttributeMatrixName
+   */
+  void setCellAttributeMatrixName(const QString& value);
+  /**
+   * @brief Getter property for CellAttributeMatrixName
+   * @return Value of CellAttributeMatrixName
+   */
+  QString getCellAttributeMatrixName() const;
+
+  /**
+   * @brief Setter property for CellFeatureAttributeMatrixName
+   */
+  void setCellFeatureAttributeMatrixName(const QString& value);
+  /**
+   * @brief Getter property for CellFeatureAttributeMatrixName
+   * @return Value of CellFeatureAttributeMatrixName
+   */
+  QString getCellFeatureAttributeMatrixName() const;
+
+  /**
+   * @brief Setter property for CellEnsembleAttributeMatrixName
+   */
+  void setCellEnsembleAttributeMatrixName(const QString& value);
+  /**
+   * @brief Getter property for CellEnsembleAttributeMatrixName
+   * @return Value of CellEnsembleAttributeMatrixName
+   */
+  QString getCellEnsembleAttributeMatrixName() const;
 
   virtual const QString getGroupName()
   {
@@ -36,10 +97,10 @@ public:
   }
   virtual void execute()
   {
-    setErrorCondition(0);
-    setWarningCondition(0);
+    clearErrorCode();
+    clearWarningCode();
     dataCheck();
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
@@ -47,7 +108,7 @@ public:
     DataContainer::Pointer m = getDataContainerArray()->getDataContainer(SIMPL::Defaults::DataContainerName);
 
     int size = UnitTest::FeatureIdsTest::XSize * UnitTest::FeatureIdsTest::YSize * UnitTest::FeatureIdsTest::ZSize;
-    QVector<size_t> tDims(3, 0);
+    std::vector<size_t> tDims(3, 0);
     tDims[0] = UnitTest::FeatureIdsTest::XSize;
     tDims[1] = UnitTest::FeatureIdsTest::YSize;
     tDims[2] = UnitTest::FeatureIdsTest::ZSize;
@@ -89,24 +150,30 @@ protected:
   }
 
 private:
-  DEFINE_DATAARRAY_VARIABLE(int32_t, FeatureIds)
+  std::weak_ptr<DataArray<int32_t>> m_FeatureIdsPtr;
+  int32_t* m_FeatureIds = nullptr;
+
+  QString m_DataContainerName = {};
+  QString m_CellAttributeMatrixName = {};
+  QString m_CellFeatureAttributeMatrixName = {};
+  QString m_CellEnsembleAttributeMatrixName = {};
 
   void dataCheck()
   {
-    setErrorCondition(0);
-    setWarningCondition(0);
+    clearErrorCode();
+    clearWarningCode();
     DataContainer::Pointer m = getDataContainerArray()->getPrereqDataContainer(this, getDataContainerName());
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
     AttributeMatrix::Pointer cellAttrMat = m->getPrereqAttributeMatrix(this, getCellAttributeMatrixName(), -301);
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
 
-    QVector<size_t> dims(1, 1);
+    std::vector<size_t> dims(1, 1);
     m_FeatureIdsPtr =
         cellAttrMat->createNonPrereqArray<DataArray<int32_t>, AbstractFilter>(this, m_FeatureIdsArrayName, 0, dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
     if(nullptr != m_FeatureIdsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -133,9 +200,32 @@ class CreateDataContainer : public AbstractFilter
 {
   Q_OBJECT
 public:
-  SIMPL_SHARED_POINTERS(CreateDataContainer)
-  SIMPL_FILTER_NEW_MACRO(CreateDataContainer)
-  SIMPL_TYPE_MACRO_SUPER_OVERRIDE(CreateDataContainer, AbstractFilter)
+  using Self = CreateDataContainer;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  
+  /**
+   * @brief Returns a NullPointer wrapped by a shared_ptr<>
+   * @return
+   */
+  static Pointer NullPointer();
+
+  /**
+   * @brief Creates a new object wrapped in a shared_ptr<>
+   * @return
+   */
+  static Pointer New();
+
+  /**
+   * @brief Returns the name of the class for CreateDataContainer
+   */
+  QString getNameOfClass() const override;
+  /**
+   * @brief Returns the name of the class for CreateDataContainer
+   */
+  static QString ClassName();
 
   ~CreateDataContainer()
   {
@@ -212,12 +302,12 @@ protected:
     int64_t nz = UnitTest::FeatureIdsTest::ZSize;
     /* FIXME: ImageGeom */ m->getGeometryAs<ImageGeom>()->setDimensions(nx, ny, nz);
     getDataContainerArray()->addDataContainer(m);
-    QVector<size_t> tDims(3, 0);
+    std::vector<size_t> tDims(3, 0);
     tDims[0] = nx;
     tDims[1] = ny;
     tDims[2] = nz;
     AttributeMatrix::Pointer attrMat = AttributeMatrix::New(tDims, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::AttributeMatrixType::Cell);
-    m->addAttributeMatrix(attrMat->getName(), attrMat);
+    m->addAttributeMatrix(attrMat);
   }
 
 public:

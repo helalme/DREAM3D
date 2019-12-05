@@ -33,18 +33,25 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "AlignSectionsFeatureCentroid.h"
 
 #include <cmath>
 #include <fstream>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
@@ -71,7 +78,7 @@ void AlignSectionsFeatureCentroid::setupFilterParameters()
 {
   AlignSections::setupFilterParameters();
   // getting the current parameters that were set by the parent and adding to it before resetting it
-  FilterParameterVector parameters = getFilterParameters();
+  FilterParameterVectorType parameters = getFilterParameters();
   QStringList linkedProps("ReferenceSlice");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Use Reference Slice", UseReferenceSlice, FilterParameter::Parameter, AlignSectionsFeatureCentroid, linkedProps));
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Reference Slice", ReferenceSlice, FilterParameter::Parameter, AlignSectionsFeatureCentroid));
@@ -108,22 +115,22 @@ void AlignSectionsFeatureCentroid::initialize()
 // -----------------------------------------------------------------------------
 void AlignSectionsFeatureCentroid::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // Set the DataContainerName and AttributematrixName for the Parent Class (AlignSections) to Use.
   // These are checked for validity in the Parent Class dataCheck
-  setDataContainerName(m_GoodVoxelsArrayPath.getDataContainerName());
+  setDataContainerName(DataArrayPath(m_GoodVoxelsArrayPath.getDataContainerName(), "", ""));
   setCellAttributeMatrixName(m_GoodVoxelsArrayPath.getAttributeMatrixName());
 
   AlignSections::dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, m_GoodVoxelsArrayPath.getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -131,18 +138,17 @@ void AlignSectionsFeatureCentroid::dataCheck()
   if(m_ReferenceSlice > image->getZPoints())
   {
     QString ss = QObject::tr("The Image Geometry extent (%1) is smaller than the supplied reference slice (%2)").arg(image->getZPoints()).arg(m_ReferenceSlice);
-    setErrorCondition(-5556);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5556, ss);
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_GoodVoxelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<bool>, AbstractFilter>(this, getGoodVoxelsArrayPath(),
                                                                                                      cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_GoodVoxelsPtr.lock())                                                                      /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_GoodVoxels = m_GoodVoxelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -175,8 +181,7 @@ void AlignSectionsFeatureCentroid::find_shifts(std::vector<int64_t>& xshifts, st
     outFile << "#"
             << "Slice_A,Slice_B,New X Shift,New Y Shift,X Shift, Y Shift, X Centroid, Y Centroid" << std::endl;
   }
-  size_t dims[3] = {0, 0, 0};
-  std::tie(dims[0], dims[1], dims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t sdims[3] = {
       static_cast<int64_t>(dims[0]),
@@ -189,10 +194,7 @@ void AlignSectionsFeatureCentroid::find_shifts(std::vector<int64_t>& xshifts, st
   size_t count = 0;
   size_t slice = 0;
   size_t point = 0;
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
   std::vector<float> xCentroid(dims[2], 0.0f);
   std::vector<float> yCentroid(dims[2], 0.0f);
 
@@ -203,7 +205,7 @@ void AlignSectionsFeatureCentroid::find_shifts(std::vector<int64_t>& xshifts, st
     yCentroid[iter] = 0;
 
     QString ss = QObject::tr("Aligning Sections || Determining Shifts || %1% Complete").arg((static_cast<double>(iter) / dims[2]) * 100);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     slice = static_cast<size_t>((dims[2] - 1) - iter);
     for(size_t l = 0; l < dims[1]; l++)
     {
@@ -212,8 +214,8 @@ void AlignSectionsFeatureCentroid::find_shifts(std::vector<int64_t>& xshifts, st
         point = ((slice)*dims[0] * dims[1]) + (l * dims[0]) + n;
         if(m_GoodVoxels[point])
         {
-          xCentroid[iter] = xCentroid[iter] + (static_cast<float>(n) * xRes);
-          yCentroid[iter] = yCentroid[iter] + (static_cast<float>(l) * yRes);
+          xCentroid[iter] = xCentroid[iter] + (static_cast<float>(n) * spacing[0]);
+          yCentroid[iter] = yCentroid[iter] + (static_cast<float>(l) * spacing[1]);
           count++;
         }
       }
@@ -230,51 +232,47 @@ void AlignSectionsFeatureCentroid::find_shifts(std::vector<int64_t>& xshifts, st
     slice = (dims[2] - 1) - iter;
     if(m_UseReferenceSlice)
     {
-      xshifts[iter] = static_cast<int64_t>((xCentroid[iter] - xCentroid[static_cast<size_t>(m_ReferenceSlice)]) / xRes);
-      yshifts[iter] = static_cast<int64_t>((yCentroid[iter] - yCentroid[static_cast<size_t>(m_ReferenceSlice)]) / yRes);
+      xshifts[iter] = static_cast<int64_t>((xCentroid[iter] - xCentroid[static_cast<size_t>(m_ReferenceSlice)]) / spacing[0]);
+      yshifts[iter] = static_cast<int64_t>((yCentroid[iter] - yCentroid[static_cast<size_t>(m_ReferenceSlice)]) / spacing[1]);
     }
     else
     {
-      xshifts[iter] = xshifts[iter - 1] + static_cast<int64_t>((xCentroid[iter] - xCentroid[iter - 1]) / xRes);
-      yshifts[iter] = yshifts[iter - 1] + static_cast<int64_t>((yCentroid[iter] - yCentroid[iter - 1]) / yRes);
+      xshifts[iter] = xshifts[iter - 1] + static_cast<int64_t>((xCentroid[iter] - xCentroid[iter - 1]) / spacing[0]);
+      yshifts[iter] = yshifts[iter - 1] + static_cast<int64_t>((yCentroid[iter] - yCentroid[iter - 1]) / spacing[1]);
     }
 
     if((xshifts[iter] < -sdims[0] || xshifts[iter] > sdims[0]) && !xWarning)
     {
-      setWarningCondition(100);
       QString msg;
       QTextStream ss(&msg);
       ss << "A shift was greater than the X dimension of the Image Geometry. All subsequent slices are probably wrong. Slice=" << iter << " X Dim=" << dims[0] << " X Shift=" << xshifts[iter]
          << " sDims[0]=" << sdims[0];
-      notifyWarningMessage(getHumanLabel(), msg, getWarningCondition());
+      setWarningCondition(100, msg);
       xWarning = true;
     }
     if((yshifts[iter] < -sdims[1] || yshifts[iter] > sdims[1]) && !yWarning)
     {
-      setWarningCondition(101);
       QString msg;
       QTextStream ss(&msg);
       ss << "A shift was greater than the Y dimension of the Image Geometry. All subsequent slices are probably wrong. Slice=" << iter << " Y Dim=" << dims[1] << " Y Shift=" << yshifts[iter]
          << " sDims[1]=" << sdims[1];
-      notifyWarningMessage(getHumanLabel(), msg, getWarningCondition());
+      setWarningCondition(101, msg);
       yWarning = true;
     }
     if(std::isnan(xCentroid[iter]) && !xWarning)
     {
-      setWarningCondition(102);
       QString msg;
       QTextStream ss(&msg);
       ss << "The X Centoird was NaN. All subsequent slices are probably wrong. Slice=" << iter;
-      notifyWarningMessage(getHumanLabel(), msg, getWarningCondition());
+      setWarningCondition(102, msg);
       xWarning = true;
     }
     if(std::isnan(yCentroid[iter]) && !yWarning)
     {
-      setWarningCondition(103);
       QString msg;
       QTextStream ss(&msg);
       ss << "The Y Centoird was NaN. All subsequent slices are probably wrong. Slice=" << iter;
-      notifyWarningMessage(getHumanLabel(), msg, getWarningCondition());
+      setWarningCondition(103, msg);
       yWarning = true;
     }
     if(getWriteAlignmentShifts())
@@ -293,10 +291,10 @@ void AlignSectionsFeatureCentroid::find_shifts(std::vector<int64_t>& xshifts, st
 // -----------------------------------------------------------------------------
 void AlignSectionsFeatureCentroid::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -322,7 +320,7 @@ AbstractFilter::Pointer AlignSectionsFeatureCentroid::newFilterInstance(bool cop
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsFeatureCentroid::getCompiledLibraryName() const
+QString AlignSectionsFeatureCentroid::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -330,7 +328,7 @@ const QString AlignSectionsFeatureCentroid::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsFeatureCentroid::getBrandingString() const
+QString AlignSectionsFeatureCentroid::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -338,7 +336,7 @@ const QString AlignSectionsFeatureCentroid::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsFeatureCentroid::getFilterVersion() const
+QString AlignSectionsFeatureCentroid::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -348,7 +346,7 @@ const QString AlignSectionsFeatureCentroid::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsFeatureCentroid::getGroupName() const
+QString AlignSectionsFeatureCentroid::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -356,7 +354,7 @@ const QString AlignSectionsFeatureCentroid::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AlignSectionsFeatureCentroid::getUuid()
+QUuid AlignSectionsFeatureCentroid::getUuid() const
 {
   return QUuid("{886f8b46-51b6-5682-a289-6febd10b7ef0}");
 }
@@ -364,7 +362,7 @@ const QUuid AlignSectionsFeatureCentroid::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsFeatureCentroid::getSubGroupName() const
+QString AlignSectionsFeatureCentroid::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::AlignmentFilters;
 }
@@ -372,7 +370,72 @@ const QString AlignSectionsFeatureCentroid::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsFeatureCentroid::getHumanLabel() const
+QString AlignSectionsFeatureCentroid::getHumanLabel() const
 {
   return "Align Sections (Feature Centroid)";
+}
+
+// -----------------------------------------------------------------------------
+AlignSectionsFeatureCentroid::Pointer AlignSectionsFeatureCentroid::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AlignSectionsFeatureCentroid> AlignSectionsFeatureCentroid::New()
+{
+  struct make_shared_enabler : public AlignSectionsFeatureCentroid
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsFeatureCentroid::getNameOfClass() const
+{
+  return QString("AlignSectionsFeatureCentroid");
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsFeatureCentroid::ClassName()
+{
+  return QString("AlignSectionsFeatureCentroid");
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsFeatureCentroid::setReferenceSlice(int value)
+{
+  m_ReferenceSlice = value;
+}
+
+// -----------------------------------------------------------------------------
+int AlignSectionsFeatureCentroid::getReferenceSlice() const
+{
+  return m_ReferenceSlice;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsFeatureCentroid::setUseReferenceSlice(bool value)
+{
+  m_UseReferenceSlice = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AlignSectionsFeatureCentroid::getUseReferenceSlice() const
+{
+  return m_UseReferenceSlice;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsFeatureCentroid::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AlignSectionsFeatureCentroid::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
 }

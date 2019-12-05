@@ -33,7 +33,37 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindTwinBoundaries.h"
+
+#include <array>
+#include <cmath>
+
+
+#include <QtCore/QTextStream>
+
+#include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+#include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/FloatFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
+#include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/Geometry/TriangleGeom.h"
+#include "SIMPLib/Math/GeometryMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/LaueOps.h"
+
+#include "OrientationAnalysis/OrientationAnalysisConstants.h"
+#include "OrientationAnalysis/OrientationAnalysisVersion.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
 #include <tbb/blocked_range.h>
@@ -41,22 +71,6 @@
 #include <tbb/partitioner.h>
 #include <tbb/task_scheduler_init.h>
 #endif
-
-#include "SIMPLib/Common/Constants.h"
-#include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
-#include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
-#include "SIMPLib/FilterParameters/FloatFilterParameter.h"
-#include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
-#include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
-#include "SIMPLib/FilterParameters/StringFilterParameter.h"
-#include "SIMPLib/Geometry/ImageGeom.h"
-#include "SIMPLib/Geometry/TriangleGeom.h"
-#include "SIMPLib/Math/GeometryMath.h"
-
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
-
-#include "OrientationAnalysis/OrientationAnalysisConstants.h"
-#include "OrientationAnalysis/OrientationAnalysisVersion.h"
 
 /**
  * @brief The CalculateTwinBoundaryImpl class implements a threaded algorithm that determines whether a boundary is twin related and calculates
@@ -66,13 +80,13 @@ class CalculateTwinBoundaryImpl
 {
   float m_AxisTol;
   float m_AngTol;
-  int32_t* m_Labels;
-  double* m_Normals;
-  int32_t* m_Phases;
-  float* m_Quats;
-  bool* m_TwinBoundary;
-  float* m_TwinBoundaryIncoherence;
-  uint32_t* m_CrystalStructures;
+  int32_t* m_Labels = nullptr;
+  double* m_Normals = nullptr;
+  int32_t* m_Phases = nullptr;
+  float* m_Quats = nullptr;
+  bool* m_TwinBoundary = nullptr;
+  float* m_TwinBoundaryIncoherence = nullptr;
+  uint32_t* m_CrystalStructures = nullptr;
   bool m_FindCoherence;
   QVector<LaueOps::Pointer> m_OrientationOps;
 
@@ -98,25 +112,25 @@ public:
   void generate(size_t start, size_t end) const
   {
     int32_t feature1 = 0, feature2 = 0;
-    float normal[3] = {0.0f, 0.0f, 0.0f};
-    float g1[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-    float w = 0.0f;
+    double normal[3] = {0.0, 0.0, 0.0};
+    double g1[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    double w = 0.0;
     uint32_t phase1 = 0, phase2 = 0;
-    QuatF q1 = QuaternionMathF::New();
-    QuatF q2 = QuaternionMathF::New();
-    float axisdiff111 = 0.0f, angdiff60 = 0.0f;
-    float n[3] = {0.0f, 0.0f, 0.0f};
-    float incoherence = 0.0f;
-    float n1 = 0.0f, n2 = 0.0f, n3 = 0.0f;
 
-    QuatF misq = QuaternionMathF::New();
-    QuatF sym_q = QuaternionMathF::New();
-    QuatF s1_misq = QuaternionMathF::New();
-    QuatF s2_misq = QuaternionMathF::New();
-    QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+    double axisdiff111 = 0.0, angdiff60 = 0.0;
+    double n[3] = {0.0, 0.0, 0.0};
+    double incoherence = 0.0;
+    double n1 = 0.0, n2 = 0.0, n3 = 0.0;
 
-    float xstl_norm[3] = {0.0f, 0.0f, 0.0f};
-    float s_xstl_norm[3] = {0.0f, 0.0f, 0.0f};
+    QuatType misq;
+    QuatType sym_q;
+    QuatType s1_misq;
+    QuatType s2_misq;
+
+    // QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+
+    std::array<double, 3> xstl_norm = {0.0, 0.0, 0.0};
+    std::array<double, 3> s_xstl_norm = {0.0, 0.0, 0.0};
 
     for(size_t i = start; i < end; i++)
     {
@@ -131,51 +145,49 @@ public:
       if(feature1 > 0 && feature2 > 0 && m_Phases[feature1] == m_Phases[feature2])
       {
         w = std::numeric_limits<float>::max();
+        float* quatPtr = m_Quats + feature1 * 4;
+        QuatType q1(quatPtr[0], quatPtr[1], quatPtr[2], quatPtr[3]);
 
-        QuaternionMathF::Copy(quats[feature1], q1);
-        QuaternionMathF::Copy(quats[feature2], q2);
+        quatPtr = m_Quats + feature2 * 4;
+        QuatType q2(quatPtr[0], quatPtr[1], quatPtr[2], quatPtr[3]);
 
         phase1 = m_CrystalStructures[m_Phases[feature1]];
         phase2 = m_CrystalStructures[m_Phases[feature2]];
         if(phase1 == phase2)
         {
           int32_t nsym = m_OrientationOps[phase1]->getNumSymOps();
-          QuaternionMathF::Conjugate(q2);
-          QuaternionMathF::Multiply(q1, q2, misq);
-          FOrientArrayType om(9);
-          FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-          om.toGMatrix(g1);
+          q2 = q2.conjugate();
+          misq = q1 * q2;
+          OrientationTransformation::qu2om<QuatType, OrientationD>(q1).toGMatrix(g1);
 
           if(m_FindCoherence)
           {
-            MatrixMath::Multiply3x3with3x1(g1, normal, xstl_norm);
+            MatrixMath::Multiply3x3with3x1(g1, normal, xstl_norm.data());
           }
 
           for(int32_t j = 0; j < nsym; j++)
           {
-            m_OrientationOps[phase1]->getQuatSymOp(j, sym_q);
+            sym_q = m_OrientationOps[phase1]->getQuatSymOp(j);
             // calculate crystal direction parallel to normal
-            QuaternionMathF::Multiply(misq, sym_q, s1_misq);
+            s1_misq = misq * sym_q;
 
             if(m_FindCoherence)
             {
-              QuaternionMathF::MultiplyQuatVec(sym_q, xstl_norm, s_xstl_norm);
+              s_xstl_norm = sym_q.multiplyByVector(xstl_norm.data());
             }
 
             for(int32_t k = 0; k < nsym; k++)
             {
               // calculate the symmetric misorienation
-              m_OrientationOps[phase1]->getQuatSymOp(k, sym_q);
-              QuaternionMathF::Conjugate(sym_q);
-              QuaternionMathF::Multiply(sym_q, s1_misq, s2_misq);
+              sym_q = m_OrientationOps[phase1]->getQuatSymOp(k);
+              sym_q = sym_q.conjugate();
+              s2_misq = sym_q * s1_misq;
 
-              FOrientArrayType ax(n1, n2, n3, w);
-              FOrientTransformsType::qu2ax(FOrientArrayType(s2_misq), ax);
-              ax.toAxisAngle(n1, n2, n3, w);
+              OrientationTransformation::qu2ax<QuatType, OrientationD>(s2_misq).toAxisAngle(n1, n2, n3, w);
 
               w = w * 180.0f / SIMPLib::Constants::k_Pi;
-              axisdiff111 = acosf(fabsf(n1) * 0.57735f + fabsf(n2) * 0.57735f + fabsf(n3) * 0.57735f);
-              angdiff60 = fabsf(w - 60.0f);
+              axisdiff111 = acos(std::fabs(n1) * 0.57735f + std::fabs(n2) * 0.57735f + std::fabs(n3) * 0.57735f);
+              angdiff60 = std::fabs(w - 60.0f);
               if(axisdiff111 < m_AxisTol && angdiff60 < m_AngTol)
               {
                 n[0] = n1;
@@ -184,10 +196,10 @@ public:
                 m_TwinBoundary[i] = true;
                 if(m_FindCoherence)
                 {
-                  incoherence = 180.0f * acosf(GeometryMath::CosThetaBetweenVectors(n, s_xstl_norm)) / SIMPLib::Constants::k_Pi;
-                  if(incoherence > 90.0f)
+                  incoherence = 180.0 * std::acos(GeometryMath::CosThetaBetweenVectors(n, s_xstl_norm.data())) / SIMPLib::Constants::k_Pi;
+                  if(incoherence > 90.0)
                   {
-                    incoherence = 180.0f - incoherence;
+                    incoherence = 180.0 - incoherence;
                   }
                   if(incoherence < m_TwinBoundaryIncoherence[i])
                   {
@@ -225,7 +237,6 @@ FindTwinBoundaries::FindTwinBoundaries()
 , m_SurfaceMeshTwinBoundaryArrayName(SIMPL::FaceData::SurfaceMeshTwinBoundary)
 , m_SurfaceMeshTwinBoundaryIncoherenceArrayName(SIMPL::FaceData::SurfaceMeshTwinBoundaryIncoherence)
 {
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
 }
 
 // -----------------------------------------------------------------------------
@@ -237,7 +248,7 @@ FindTwinBoundaries::~FindTwinBoundaries() = default;
 // -----------------------------------------------------------------------------
 void FindTwinBoundaries::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Axis Tolerance (Degrees)", AxisTolerance, FilterParameter::Parameter, FindTwinBoundaries));
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Angle Tolerance (Degrees)", AngleTolerance, FilterParameter::Parameter, FindTwinBoundaries));
   QStringList linkedProps;
@@ -273,8 +284,8 @@ void FindTwinBoundaries::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Face Normals", SurfaceMeshFaceNormalsArrayPath, FilterParameter::RequiredArray, FindTwinBoundaries, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Twin Boundary", SurfaceMeshTwinBoundaryArrayName, FilterParameter::CreatedArray, FindTwinBoundaries));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Twin Boundary Incoherence", SurfaceMeshTwinBoundaryIncoherenceArrayName, FilterParameter::CreatedArray, FindTwinBoundaries));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Twin Boundary", SurfaceMeshTwinBoundaryArrayName, SurfaceMeshFaceLabelsArrayPath, SurfaceMeshFaceLabelsArrayPath, FilterParameter::CreatedArray, FindTwinBoundaries));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Twin Boundary Incoherence", SurfaceMeshTwinBoundaryIncoherenceArrayName, SurfaceMeshFaceLabelsArrayPath, SurfaceMeshFaceLabelsArrayPath, FilterParameter::CreatedArray, FindTwinBoundaries));
   setFilterParameters(parameters);
 }
 // -----------------------------------------------------------------------------
@@ -299,21 +310,21 @@ void FindTwinBoundaries::readFilterParameters(AbstractFilterParametersReader* re
 // -----------------------------------------------------------------------------
 void FindTwinBoundaries::dataCheckVoxel()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QVector<DataArrayPath> dataArrayPaths;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getAvgQuatsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 4);
+  std::vector<size_t> cDims(1, 4);
   m_AvgQuatsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getAvgQuatsArrayPath(),
                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_AvgQuatsPtr.lock())                                                                       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getAvgQuatsArrayPath());
   }
@@ -325,7 +336,7 @@ void FindTwinBoundaries::dataCheckVoxel()
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeaturePhasesArrayPath());
   }
@@ -345,22 +356,22 @@ void FindTwinBoundaries::dataCheckVoxel()
 // -----------------------------------------------------------------------------
 void FindTwinBoundaries::dataCheckSurfaceMesh()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   QVector<DataArrayPath> dataArrayPaths;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_SurfaceMeshFaceLabels = m_SurfaceMeshFaceLabelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getSurfaceMeshFaceLabelsArrayPath());
   }
@@ -374,7 +385,7 @@ void FindTwinBoundaries::dataCheckSurfaceMesh()
     {
       m_SurfaceMeshFaceNormals = m_SurfaceMeshFaceNormalsPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArrayPaths.push_back(getSurfaceMeshFaceNormalsArrayPath());
     }
@@ -420,15 +431,15 @@ void FindTwinBoundaries::preflight()
 // -----------------------------------------------------------------------------
 void FindTwinBoundaries::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheckVoxel();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
   dataCheckSurfaceMesh();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -476,7 +487,7 @@ AbstractFilter::Pointer FindTwinBoundaries::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTwinBoundaries::getCompiledLibraryName() const
+QString FindTwinBoundaries::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -484,7 +495,7 @@ const QString FindTwinBoundaries::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTwinBoundaries::getBrandingString() const
+QString FindTwinBoundaries::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -492,7 +503,7 @@ const QString FindTwinBoundaries::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTwinBoundaries::getFilterVersion() const
+QString FindTwinBoundaries::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -502,7 +513,7 @@ const QString FindTwinBoundaries::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTwinBoundaries::getGroupName() const
+QString FindTwinBoundaries::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -510,7 +521,7 @@ const QString FindTwinBoundaries::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindTwinBoundaries::getUuid()
+QUuid FindTwinBoundaries::getUuid() const
 {
   return QUuid("{a10124f3-05d0-5f49-93a0-e93926f5b48b}");
 }
@@ -518,7 +529,7 @@ const QUuid FindTwinBoundaries::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTwinBoundaries::getSubGroupName() const
+QString FindTwinBoundaries::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -526,7 +537,156 @@ const QString FindTwinBoundaries::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTwinBoundaries::getHumanLabel() const
+QString FindTwinBoundaries::getHumanLabel() const
 {
   return "Find Twin Boundaries";
+}
+
+// -----------------------------------------------------------------------------
+FindTwinBoundaries::Pointer FindTwinBoundaries::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindTwinBoundaries> FindTwinBoundaries::New()
+{
+  struct make_shared_enabler : public FindTwinBoundaries
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTwinBoundaries::getNameOfClass() const
+{
+  return QString("FindTwinBoundaries");
+}
+
+// -----------------------------------------------------------------------------
+QString FindTwinBoundaries::ClassName()
+{
+  return QString("FindTwinBoundaries");
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setAxisTolerance(float value)
+{
+  m_AxisTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float FindTwinBoundaries::getAxisTolerance() const
+{
+  return m_AxisTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setAngleTolerance(float value)
+{
+  m_AngleTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float FindTwinBoundaries::getAngleTolerance() const
+{
+  return m_AngleTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setFindCoherence(bool value)
+{
+  m_FindCoherence = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindTwinBoundaries::getFindCoherence() const
+{
+  return m_FindCoherence;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTwinBoundaries::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTwinBoundaries::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTwinBoundaries::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTwinBoundaries::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setSurfaceMeshFaceNormalsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceNormalsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTwinBoundaries::getSurfaceMeshFaceNormalsArrayPath() const
+{
+  return m_SurfaceMeshFaceNormalsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setSurfaceMeshTwinBoundaryArrayName(const QString& value)
+{
+  m_SurfaceMeshTwinBoundaryArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTwinBoundaries::getSurfaceMeshTwinBoundaryArrayName() const
+{
+  return m_SurfaceMeshTwinBoundaryArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindTwinBoundaries::setSurfaceMeshTwinBoundaryIncoherenceArrayName(const QString& value)
+{
+  m_SurfaceMeshTwinBoundaryIncoherenceArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTwinBoundaries::getSurfaceMeshTwinBoundaryIncoherenceArrayName() const
+{
+  return m_SurfaceMeshTwinBoundaryIncoherenceArrayName;
 }

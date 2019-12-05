@@ -33,9 +33,14 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ErodeDilateBadData.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
@@ -44,6 +49,8 @@
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -72,7 +79,7 @@ ErodeDilateBadData::~ErodeDilateBadData() = default;
 // -----------------------------------------------------------------------------
 void ErodeDilateBadData::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
     parameter->setHumanLabel("Operation");
@@ -132,19 +139,18 @@ void ErodeDilateBadData::initialize()
 // -----------------------------------------------------------------------------
 void ErodeDilateBadData::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
   if(getNumIterations() <= 0)
   {
     QString ss = QObject::tr("The number of iterations (%1) must be positive").arg(getNumIterations());
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5555, ss);
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -171,10 +177,10 @@ void ErodeDilateBadData::preflight()
 // -----------------------------------------------------------------------------
 void ErodeDilateBadData::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -182,12 +188,11 @@ void ErodeDilateBadData::execute()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getFeatureIdsArrayPath().getDataContainerName());
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
 
-  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_Neighbors");
+  Int32ArrayType::Pointer neighborsPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_Neighbors", true);
   m_Neighbors = neighborsPtr->getPointer(0);
   neighborsPtr->initializeWithValue(-1);
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -370,7 +375,7 @@ AbstractFilter::Pointer ErodeDilateBadData::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateBadData::getCompiledLibraryName() const
+QString ErodeDilateBadData::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -378,7 +383,7 @@ const QString ErodeDilateBadData::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateBadData::getBrandingString() const
+QString ErodeDilateBadData::getBrandingString() const
 {
   return "Processing";
 }
@@ -386,7 +391,7 @@ const QString ErodeDilateBadData::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateBadData::getFilterVersion() const
+QString ErodeDilateBadData::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -396,7 +401,7 @@ const QString ErodeDilateBadData::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateBadData::getGroupName() const
+QString ErodeDilateBadData::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -404,7 +409,7 @@ const QString ErodeDilateBadData::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ErodeDilateBadData::getUuid()
+QUuid ErodeDilateBadData::getUuid() const
 {
   return QUuid("{3adfe077-c3c9-5cd0-ad74-cf5f8ff3d254}");
 }
@@ -412,7 +417,7 @@ const QUuid ErodeDilateBadData::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateBadData::getSubGroupName() const
+QString ErodeDilateBadData::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -420,7 +425,120 @@ const QString ErodeDilateBadData::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ErodeDilateBadData::getHumanLabel() const
+QString ErodeDilateBadData::getHumanLabel() const
 {
   return "Erode/Dilate Bad Data";
+}
+
+// -----------------------------------------------------------------------------
+ErodeDilateBadData::Pointer ErodeDilateBadData::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ErodeDilateBadData> ErodeDilateBadData::New()
+{
+  struct make_shared_enabler : public ErodeDilateBadData
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ErodeDilateBadData::getNameOfClass() const
+{
+  return QString("ErodeDilateBadData");
+}
+
+// -----------------------------------------------------------------------------
+QString ErodeDilateBadData::ClassName()
+{
+  return QString("ErodeDilateBadData");
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setDirection(unsigned int value)
+{
+  m_Direction = value;
+}
+
+// -----------------------------------------------------------------------------
+unsigned int ErodeDilateBadData::getDirection() const
+{
+  return m_Direction;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setNumIterations(int value)
+{
+  m_NumIterations = value;
+}
+
+// -----------------------------------------------------------------------------
+int ErodeDilateBadData::getNumIterations() const
+{
+  return m_NumIterations;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setXDirOn(bool value)
+{
+  m_XDirOn = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ErodeDilateBadData::getXDirOn() const
+{
+  return m_XDirOn;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setYDirOn(bool value)
+{
+  m_YDirOn = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ErodeDilateBadData::getYDirOn() const
+{
+  return m_YDirOn;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setZDirOn(bool value)
+{
+  m_ZDirOn = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ErodeDilateBadData::getZDirOn() const
+{
+  return m_ZDirOn;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ErodeDilateBadData::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void ErodeDilateBadData::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> ErodeDilateBadData::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

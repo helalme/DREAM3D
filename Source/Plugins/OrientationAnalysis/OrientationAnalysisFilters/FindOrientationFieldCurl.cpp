@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindOrientationFieldCurl.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -44,7 +46,10 @@
 #include <tbb/tick_count.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntVec3FilterParameter.h"
@@ -52,6 +57,10 @@
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -59,7 +68,7 @@
 class FindMisorientationVectorsImpl
 {
 public:
-  FindMisorientationVectorsImpl(QuatF* quats, float* misoVecs, int64_t* neighbors, int64_t* faceIds)
+  FindMisorientationVectorsImpl(float* quats, float* misoVecs, int64_t* neighbors, int64_t* faceIds)
   : m_Quats(quats)
   , m_MisoVecs(misoVecs)
   , m_Neighbors(neighbors)
@@ -71,22 +80,21 @@ public:
 
   void convert(size_t start, size_t end) const
   {
-    QuatF q1;
-    QuatF q2;
-    QuatF delq;
-    float misoVec[3];
+    using QuaternionType = Quaternion<double>;
+
     for(size_t i = start; i < end; i++)
     {
+      QuaternionType q1(m_Quats[i * 4 + 0], m_Quats[i * 4 + 1], m_Quats[i * 4 + 2], m_Quats[i * 4 + 3]);
       for(int j = 0; j < 3; j++)
       {
-        QuaternionMathF::Copy(m_Quats[i], q1);
         if(m_Neighbors[3 * i + j] > 0)
         {
-          QuaternionMathF::Copy(m_Quats[m_Neighbors[3 * i + j]], q2);
-          QuaternionMathF::Conjugate(q2);
-          QuaternionMathF::Multiply(q1, q2, delq);
-          m_OrientationOps[1]->getFZQuat(delq);
-          QuaternionMathF::GetMisorientationVector(delq, misoVec);
+          size_t idx = m_Neighbors[3 * i + j];
+          QuaternionType q2(m_Quats[idx * 4 + 0], m_Quats[idx * 4 + 1], m_Quats[idx * 4 + 2], m_Quats[idx * 4 + 3]);
+          QuaternionType delq = q1 * (q2.conjugate());
+
+          delq = m_OrientationOps[1]->getFZQuat(delq);
+          std::array<double, 3> misoVec = delq.getMisorientationVector();
           m_MisoVecs[3 * m_FaceIds[3 * i + j] + 0] = misoVec[0];
           m_MisoVecs[3 * m_FaceIds[3 * i + j] + 1] = misoVec[1];
           m_MisoVecs[3 * m_FaceIds[3 * i + j] + 2] = misoVec[2];
@@ -102,10 +110,10 @@ public:
   }
 #endif
 private:
-  QuatF* m_Quats;
-  float* m_MisoVecs;
-  int64_t* m_Neighbors;
-  int64_t* m_FaceIds;
+  float* m_Quats = nullptr;
+  float* m_MisoVecs = nullptr;
+  int64_t* m_Neighbors = nullptr;
+  int64_t* m_FaceIds = nullptr;
   QVector<LaueOps::Pointer> m_OrientationOps;
 };
 
@@ -120,10 +128,9 @@ FindOrientationFieldCurl::FindOrientationFieldCurl()
 {
   m_OrientationOps = LaueOps::getOrientationOpsQVector();
 
-  m_CurlSize.x = 1;
-  m_CurlSize.y = 1;
-  m_CurlSize.z = 1;
-
+  m_CurlSize[0] = 1;
+  m_CurlSize[1] = 1;
+  m_CurlSize[2] = 1;
 }
 
 // -----------------------------------------------------------------------------
@@ -136,7 +143,7 @@ FindOrientationFieldCurl::~FindOrientationFieldCurl() = default;
 // -----------------------------------------------------------------------------
 void FindOrientationFieldCurl::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_INT_VEC3_FP("Curl Radius (Pixels)", CurlSize, FilterParameter::Parameter, FindOrientationFieldCurl));
 
@@ -183,23 +190,23 @@ void FindOrientationFieldCurl::initialize()
 void FindOrientationFieldCurl::dataCheck()
 {
   DataArrayPath tempPath;
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   m_CellPhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getCellPhasesArrayPath(),
                                                                                                         dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellPhasesPtr.lock())                                                                        /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   ImageGeom::Pointer image = getDataContainerArray()->getDataContainer(getCellPhasesArrayPath().getDataContainerName())->getPrereqGeometry<ImageGeom, AbstractFilter>(this);
-  if(getErrorCondition() < 0 || nullptr == image.get())
+  if(getErrorCode() < 0 || nullptr == image.get())
   {
     return;
   }
@@ -249,10 +256,10 @@ void FindOrientationFieldCurl::preflight()
 // -----------------------------------------------------------------------------
 void FindOrientationFieldCurl::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -262,18 +269,18 @@ void FindOrientationFieldCurl::execute()
   size_t yP = m->getGeometryAs<ImageGeom>()->getYPoints();
   size_t zP = m->getGeometryAs<ImageGeom>()->getZPoints();
 
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+  // QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
   size_t totalFaces = ((xP + 1) * yP * zP) + ((yP + 1) * xP * zP) + ((zP + 1) * xP * yP);
-  QVector<size_t> tDims(1, totalFaces);
-  QVector<size_t> cDims(1, 3);
-  FloatArrayType::Pointer misoVecsPtr = FloatArrayType::CreateArray(tDims, cDims, "misoVecs");
+  std::vector<size_t> tDims(1, totalFaces);
+  std::vector<size_t> cDims(1, 3);
+  FloatArrayType::Pointer misoVecsPtr = FloatArrayType::CreateArray(tDims, cDims, "misoVecs", true);
   misoVecsPtr->initializeWithValue(0);
   float* misoVecs = misoVecsPtr->getPointer(0);
   tDims[0] = (xP * yP * zP);
-  Int64ArrayType::Pointer neighborsPtr = Int64ArrayType::CreateArray(tDims, cDims, "neighbors");
+  Int64ArrayType::Pointer neighborsPtr = Int64ArrayType::CreateArray(tDims, cDims, "neighbors", true);
   neighborsPtr->initializeWithValue(-1);
   int64_t* neighbors = neighborsPtr->getPointer(0);
-  Int64ArrayType::Pointer faceIdsPtr = Int64ArrayType::CreateArray(tDims, cDims, "faceIds");
+  Int64ArrayType::Pointer faceIdsPtr = Int64ArrayType::CreateArray(tDims, cDims, "faceIds", true);
   faceIdsPtr->initializeWithValue(-1);
   int64_t* faceIds = faceIdsPtr->getPointer(0);
 
@@ -313,12 +320,12 @@ void FindOrientationFieldCurl::execute()
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
   if(doParallel)
   {
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, (xP * yP * zP)), FindMisorientationVectorsImpl(quats, misoVecs, neighbors, faceIds), tbb::auto_partitioner());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, (xP * yP * zP)), FindMisorientationVectorsImpl(m_Quats, misoVecs, neighbors, faceIds), tbb::auto_partitioner());
   }
   else
 #endif
   {
-    FindMisorientationVectorsImpl serial(quats, misoVecs, neighbors, faceIds);
+    FindMisorientationVectorsImpl serial(m_Quats, misoVecs, neighbors, faceIds);
     serial.convert(0, (xP * yP * zP));
   }
 
@@ -328,8 +335,7 @@ void FindOrientationFieldCurl::execute()
   //  float n1, n2, n3;
   //  unsigned int phase1 = Ebsd::CrystalStructure::UnknownCrystalStructure;
   //  unsigned int phase2 = Ebsd::CrystalStructure::UnknownCrystalStructure;
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t xPoints = static_cast<int64_t>(udims[0]);
   int64_t yPoints = static_cast<int64_t>(udims[1]);
@@ -372,7 +378,7 @@ void FindOrientationFieldCurl::execute()
           kappa13 = 0;
           kappa23 = 0;
           kappa33 = 0;
-          for(int j = -m_CurlSize.z; j < m_CurlSize.z; j++)
+          for(int j = -m_CurlSize[2]; j < m_CurlSize[2]; j++)
           {
             good = 1;
             if(plane + j < 0)
@@ -401,7 +407,7 @@ void FindOrientationFieldCurl::execute()
           }
 
           count = 0;
-          for(int k = -m_CurlSize.y; k < m_CurlSize.y; k++)
+          for(int k = -m_CurlSize[1]; k < m_CurlSize[1]; k++)
           {
             good = 1;
             if(row + k < 0)
@@ -429,7 +435,7 @@ void FindOrientationFieldCurl::execute()
             count = 0;
           }
 
-          for(int l = -m_CurlSize.x; l < m_CurlSize.z; l++)
+          for(int l = -m_CurlSize[0]; l < m_CurlSize[2]; l++)
           {
             good = 1;
             if(col + l < 0)
@@ -471,7 +477,7 @@ void FindOrientationFieldCurl::execute()
     }
   }
 
-  notifyStatusMessage(getHumanLabel(), "FindOrientationFieldCurl Completed");
+  notifyStatusMessage("FindOrientationFieldCurl Completed");
 }
 
 // -----------------------------------------------------------------------------
@@ -490,7 +496,7 @@ AbstractFilter::Pointer FindOrientationFieldCurl::newFilterInstance(bool copyFil
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindOrientationFieldCurl::getCompiledLibraryName() const
+QString FindOrientationFieldCurl::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -498,7 +504,7 @@ const QString FindOrientationFieldCurl::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindOrientationFieldCurl::getBrandingString() const
+QString FindOrientationFieldCurl::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -506,7 +512,7 @@ const QString FindOrientationFieldCurl::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindOrientationFieldCurl::getFilterVersion() const
+QString FindOrientationFieldCurl::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -517,7 +523,7 @@ const QString FindOrientationFieldCurl::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindOrientationFieldCurl::getGroupName() const
+QString FindOrientationFieldCurl::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -525,7 +531,7 @@ const QString FindOrientationFieldCurl::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindOrientationFieldCurl::getUuid()
+QUuid FindOrientationFieldCurl::getUuid() const
 {
   return QUuid("{d2011845-cae8-549a-88eb-7ecadf51a916}");
 }
@@ -533,7 +539,7 @@ const QUuid FindOrientationFieldCurl::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindOrientationFieldCurl::getSubGroupName() const
+QString FindOrientationFieldCurl::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -541,7 +547,96 @@ const QString FindOrientationFieldCurl::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindOrientationFieldCurl::getHumanLabel() const
+QString FindOrientationFieldCurl::getHumanLabel() const
 {
   return "Find Curl of Orientation Field";
+}
+
+// -----------------------------------------------------------------------------
+FindOrientationFieldCurl::Pointer FindOrientationFieldCurl::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindOrientationFieldCurl> FindOrientationFieldCurl::New()
+{
+  struct make_shared_enabler : public FindOrientationFieldCurl
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindOrientationFieldCurl::getNameOfClass() const
+{
+  return QString("FindOrientationFieldCurl");
+}
+
+// -----------------------------------------------------------------------------
+QString FindOrientationFieldCurl::ClassName()
+{
+  return QString("FindOrientationFieldCurl");
+}
+
+// -----------------------------------------------------------------------------
+void FindOrientationFieldCurl::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindOrientationFieldCurl::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindOrientationFieldCurl::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindOrientationFieldCurl::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindOrientationFieldCurl::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindOrientationFieldCurl::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindOrientationFieldCurl::setDislocationTensorsArrayName(const QString& value)
+{
+  m_DislocationTensorsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindOrientationFieldCurl::getDislocationTensorsArrayName() const
+{
+  return m_DislocationTensorsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindOrientationFieldCurl::setCurlSize(const IntVec3Type& value)
+{
+  m_CurlSize = value;
+}
+
+// -----------------------------------------------------------------------------
+IntVec3Type FindOrientationFieldCurl::getCurlSize() const
+{
+  return m_CurlSize;
 }

@@ -2,16 +2,28 @@
  * Your License or Copyright can go here
  */
 
+#include <memory>
+
 #include "ComputeFeatureRect.h"
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
 
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -33,8 +45,8 @@ ComputeFeatureRect::~ComputeFeatureRect() = default;
 // -----------------------------------------------------------------------------
 void ComputeFeatureRect::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -43,7 +55,7 @@ void ComputeFeatureRect::initialize()
 // -----------------------------------------------------------------------------
 void ComputeFeatureRect::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateRequirement(SIMPL::TypeNames::Int32, 1, AttributeMatrix::Type::Any, IGeometry::Type::Any);
@@ -65,12 +77,12 @@ void ComputeFeatureRect::setupFilterParameters()
 // -----------------------------------------------------------------------------
 void ComputeFeatureRect::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   IGeometry::Pointer igeom = getDataContainerArray()->getPrereqGeometryFromDataContainer<IGeometry, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(), cDims);
   if(nullptr != m_FeatureIdsPtr.lock())
   {
@@ -78,7 +90,7 @@ void ComputeFeatureRect::dataCheck()
   }
 
   cDims[0] = 6;
-  m_FeatureRectPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter, uint32_t>(this, getFeatureRectArrayPath(), 0, cDims);
+  m_FeatureRectPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter, uint32_t>(this, getFeatureRectArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_FeatureRectPtr.lock())
   {
     m_FeatureRect = m_FeatureRectPtr.lock()->getPointer(0);
@@ -107,7 +119,7 @@ void ComputeFeatureRect::execute()
 {
   initialize();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -116,7 +128,7 @@ void ComputeFeatureRect::execute()
 
   int featureId = 0;
   size_t numComps = 6;
-  QVector<size_t> cDims(1, numComps);
+  std::vector<size_t> cDims(1, numComps);
   int err = 0;
   AttributeMatrix::Pointer featureAM = getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, m_FeatureRectArrayPath, err);
 
@@ -134,7 +146,7 @@ void ComputeFeatureRect::execute()
     corners->setComponent(i, 5, std::numeric_limits<uint32_t>::min());
   }
   AttributeMatrix::Pointer featureIdsAM = getDataContainerArray()->getAttributeMatrix(m_FeatureIdsArrayPath);
-  QVector<size_t> imageDims = featureIdsAM->getTupleDimensions();
+  std::vector<size_t> imageDims = featureIdsAM->getTupleDimensions();
   size_t xDim = imageDims[0], yDim = imageDims[1], zDim = imageDims[2];
 
   size_t index = 0;
@@ -160,9 +172,8 @@ void ComputeFeatureRect::execute()
 
         if(featureId >= corners->getNumberOfTuples())
         {
-          setErrorCondition(-31000);
           QString ss = QObject::tr("The feature attribute matrix '%1' has a smaller tuple count than the maximum feature id in '%2'").arg(featureAM->getName()).arg(cellFeatureIds->getName());
-          notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+          setErrorCondition(-31000, ss);
           return;
         }
 
@@ -208,7 +219,7 @@ void ComputeFeatureRect::execute()
 // -----------------------------------------------------------------------------
 // Helper Method - Grabs Index From Matrix Coordinates
 // -----------------------------------------------------------------------------
-size_t ComputeFeatureRect::sub2ind(QVector<size_t> tDims, size_t x, size_t y, size_t z) const
+size_t ComputeFeatureRect::sub2ind(std::vector<size_t> tDims, size_t x, size_t y, size_t z) const
 {
   return (tDims[1] * tDims[0] * z) + (tDims[0] * y) + x;
 }
@@ -230,7 +241,7 @@ AbstractFilter::Pointer ComputeFeatureRect::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ComputeFeatureRect::getCompiledLibraryName() const
+QString ComputeFeatureRect::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -238,7 +249,7 @@ const QString ComputeFeatureRect::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ComputeFeatureRect::getBrandingString() const
+QString ComputeFeatureRect::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -246,7 +257,7 @@ const QString ComputeFeatureRect::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ComputeFeatureRect::getFilterVersion() const
+QString ComputeFeatureRect::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -257,7 +268,7 @@ const QString ComputeFeatureRect::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ComputeFeatureRect::getGroupName() const
+QString ComputeFeatureRect::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -265,7 +276,7 @@ const QString ComputeFeatureRect::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ComputeFeatureRect::getUuid()
+QUuid ComputeFeatureRect::getUuid() const
 {
   return QUuid("{6eda8dbf-dbd8-562a-ae1a-f2904157c189}");
 }
@@ -273,7 +284,7 @@ const QUuid ComputeFeatureRect::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ComputeFeatureRect::getSubGroupName() const
+QString ComputeFeatureRect::getSubGroupName() const
 {
   return "Reconstruction";
 }
@@ -281,7 +292,60 @@ const QString ComputeFeatureRect::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ComputeFeatureRect::getHumanLabel() const
+QString ComputeFeatureRect::getHumanLabel() const
 {
   return "Compute Feature Corners";
+}
+
+// -----------------------------------------------------------------------------
+ComputeFeatureRect::Pointer ComputeFeatureRect::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ComputeFeatureRect> ComputeFeatureRect::New()
+{
+  struct make_shared_enabler : public ComputeFeatureRect
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ComputeFeatureRect::getNameOfClass() const
+{
+  return QString("ComputeFeatureRect");
+}
+
+// -----------------------------------------------------------------------------
+QString ComputeFeatureRect::ClassName()
+{
+  return QString("ComputeFeatureRect");
+}
+
+// -----------------------------------------------------------------------------
+void ComputeFeatureRect::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ComputeFeatureRect::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void ComputeFeatureRect::setFeatureRectArrayPath(const DataArrayPath& value)
+{
+  m_FeatureRectArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ComputeFeatureRect::getFeatureRectArrayPath() const
+{
+  return m_FeatureRectArrayPath;
 }

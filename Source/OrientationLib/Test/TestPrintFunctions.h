@@ -1,14 +1,21 @@
 #pragma once
 
-#include <stdio.h>
+#include <memory>
+
+#include <cstdio>
 
 #include <iostream>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
 #include "SIMPLib/DataContainers/AttributeMatrix.h"
-#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/Filtering/AbstractFilter.h"
-#include "SIMPLib/Math/QuaternionMath.hpp"
+
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
+class DataContainerArray;
+using DataContainerArrayShPtrType = std::shared_ptr<DataContainerArray>;
 
 static const QString DCName("Orientation Transforms Test");
 static const QString AMName("Angles");
@@ -67,14 +74,15 @@ template <typename T, typename K> void Print_HO(const T& om)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-template <typename T, typename K> void Print_QU(const T& om, typename QuaternionMath<K>::Order layout = QuaternionMath<K>::QuaternionVectorScalar)
+template <typename T, typename K>
+void Print_QU(const T& om, typename Quaternion<K>::Order layout = Quaternion<K>::Order::VectorScalar)
 {
-  if(layout == QuaternionMath<K>::QuaternionVectorScalar)
+  if(layout == Quaternion<K>::Order::VectorScalar)
   {
     printf("QU:<% 3.16f % 3.6f % 3.16f> % 3.16f\n", om[0], om[1], om[2], om[3]);
   }
 
-  else if(layout == QuaternionMath<K>::QuaternionScalarVector)
+  else if(layout == Quaternion<K>::Order::ScalarVector)
   {
     printf("QU: % 3.16f <% 3.16f % 3.16f % 3.16f>\n", om[0], om[1], om[2], om[3]);
   }
@@ -99,12 +107,13 @@ template <typename T> void Print_CU(const T& om)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-template <typename K> void PrintTuple(DataContainerArray::Pointer dca, size_t t)
+template <typename K>
+void PrintTuple(DataContainerArrayShPtrType dca, size_t t)
 {
   for(int i = 0; i < 7; i++)
   {
     DataArrayPath daPath(DCName, AMName, k_InputNames[i]);
-    QVector<size_t> cDims(1, k_CompDims[i]);
+    std::vector<size_t> cDims(1, k_CompDims[i]);
     typename DataArray<K>::Pointer data = dca->getPrereqArrayFromPath<DataArray<K>, AbstractFilter>(nullptr, daPath, cDims);
     std::cout << "'" << data->getName().toStdString() << "'"
               << "\t";
@@ -120,7 +129,7 @@ template <typename K> void PrintTuple(DataContainerArray::Pointer dca, size_t t)
 // -----------------------------------------------------------------------------
 template <typename K> void PrintTuple(typename DataArray<K>::Pointer data, size_t t)
 {
-  QVector<size_t> cDims = data->getComponentDimensions();
+  std::vector<size_t> cDims = data->getComponentDimensions();
   printf("%s\n", data->getName().toStdString().c_str());
   for(int a = 0; a < cDims[0]; a++)
   {

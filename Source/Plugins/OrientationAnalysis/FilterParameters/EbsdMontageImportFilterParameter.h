@@ -35,66 +35,14 @@
 
 #pragma once
 
+#include <memory>
+
 #include <QtCore/QJsonObject>
-#include <QtCore/QMetaType>
 #include <QtCore/QString>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include "SIMPLib/FilterParameters/MontageFileListInfo.h"
 #include "SIMPLib/FilterParameters/FilterParameter.h"
 #include "SIMPLib/SIMPLib.h"
-
-using EbsdMontageListInfo_t = struct
-{
-  qint32 PaddingDigits = 3;
-  quint32 Ordering = 0; /* Ordering=0 = RowColumn, Ordering=1 = ColumnRow */
-  qint32 RowStart = 0;
-  qint32 RowEnd = 2;
-  qint32 ColStart = 0;
-  qint32 ColEnd = 2;
-  qint32 IncrementIndex = 1;
-  QString InputPath;
-  QString FilePrefix;
-  QString FileSuffix;
-  QString FileExtension;
-
-  void writeJson(QJsonObject& json)
-  {
-    json["PaddingDigits"] = static_cast<double>(PaddingDigits);
-    json["Ordering"] = static_cast<double>(Ordering);
-    json["RowStart"] = static_cast<double>(RowStart);
-    json["ColStart"] = static_cast<double>(ColStart);
-    json["RowEnd"] = static_cast<double>(RowEnd);
-    json["ColEnd"] = static_cast<double>(ColEnd);
-    json["IncrementIndex"] = static_cast<double>(IncrementIndex);
-    json["InputPath"] = InputPath;
-    json["FilePrefix"] = FilePrefix;
-    json["FileSuffix"] = FileSuffix;
-    json["FileExtension"] = FileExtension;
-  }
-
-  bool readJson(QJsonObject& json)
-  {
-    if(json["PaddingDigits"].isDouble() && json["Ordering"].isDouble() && json["RowStart"].isDouble() && json["ColStart"].isDouble() && json["IncrementIndex"].isDouble() &&
-       json["InputPath"].isString() && json["FilePrefix"].isString() && json["FileSuffix"].isString() && json["FileExtension"].isString())
-    {
-      PaddingDigits = static_cast<qint32>(json["PaddingDigits"].toDouble());
-      Ordering = static_cast<quint32>(json["Ordering"].toDouble());
-      RowStart = static_cast<qint32>(json["RowStart"].toDouble());
-      ColStart = static_cast<qint32>(json["ColStart"].toDouble());
-      RowEnd = static_cast<qint32>(json["RowEnd"].toDouble());
-      ColEnd = static_cast<qint32>(json["ColEnd"].toDouble());
-      IncrementIndex = static_cast<qint32>(json["IncrementIndex"].toDouble());
-      InputPath = json["InputPath"].toString();
-      FilePrefix = json["FilePrefix"].toString();
-      FileSuffix = json["FileSuffix"].toString();
-      FileExtension = json["FileExtension"].toString();
-      return true;
-    }
-    return false;
-  }
-};
-
-Q_DECLARE_METATYPE(EbsdMontageListInfo_t)
 
 /**
  * @brief SIMPL_NEW_EbsdMontageListInfo_FP This macro is a short-form way of instantiating an instance of
@@ -117,12 +65,26 @@ Q_DECLARE_METATYPE(EbsdMontageListInfo_t)
 class EbsdMontageImportFilterParameter : public FilterParameter
 {
 public:
-  SIMPL_SHARED_POINTERS(EbsdMontageImportFilterParameter)
-  SIMPL_STATIC_NEW_MACRO(EbsdMontageImportFilterParameter)
-  SIMPL_TYPE_MACRO_SUPER_OVERRIDE(EbsdMontageImportFilterParameter, FilterParameter)
+  using Self = EbsdMontageImportFilterParameter;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer();
 
-  typedef std::function<void(EbsdMontageListInfo_t)> SetterCallbackType;
-  typedef std::function<EbsdMontageListInfo_t(void)> GetterCallbackType;
+  static Pointer New();
+
+  /**
+   * @brief Returns the name of the class for EbsdMontageImportFilterParameter
+   */
+  QString getNameOfClass() const override;
+  /**
+   * @brief Returns the name of the class for EbsdMontageImportFilterParameter
+   */
+  static QString ClassName();
+
+  using SetterCallbackType = std::function<void(MontageFileListInfo)>;
+  using GetterCallbackType = std::function<MontageFileListInfo(void)>;
 
   /**
    * @brief New This function instantiates an instance of the EbsdMontageImportFilterParameter. Although this
@@ -140,7 +102,7 @@ public:
   * that this FilterParameter subclass represents.
    * @return
    */
-  static Pointer New(const QString& humanLabel, const QString& propertyName, const EbsdMontageListInfo_t& defaultValue, Category category, SetterCallbackType setterCallback,
+  static Pointer New(const QString& humanLabel, const QString& propertyName, const MontageFileListInfo& defaultValue, Category category, SetterCallbackType setterCallback,
                      GetterCallbackType getterCallback);
 
   ~EbsdMontageImportFilterParameter() override;
@@ -169,14 +131,30 @@ public:
    * that this FilterParameter subclass represents.
    * from the filter parameter.
    */
-  SIMPL_INSTANCE_PROPERTY(SetterCallbackType, SetterCallback)
+  /**
+   * @brief Setter property for SetterCallback
+   */
+  void setSetterCallback(const EbsdMontageImportFilterParameter::SetterCallbackType& value);
+  /**
+   * @brief Getter property for SetterCallback
+   * @return Value of SetterCallback
+   */
+  EbsdMontageImportFilterParameter::SetterCallbackType getSetterCallback() const;
 
   /**
    * @param GetterCallback The method in the AbstractFilter subclass that <i>gets</i> the value of the property
    * that this FilterParameter subclass represents.
    * @return The GetterCallback
    */
-  SIMPL_INSTANCE_PROPERTY(GetterCallbackType, GetterCallback)
+  /**
+   * @brief Setter property for GetterCallback
+   */
+  void setGetterCallback(const EbsdMontageImportFilterParameter::GetterCallbackType& value);
+  /**
+   * @brief Getter property for GetterCallback
+   * @return Value of GetterCallback
+   */
+  EbsdMontageImportFilterParameter::GetterCallbackType getGetterCallback() const;
 
 protected:
   /**
@@ -190,4 +168,8 @@ public:
   EbsdMontageImportFilterParameter(EbsdMontageImportFilterParameter&&) = delete;                 // Move Constructor Not Implemented
   EbsdMontageImportFilterParameter& operator=(const EbsdMontageImportFilterParameter&) = delete; // Copy Assignment Not Implemented
   EbsdMontageImportFilterParameter& operator=(EbsdMontageImportFilterParameter&&) = delete;      // Move Assignment Not Implemented
+
+private:
+  EbsdMontageImportFilterParameter::SetterCallbackType m_SetterCallback = {};
+  EbsdMontageImportFilterParameter::GetterCallbackType m_GetterCallback = {};
 };

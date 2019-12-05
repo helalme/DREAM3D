@@ -33,9 +33,14 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindEllipsoidError.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -44,6 +49,8 @@
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 // -----------------------------------------------------------------------------
 //
@@ -71,7 +78,7 @@ FindEllipsoidError::~FindEllipsoidError() = default;
 // -----------------------------------------------------------------------------
 void FindEllipsoidError::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   QStringList linkedProps("IdealFeatureIdsArrayName");
   parameters.push_back(
@@ -141,25 +148,25 @@ void FindEllipsoidError::initialize()
 // -----------------------------------------------------------------------------
 void FindEllipsoidError::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
   DataArrayPath tempPath;
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                        /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   ImageGeom::Pointer image = getDataContainerArray()->getDataContainer(getFeatureIdsArrayPath().getDataContainerName())->getPrereqGeometry<ImageGeom, AbstractFilter>(this);
-  if(getErrorCondition() < 0 || nullptr == image.get())
+  if(getErrorCode() < 0 || nullptr == image.get())
   {
     return;
   }
@@ -233,28 +240,26 @@ void FindEllipsoidError::preflight()
 // -----------------------------------------------------------------------------
 void FindEllipsoidError::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_FeatureIdsArrayPath.getDataContainerName());
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
 
-  m_ScaleFator = 1.0 / xRes;
-  if(yRes > xRes && yRes > zRes)
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
+
+  m_ScaleFator = 1.0 / spacing[0];
+  if(spacing[1] > spacing[0] && spacing[1] > spacing[2])
   {
-    m_ScaleFator = 1.0 / yRes;
+    m_ScaleFator = 1.0 / spacing[1];
   }
-  if(zRes > xRes && zRes > yRes)
+  if(spacing[2] > spacing[0] && spacing[2] > spacing[1])
   {
-    m_ScaleFator = 1.0 / zRes;
+    m_ScaleFator = 1.0 / spacing[2];
   }
 
   if(m->getGeometryAs<ImageGeom>()->getXPoints() > 1 && m->getGeometryAs<ImageGeom>()->getYPoints() > 1 && m->getGeometryAs<ImageGeom>()->getZPoints() > 1)
@@ -265,7 +270,7 @@ void FindEllipsoidError::execute()
     find_error2D();
   }
 
-  notifyStatusMessage(getHumanLabel(), "FindEllipsoidError Completed");
+  notifyStatusMessage("FindEllipsoidError Completed");
 }
 
 // -----------------------------------------------------------------------------
@@ -283,10 +288,7 @@ void FindEllipsoidError::find_error2D()
   size_t yPoints = m->getGeometryAs<ImageGeom>()->getYPoints();
   size_t zPoints = m->getGeometryAs<ImageGeom>()->getZPoints();
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
   float xsquared, ysquared, asquared, bsquared, xc, yc, theta;
   int32_t xcoord, ycoord;
@@ -305,12 +307,12 @@ void FindEllipsoidError::find_error2D()
     //            theta = -m_AxisEulerAngles[3*i]; //only need the first angle in 2D
 
     //            //Get the centroids (in pixels) for the ideal ellipse
-    //            xc = m_Centroids[3*i]/xRes;
-    //            yc = m_Centroids[3*i + 1]/yRes;
+    //            xc = m_Centroids[3*i]/spacing[0];
+    //            yc = m_Centroids[3*i + 1]/spacing[1];
 
     //            //Get the axis lengths for the ideal ellipse
-    //            asquared = (m_AxisLengths[3*i]*m_AxisLengths[3*i])/(xRes*xRes);
-    //            bsquared = m_AxisLengths[3*i+1]*m_AxisLengths[3*i+1]/(yRes*yRes);
+    //            asquared = (m_AxisLengths[3*i]*m_AxisLengths[3*i])/(spacing[0]*spacing[0]);
+    //            bsquared = m_AxisLengths[3*i+1]*m_AxisLengths[3*i+1]/(spacing[1]*spacing[1]);
 
     //            //rotate and translate the current x, y pair into where the ideal ellipse is
     //            xsquared = ((xcoord-xc)*cosf(theta)-(ycoord-yc)*sinf(theta))*((xcoord-xc)*cosf(theta)-(ycoord-yc)*sinf(theta));
@@ -329,12 +331,12 @@ void FindEllipsoidError::find_error2D()
     theta = -m_AxisEulerAngles[3 * i]; // only need the first angle in 2D
 
     // Get the centroids (in pixels) for the ideal ellipse
-    xc = m_Centroids[3 * i] / xRes;
-    yc = m_Centroids[3 * i + 1] / yRes;
+    xc = m_Centroids[3 * i] / spacing[0];
+    yc = m_Centroids[3 * i + 1] / spacing[1];
 
     // Get the axis lengths for the ideal ellipse
-    asquared = (m_AxisLengths[3 * i] * m_AxisLengths[3 * i]) / (xRes * xRes);
-    bsquared = m_AxisLengths[3 * i + 1] * m_AxisLengths[3 * i + 1] / (yRes * yRes);
+    asquared = (m_AxisLengths[3 * i] * m_AxisLengths[3 * i]) / (spacing[0] * spacing[0]);
+    bsquared = m_AxisLengths[3 * i + 1] * m_AxisLengths[3 * i + 1] / (spacing[1] * spacing[1]);
 
     // iterate over all the cells in each feature
     for(size_t j = 0; j < featureCellList[i].size(); j++)
@@ -387,7 +389,7 @@ AbstractFilter::Pointer FindEllipsoidError::newFilterInstance(bool copyFilterPar
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEllipsoidError::getCompiledLibraryName() const
+QString FindEllipsoidError::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -395,7 +397,7 @@ const QString FindEllipsoidError::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEllipsoidError::getBrandingString() const
+QString FindEllipsoidError::getBrandingString() const
 {
   return "Statistics";
 }
@@ -403,7 +405,7 @@ const QString FindEllipsoidError::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEllipsoidError::getFilterVersion() const
+QString FindEllipsoidError::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -414,7 +416,7 @@ const QString FindEllipsoidError::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEllipsoidError::getGroupName() const
+QString FindEllipsoidError::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -422,7 +424,7 @@ const QString FindEllipsoidError::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindEllipsoidError::getUuid()
+QUuid FindEllipsoidError::getUuid() const
 {
   return QUuid("{583e0789-090a-5de2-b8f6-f3ef5baeab59}");
 }
@@ -430,7 +432,7 @@ const QUuid FindEllipsoidError::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEllipsoidError::getSubGroupName() const
+QString FindEllipsoidError::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -438,7 +440,144 @@ const QString FindEllipsoidError::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindEllipsoidError::getHumanLabel() const
+QString FindEllipsoidError::getHumanLabel() const
 {
   return "Find Ellipsoid Error";
+}
+
+// -----------------------------------------------------------------------------
+FindEllipsoidError::Pointer FindEllipsoidError::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindEllipsoidError> FindEllipsoidError::New()
+{
+  struct make_shared_enabler : public FindEllipsoidError
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEllipsoidError::getNameOfClass() const
+{
+  return QString("FindEllipsoidError");
+}
+
+// -----------------------------------------------------------------------------
+QString FindEllipsoidError::ClassName()
+{
+  return QString("FindEllipsoidError");
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setCellFeatureAttributeMatrixName(const DataArrayPath& value)
+{
+  m_CellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEllipsoidError::getCellFeatureAttributeMatrixName() const
+{
+  return m_CellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEllipsoidError::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setCentroidsArrayPath(const DataArrayPath& value)
+{
+  m_CentroidsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEllipsoidError::getCentroidsArrayPath() const
+{
+  return m_CentroidsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setNumCellsArrayPath(const DataArrayPath& value)
+{
+  m_NumCellsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEllipsoidError::getNumCellsArrayPath() const
+{
+  return m_NumCellsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setAxisLengthsArrayPath(const DataArrayPath& value)
+{
+  m_AxisLengthsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEllipsoidError::getAxisLengthsArrayPath() const
+{
+  return m_AxisLengthsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setAxisEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_AxisEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindEllipsoidError::getAxisEulerAnglesArrayPath() const
+{
+  return m_AxisEulerAnglesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setIdealFeatureIdsArrayName(const QString& value)
+{
+  m_IdealFeatureIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEllipsoidError::getIdealFeatureIdsArrayName() const
+{
+  return m_IdealFeatureIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setEllipsoidErrorArrayName(const QString& value)
+{
+  m_EllipsoidErrorArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindEllipsoidError::getEllipsoidErrorArrayName() const
+{
+  return m_EllipsoidErrorArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindEllipsoidError::setWriteIdealEllipseFeatureIds(bool value)
+{
+  m_WriteIdealEllipseFeatureIds = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindEllipsoidError::getWriteIdealEllipseFeatureIds() const
+{
+  return m_WriteIdealEllipseFeatureIds;
 }

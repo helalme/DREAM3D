@@ -35,15 +35,7 @@
 
 #pragma once
 
-#include <QtCore/QSettings>
 #include <QtCore/QString>
-#include <QtCore/QStringList>
-#include <QtCore/QUrl>
-#include <QtCore/QVector>
-
-#include <QtWidgets/QButtonGroup>
-
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 
 #include "SVWidgetsLib/FilterParameterWidgets/FilterParameterWidget.h"
 #include "SVWidgetsLib/QtSupport/QtSPluginFrame.h"
@@ -144,7 +136,6 @@ private:
   static QString m_OpenDialogLastFilePath;
 
   QAction* m_ShowFileAction = nullptr;
-  QString m_CurrentlyValidPath = "";
   QString m_CurrentText = "";
   bool m_DidCausePreflight = false;
   QPixmap m_Icon = QPixmap(QLatin1String(":/SIMPL/icons/images/caret-bottom.png"));

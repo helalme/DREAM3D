@@ -33,22 +33,22 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "PackPrimaryPhases.h"
 
 #include <fstream>
-
-#ifdef SIMPL_USE_PARALLEL_ALGORITHMS
-#include <tbb/blocked_range3d.h>
-#include <tbb/parallel_for.h>
-#include <tbb/partitioner.h>
-#include <tbb/task_scheduler_init.h>
-#endif
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Common/ShapeType.h"
 #include "SIMPLib/DataArrays/NeighborList.hpp"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
@@ -59,6 +59,7 @@
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedChoicesFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/OutputFileFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
@@ -67,11 +68,49 @@
 #include "SIMPLib/StatsData/PrimaryStatsData.h"
 #include "SIMPLib/Utilities/FileSystemPathHelper.h"
 #include "SIMPLib/Utilities/TimeUtilities.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
 
 #include "SyntheticBuilding/SyntheticBuildingConstants.h"
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
+
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/OrthoRhombicOps.h"
+
+#ifdef SIMPL_USE_PARALLEL_ALGORITHMS
+#include <tbb/blocked_range3d.h>
+#include <tbb/parallel_for.h>
+#include <tbb/partitioner.h>
+#include <tbb/task_scheduler_init.h>
+#endif
+
+namespace
+{
+OrthoRhombicOps::Pointer m_OrthoOps;
+}
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+  AttributeMatrixID22 = 22,
+  AttributeMatrixID23 = 23,
+
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+  DataArrayID35 = 35,
+  DataArrayID36 = 36,
+  DataArrayID37 = 37,
+  DataArrayID38 = 38,
+  DataArrayID39 = 39,
+  DataArrayID40 = 40,
+};
 
 // Macro to determine if we are going to show the Debugging Output files
 #define PPP_SHOW_DEBUG_OUTPUTS 0
@@ -85,7 +124,6 @@ class AssignVoxelsGapsImpl
   int64_t dims[3];
   float Invradcur[3];
   float res[3];
-  int32_t* m_FeatureIds;
   float xc;
   float yc;
   float zc;
@@ -96,10 +134,9 @@ class AssignVoxelsGapsImpl
   FloatArrayType::Pointer ellipfuncsPtr;
 
 public:
-  AssignVoxelsGapsImpl(int64_t* dimensions, float* resolution, int32_t* featureIds, float* radCur, float* xx, ShapeOps* shapeOps, float gA[3][3], float* size, int32_t cur_feature,
-                       Int32ArrayType::Pointer newowners, FloatArrayType::Pointer ellipfuncs)
-  : m_FeatureIds(featureIds)
-  , m_ShapeOps(shapeOps)
+  AssignVoxelsGapsImpl(int64_t* dimensions, float* resolution, float* radCur, float* xx, ShapeOps* shapeOps, float gA[3][3], float* size, int32_t cur_feature, Int32ArrayType::Pointer newowners,
+                       FloatArrayType::Pointer ellipfuncs)
+  : m_ShapeOps(shapeOps)
   , curFeature(cur_feature)
   {
     size = nullptr;
@@ -291,7 +328,7 @@ void PackPrimaryPhases::initialize()
   m_CylinderOps = ShapeOps::NullPointer();
   m_EllipsoidOps = ShapeOps::NullPointer();
   m_SuperEllipsoidOps = ShapeOps::NullPointer();
-  m_OrthoOps = OrthoRhombicOps::New();
+  ::m_OrthoOps = OrthoRhombicOps::New();
 
   m_ColumnList.clear();
   m_RowList.clear();
@@ -337,7 +374,7 @@ void PackPrimaryPhases::initialize()
 // -----------------------------------------------------------------------------
 void PackPrimaryPhases::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_BOOL_FP("Periodic Boundaries", PeriodicBoundaries, FilterParameter::Parameter, PackPrimaryPhases));
   QStringList linkedProps("MaskArrayPath");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Use Mask", UseMask, FilterParameter::Parameter, PackPrimaryPhases, linkedProps));
@@ -390,16 +427,16 @@ void PackPrimaryPhases::setupFilterParameters()
   }
 
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Feature Ids", FeatureIdsArrayName, FilterParameter::CreatedArray, PackPrimaryPhases));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Phases", CellPhasesArrayName, FilterParameter::CreatedArray, PackPrimaryPhases));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Feature Ids", FeatureIdsArrayName, OutputCellAttributeMatrixPath, OutputCellAttributeMatrixPath, FilterParameter::CreatedArray, PackPrimaryPhases));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Phases", CellPhasesArrayName, OutputCellAttributeMatrixPath, OutputCellAttributeMatrixPath, FilterParameter::CreatedArray, PackPrimaryPhases));
 
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Feature Attribute Matrix", OutputCellFeatureAttributeMatrixName, FilterParameter::CreatedArray, PackPrimaryPhases));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Phases", FeaturePhasesArrayName, FilterParameter::CreatedArray, PackPrimaryPhases));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Feature Attribute Matrix", OutputCellFeatureAttributeMatrixName, OutputCellAttributeMatrixPath, FilterParameter::CreatedArray, PackPrimaryPhases));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Phases", FeaturePhasesArrayName, OutputCellAttributeMatrixPath, OutputCellFeatureAttributeMatrixName, FilterParameter::CreatedArray, PackPrimaryPhases));
 
   parameters.push_back(SeparatorFilterParameter::New("Cell Ensemble Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Ensemble Attribute Matrix", OutputCellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, PackPrimaryPhases));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Number of Features", NumFeaturesArrayName, FilterParameter::CreatedArray, PackPrimaryPhases));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Ensemble Attribute Matrix", OutputCellEnsembleAttributeMatrixName, OutputCellAttributeMatrixPath, FilterParameter::CreatedArray, PackPrimaryPhases));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Number of Features", NumFeaturesArrayName, OutputCellAttributeMatrixPath, OutputCellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, PackPrimaryPhases));
 
   
   {
@@ -532,8 +569,8 @@ void PackPrimaryPhases::writeFilterParameters(QJsonObject& obj) const
 // -----------------------------------------------------------------------------
 void PackPrimaryPhases::updateFeatureInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   if(nullptr != m_FeaturePhasesPtr.lock())
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
@@ -573,8 +610,8 @@ void PackPrimaryPhases::updateFeatureInstancePointers()
 // -----------------------------------------------------------------------------
 void PackPrimaryPhases::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   // Make sure we have our input DataContainer with the proper Ensemble data
@@ -584,19 +621,19 @@ void PackPrimaryPhases::dataCheck()
   QVector<DataArrayPath> ensembleDataArrayPaths;
 
   // Input Ensemble Data that we require
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_PhaseTypesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter>(this, getInputPhaseTypesArrayPath(), cDims);
   if(nullptr != m_PhaseTypesPtr.lock())
   {
     m_PhaseTypes = m_PhaseTypesPtr.lock()->getPointer(0);
   }
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     ensembleDataArrayPaths.push_back(getInputPhaseTypesArrayPath());
   }
 
   m_PhaseNamesPtr = getDataContainerArray()->getPrereqArrayFromPath<StringDataArray, AbstractFilter>(this, getInputPhaseNamesArrayPath(), cDims);
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     ensembleDataArrayPaths.push_back(getInputPhaseNamesArrayPath());
   }
@@ -606,7 +643,7 @@ void PackPrimaryPhases::dataCheck()
   {
     m_ShapeTypes = m_ShapeTypesPtr.lock()->getPointer(0);
   }
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     ensembleDataArrayPaths.push_back(getInputShapeTypesArrayPath());
   }
@@ -617,17 +654,15 @@ void PackPrimaryPhases::dataCheck()
     if(m_StatsDataArray.lock() == nullptr)
     {
       QString ss = QObject::tr("Statistics array is not initialized correctly. The path is %1").arg(getInputStatsArrayPath().serialize());
-      setErrorCondition(-78000);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-78000, ss);
     }
   }
   if(getFeatureGeneration() > 1 || getFeatureGeneration() < 0)
   {
       QString ss = QObject::tr("The value for 'Feature Generation' can only be 0 or 1. The value being used is ").arg(getFeatureGeneration());
-      setErrorCondition(-78001);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-78001, ss);
   }
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     ensembleDataArrayPaths.push_back(getInputStatsArrayPath());
   }
@@ -639,7 +674,7 @@ void PackPrimaryPhases::dataCheck()
     {
       m_Mask = m_MaskPtr.lock()->getPointer(0);
     }
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       cellDataArrayPaths.push_back(getMaskArrayPath());
     }
@@ -663,20 +698,20 @@ void PackPrimaryPhases::dataCheck()
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   }
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getOutputCellAttributeMatrixPath().getDataContainerName());
 
-  QVector<size_t> tDims(1, 0);
-  m->createNonPrereqAttributeMatrix(this, getOutputCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature);
+  std::vector<size_t> tDims(1, 0);
+  m->createNonPrereqAttributeMatrix(this, getOutputCellFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature, AttributeMatrixID21);
 
   PackPrimaryPhases::SaveMethod saveMethod = static_cast<PackPrimaryPhases::SaveMethod>(getSaveGeometricDescriptions());
   if(saveMethod == PackPrimaryPhases::SaveMethod::SaveToNew)
   {
-    m->createNonPrereqAttributeMatrix(this, getNewAttributeMatrixPath().getAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature);
+    m->createNonPrereqAttributeMatrix(this, getNewAttributeMatrixPath().getAttributeMatrixName(), tDims, AttributeMatrix::Type::CellFeature, AttributeMatrixID22);
   }
   else if(saveMethod == PackPrimaryPhases::SaveMethod::AppendToExisting)
   {
@@ -692,50 +727,45 @@ void PackPrimaryPhases::dataCheck()
   else
   {
     tDims[0] = m_PhaseTypesPtr.lock()->getNumberOfTuples();
-    outEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getOutputCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble);
+    outEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getOutputCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble, AttributeMatrixID23);
   }
 
   tempPath = getOutputCellAttributeMatrixPath();
   tempPath.setAttributeMatrixName(getOutputCellEnsembleAttributeMatrixName());
   tempPath.setDataArrayName(SIMPL::EnsembleData::PhaseName);
-  m_PhaseNamesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<StringDataArray, AbstractFilter, QString>(this, tempPath, nullptr,
-                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_PhaseNamesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<StringDataArray, AbstractFilter, QString>(this, tempPath, nullptr, cDims, "", DataArrayID31);
 
   // Feature Data
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), getFeaturePhasesArrayName());
-  m_FeaturePhasesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_FeaturePhasesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID32);
   if(nullptr != m_FeaturePhasesPtr.lock())
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   }
 
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_NeighborhoodsArrayName);
-  m_NeighborhoodsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims);
+  m_NeighborhoodsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID33);
   if(nullptr != m_NeighborhoodsPtr.lock())
   {
     m_Neighborhoods = m_NeighborhoodsPtr.lock()->getPointer(0);
   }
 
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_EquivalentDiametersArrayName);
-  m_EquivalentDiametersPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_EquivalentDiametersPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID34);
   if(nullptr != m_EquivalentDiametersPtr.lock())
   {
     m_EquivalentDiameters = m_EquivalentDiametersPtr.lock()->getPointer(0);
   }
 
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_VolumesArrayName);
-  m_VolumesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_VolumesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID35);
   if(nullptr != m_VolumesPtr.lock())
   {
     m_Volumes = m_VolumesPtr.lock()->getPointer(0);
   }
 
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_Omega3sArrayName);
-  m_Omega3sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_Omega3sPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID36);
   if(nullptr != m_Omega3sPtr.lock())
   {
     m_Omega3s = m_Omega3sPtr.lock()->getPointer(0);
@@ -743,24 +773,21 @@ void PackPrimaryPhases::dataCheck()
 
   cDims[0] = 3;
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_CentroidsArrayName);
-  m_CentroidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                  cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_CentroidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID37);
   if(nullptr != m_CentroidsPtr.lock())
   {
     m_Centroids = m_CentroidsPtr.lock()->getPointer(0);
   }
 
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_AxisEulerAnglesArrayName);
-  m_AxisEulerAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AxisEulerAnglesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID38);
   if(nullptr != m_AxisEulerAnglesPtr.lock())
   {
     m_AxisEulerAngles = m_AxisEulerAnglesPtr.lock()->getPointer(0);
   }
 
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellFeatureAttributeMatrixName(), m_AxisLengthsArrayName);
-  m_AxisLengthsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AxisLengthsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID39);
   if(nullptr != m_AxisLengthsPtr.lock())
   {
     m_AxisLengths = m_AxisLengthsPtr.lock()->getPointer(0);
@@ -769,8 +796,7 @@ void PackPrimaryPhases::dataCheck()
   // Ensemble Data
   cDims[0] = 1;
   tempPath.update(getOutputCellAttributeMatrixPath().getDataContainerName(), getOutputCellEnsembleAttributeMatrixName(), getNumFeaturesArrayName());
-  m_NumFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(
-      this, tempPath, 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_NumFeaturesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID40);
   if(nullptr != m_NumFeaturesPtr.lock())
   {
     m_NumFeatures = m_NumFeaturesPtr.lock()->getPointer(0);
@@ -788,14 +814,12 @@ void PackPrimaryPhases::dataCheck()
     if(getFeatureInputFile().isEmpty())
     {
       QString ss = QObject::tr("The input feature file must be set");
-      setErrorCondition(-78003);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-78003, ss);
     }
     else if(!fi.exists())
     {
       QString ss = QObject::tr("The input feature file does not exist");
-      setErrorCondition(-78004);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-78004, ss);
     }
   }
 }
@@ -836,26 +860,26 @@ void PackPrimaryPhases::execute()
 {
   initialize();
 
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   if(getFeatureGeneration() == 0)
   {
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Packing Features || Initializing Volume");
+    notifyStatusMessage("Packing Features || Initializing Volume");
     // this initializes the arrays to hold the details of the locations of all of the features during packing
     Int32ArrayType::Pointer featureOwnersPtr = initializePackingGrid();
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Packing Features || Placing Features");
+    notifyStatusMessage("Packing Features || Placing Features");
     placeFeatures(featureOwnersPtr);
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
@@ -867,7 +891,7 @@ void PackPrimaryPhases::execute()
 
   if(getFeatureGeneration() == 1)
   {
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Loading Features");
+    notifyStatusMessage("Loading Features");
     loadFeatures();
     if(getCancel())
     {
@@ -875,9 +899,9 @@ void PackPrimaryPhases::execute()
     }
   }
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Packing Features || Assigning Voxels");
+  notifyStatusMessage("Packing Features || Assigning Voxels");
   assignVoxels();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -886,14 +910,14 @@ void PackPrimaryPhases::execute()
     return;
   }
 
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Packing Features || Assigning Gaps");
+  notifyStatusMessage("Packing Features || Assigning Gaps");
   assignGapsOnly();
   if(getCancel())
   {
     return;
   }
 
-  // notifyStatusMessage(getMessagePrefix(), getHumanLabel(), "Packing Features || Cleaning Up Volume");
+  // notifyStatusMessage("Packing Features || Cleaning Up Volume");
   // cleanup_features();
   // if (getCancel() == true) { return; }
 
@@ -901,7 +925,7 @@ void PackPrimaryPhases::execute()
   {
     writeGoalAttributes();
   }
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -916,7 +940,7 @@ void PackPrimaryPhases::execute()
   {
     AttributeMatrix::Pointer cellEnsembleAttrMat = m->getAttributeMatrix(m_OutputCellEnsembleAttributeMatrixName);
     IDataArray::Pointer outputPhaseNames = inputPhaseNames->deepCopy();
-    cellEnsembleAttrMat->addAttributeArray(outputPhaseNames->getName(), outputPhaseNames);
+    cellEnsembleAttrMat->insertOrAssign(outputPhaseNames);
   }
 
 }
@@ -932,8 +956,7 @@ int32_t PackPrimaryPhases::writeVtkFile(int32_t* featureOwners, int32_t* exclusi
   if(!outFile.is_open() )
   {
     qDebug() << "m_VtkOutputFile: " << m_VtkOutputFile << "\n";
-    notifyErrorMessage(getHumanLabel(), "Could not open Vtk File for writing from PackFeatures", -1);
-    setErrorCondition(-78005);
+    setErrorCondition(-78005, "Could not open Vtk File for writing from PackFeatures");
     return -1;
   }
   outFile << "# vtk DataFile Version 2.0"
@@ -1018,19 +1041,18 @@ void PackPrimaryPhases::loadFeatures()
   if(!inFile)
   {
     QString ss = QObject::tr("Failed to open: %1").arg(getFeatureInputFile());
-    setErrorCondition(-78006);
-    notifyErrorMessage(getHumanLabel(), ss, -1);
+    setErrorCondition(-78006, ss);
   }
   int32_t numFeatures = 0;
   inFile >> numFeatures;
   if(0 == numFeatures)
   {
-    notifyErrorMessage(getHumanLabel(), "The number of Features is 0 and should be greater than 0", -600);
+    setErrorCondition(-600, "The number of Features is 0 and should be greater than 0");
   }
 
   m_FirstPrimaryFeature = 1;
 
-  QVector<size_t> tDims(1, m_FirstPrimaryFeature + numFeatures);
+  std::vector<size_t> tDims(1, m_FirstPrimaryFeature + numFeatures);
   cellFeatureAttrMat->setTupleDimensions(tDims);
   updateFeatureInstancePointers();
 
@@ -1089,17 +1111,16 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
 
   StatsDataArray& statsDataArray = *(m_StatsDataArray.lock().get());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
   };
 
-  std::tie(m_SizeX, m_SizeY, m_SizeZ) = m->getGeometryAs<ImageGeom>()->getResolution();
-  m_SizeX *= static_cast<float>(dims[0]);
-  m_SizeY *= static_cast<float>(dims[1]);
-  m_SizeZ *= static_cast<float>(dims[2]);
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
+  m_SizeX = spacing[0] * static_cast<float>(dims[0]);
+  m_SizeY = spacing[1] * static_cast<float>(dims[1]);
+  m_SizeZ = spacing[2] * static_cast<float>(dims[2]);
   m_TotalVol = m_SizeX * m_SizeY * m_SizeZ;
 
   // Making a double to prevent float overflow on incrementing
@@ -1114,12 +1135,9 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
   }
   float totalprimaryvol = static_cast<float>(totalprimaryvolTEMP);
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
-  totalprimaryvol = totalprimaryvol * xRes * yRes * zRes;
+  totalprimaryvol = totalprimaryvol * spacing[0] * spacing[1] * spacing[2];
 
   float change = 0.0f;
   int32_t phase = 0;
@@ -1148,8 +1166,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
                          .arg(i)
                          .arg(i)
                          .arg(m_PhaseTypes[i]);
-        setErrorCondition(-78007);
-        notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+        setErrorCondition(-78007, ss);
         return;
       }
       m_PrimaryPhases.push_back(static_cast<int32_t>(i));
@@ -1163,8 +1180,8 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
     m_PrimaryPhaseFractions[i] = m_PrimaryPhaseFractions[i] / totalprimaryfractions;
   }
 
-  QVector<size_t> cDim(1, 1);
-  Int32ArrayType::Pointer exclusionOwnersPtr = Int32ArrayType::CreateArray(m_TotalPackingPoints, cDim, "_INTERNAL_USE_ONLY_PackPrimaryFeatures::exclusions_owners");
+  std::vector<size_t> cDim(1, 1);
+  Int32ArrayType::Pointer exclusionOwnersPtr = Int32ArrayType::CreateArray(m_TotalPackingPoints, cDim, "_INTERNAL_USE_ONLY_PackPrimaryFeatures::exclusions_owners", true);
   exclusionOwnersPtr->initializeWithValue(0);
 
   // This is the set that we are going to keep updated with the points that are not in an exclusion zone
@@ -1235,8 +1252,8 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
   Feature_t feature = Feature_t();
 
   // Estimate the total Number of features here
-  int32_t estNumFeatures = estimateNumFeatures(udims[0], udims[1], udims[2], xRes, yRes, zRes);
-  QVector<size_t> tDims(1, estNumFeatures);
+  int32_t estNumFeatures = estimateNumFeatures(udims[0], udims[1], udims[2], spacing[0], spacing[1], spacing[2]);
+  std::vector<size_t> tDims(1, estNumFeatures);
   m->getAttributeMatrix(m_OutputCellFeatureAttributeMatrixName)->resizeAttributeArrays(tDims);
   // need to update pointers after resize, buut do not need to run full data check because pointers are still valid
   updateFeatureInstancePointers();
@@ -1264,7 +1281,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
         if(gid % 100 == 0)
         {
           QString ss = QObject::tr("Packing Features (1/2) || Generating Feature #%1").arg(gid);
-          notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+          notifyStatusMessage(ss);
         }
         if(gid + 1 >= static_cast<int32_t>(m->getAttributeMatrix(m_OutputCellFeatureAttributeMatrixName)->getNumberOfTuples()))
         {
@@ -1309,7 +1326,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
         if(change > 0 || m_CurrentSizeDistError > (1.0f - (iter * 0.001f)) || curphasevol[j] < (0.75f * factor * curphasetotalvol))
         {
           QString ss = QObject::tr("Packing Features (2/2) || Generating Feature #%1").arg(gid);
-          notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+          notifyStatusMessage(ss);
           if(gid + 1 >= static_cast<int32_t>(m->getAttributeMatrix(m_OutputCellFeatureAttributeMatrixName)->getNumberOfTuples()))
           {
             tDims[0] = static_cast<size_t>(gid + 1);
@@ -1332,7 +1349,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
   }
 
   QString ss = QObject::tr("Packing Features || Starting Feature Placement...");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 
   tDims[0] = static_cast<size_t>(gid);
   m->getAttributeMatrix(m_OutputCellFeatureAttributeMatrixName)->resizeAttributeArrays(tDims);
@@ -1419,14 +1436,14 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
     if(static_cast<int32_t>(i) > progFeature + progFeatureInc)
     {
       QString ss = QObject::tr("Placing Feature #%1/%2").arg(i).arg(totalFeatures);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       progFeature = i;
     }
 
     if(i == (totalFeatures - 1))
     {
       QString ss = QObject::tr("Placing Feature #%1/%2").arg(i + 1).arg(totalFeatures);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
     }
 
     // we always put the feature in the center of the box to make sure the feature has the optimal chance to not touch the edge of the box
@@ -1438,7 +1455,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
     m_Centroids[3 * i + 1] = yc;
     m_Centroids[3 * i + 2] = zc;
     insertFeature(i);
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
@@ -1486,7 +1503,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
       timeDiff = ((float)i / (float)(currentMillis - startMillis));
       estimatedTime = (float)(totalFeatures - i) / timeDiff;
       ss += QObject::tr(" || Est. Time Remain: %1 || Iterations/Sec: %2").arg(DREAM3D::convertMillisToHrsMinSecs(estimatedTime)).arg(timeDiff * 1000);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
 
       millis = QDateTime::currentMSecsSinceEpoch();
     }
@@ -1529,7 +1546,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
       estimatedTime = (float)(totalAdjustments - iteration) / timeDiff;
 
       ss += QObject::tr(" || Est. Time Remain: %1 || Iterations/Sec: %2").arg(DREAM3D::convertMillisToHrsMinSecs(estimatedTime)).arg(timeDiff * 1000);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
 
       millis = QDateTime::currentMSecsSinceEpoch();
       lastIteration = iteration;
@@ -1710,8 +1727,7 @@ void PackPrimaryPhases::placeFeatures(Int32ArrayType::Pointer featureOwnersPtr)
     if(err < 0)
     {
       QString ss = QObject::tr("Error writing Vtk file");
-      setErrorCondition(-78008);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-78008, ss);
       return;
     }
   }
@@ -1724,12 +1740,9 @@ Int32ArrayType::Pointer PackPrimaryPhases::initializePackingGrid()
 {
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getOutputCellAttributeMatrixPath().getDataContainerName());
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  // FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
-  std::tie(m_PackingRes[0], m_PackingRes[1], m_PackingRes[2]) = m->getGeometryAs<ImageGeom>()->getResolution();
+  m_PackingRes = m->getGeometryAs<ImageGeom>()->getSpacing();
   m_PackingRes[0] *= 2.0f;
   m_PackingRes[1] *= 2.0f;
   m_PackingRes[2] *= 2.0f;
@@ -1760,7 +1773,7 @@ Int32ArrayType::Pointer PackPrimaryPhases::initializePackingGrid()
 
   m_TotalPackingPoints = m_PackingPoints[0] * m_PackingPoints[1] * m_PackingPoints[2];
 
-  Int32ArrayType::Pointer featureOwnersPtr = Int32ArrayType::CreateArray(m_TotalPackingPoints, "_INTERNAL_USE_ONLY_PackPrimaryFeatures::feature_owners");
+  Int32ArrayType::Pointer featureOwnersPtr = Int32ArrayType::CreateArray(m_TotalPackingPoints, "_INTERNAL_USE_ONLY_PackPrimaryFeatures::feature_owners", true);
   featureOwnersPtr->initializeWithZeros();
 
   return featureOwnersPtr;
@@ -1858,7 +1871,7 @@ void PackPrimaryPhases::generateFeature(int32_t phase, Feature_t* feature, uint3
       break;
     }
   }
-  FOrientArrayType eulers = m_OrthoOps->determineEulerAngles(m_Seed, bin);
+  OrientationD eulers = m_OrthoOps->determineEulerAngles(m_Seed, bin);
   VectorOfFloatArray omega3 = pp->getFeatureSize_Omegas();
   float mf = omega3[0]->getValue(diameter);
   float s = omega3[1]->getValue(diameter);
@@ -2516,8 +2529,7 @@ void PackPrimaryPhases::insertFeature(size_t gnum)
   if(shapeclass >= static_cast<ShapeType::EnumType>(ShapeType::Type::ShapeTypeEnd))
   {
     QString ss = QObject::tr("Undefined shape class in shape types array with path %1").arg(m_InputShapeTypesArrayPath.serialize());
-    setErrorCondition(-78009);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-78009, ss);
     return;
   }
 
@@ -2541,9 +2553,7 @@ void PackPrimaryPhases::insertFeature(size_t gnum)
   float PHI = m_AxisEulerAngles[3 * gnum + 1];
   float phi2 = m_AxisEulerAngles[3 * gnum + 2];
   float ga[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  FOrientArrayType om(9, 0.0);
-  FOrientTransformsType::eu2om(FOrientArrayType(phi1, PHI, phi2), om);
-  om.toGMatrix(ga);
+  OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(phi1, PHI, phi2)).toGMatrix(ga);
 
   xc = m_Centroids[3 * gnum];
   yc = m_Centroids[3 * gnum + 1];
@@ -2628,8 +2638,7 @@ void PackPrimaryPhases::assignVoxels()
 
   size_t totalPoints = m->getAttributeMatrix(m_OutputCellAttributeMatrixPath.getAttributeMatrixName())->getNumberOfTuples();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -2646,17 +2655,13 @@ void PackPrimaryPhases::assignVoxels()
 
   int64_t xmin = 0, xmax = 0, ymin = 0, ymax = 0, zmin = 0, zmax = 0;
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
-  float res[3] = {xRes, yRes, zRes};
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
-  Int32ArrayType::Pointer newownersPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_newowners");
+  Int32ArrayType::Pointer newownersPtr = Int32ArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_newowners", true);
   newownersPtr->initializeWithValue(-1);
   int32_t* newowners = newownersPtr->getPointer(0);
 
-  FloatArrayType::Pointer ellipfuncsPtr = FloatArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_ellipfuncs");
+  FloatArrayType::Pointer ellipfuncsPtr = FloatArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_ellipfuncs", true);
   ellipfuncsPtr->initializeWithValue(-1);
   float* ellipfuncs = ellipfuncsPtr->getPointer(0);
 
@@ -2674,7 +2679,7 @@ void PackPrimaryPhases::assignVoxels()
       float rate = featuresPerTime / ((float)(currentMillis - millis)) * 1000.0f;
 
       QString ss = QObject::tr("Assign Voxels & Gaps|| Features Checked: %1 || Features/Second: %2").arg(i).arg((int)rate);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       featuresPerTime = 0;
       millis = QDateTime::currentMSecsSinceEpoch();
     }
@@ -2692,8 +2697,7 @@ void PackPrimaryPhases::assignVoxels()
     if(shapeclass != 0 && shapeclass != 1 && shapeclass != 2 && shapeclass != 3)
     {
       QString ss = QObject::tr("Undefined shape class in shape types array with path %1").arg(m_InputShapeTypesArrayPath.serialize());
-      setErrorCondition(-78010);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-78010, ss);
       return;
     }
 
@@ -2718,18 +2722,17 @@ void PackPrimaryPhases::assignVoxels()
     float PHI = m_AxisEulerAngles[3 * i + 1];
     float phi2 = m_AxisEulerAngles[3 * i + 2];
     float ga[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-    FOrientArrayType om(9, 0.0);
-    FOrientTransformsType::eu2om(FOrientArrayType(phi1, PHI, phi2), om);
-    om.toGMatrix(ga);
-    column = static_cast<int64_t>(xc / xRes);
-    row = static_cast<int64_t>(yc / yRes);
-    plane = static_cast<int64_t>(zc / zRes);
-    xmin = static_cast<int64_t>(column - ((radcur1 / xRes) + 1));
-    xmax = static_cast<int64_t>(column + ((radcur1 / xRes) + 1));
-    ymin = static_cast<int64_t>(row - ((radcur1 / yRes) + 1));
-    ymax = static_cast<int64_t>(row + ((radcur1 / yRes) + 1));
-    zmin = static_cast<int64_t>(plane - ((radcur1 / zRes) + 1));
-    zmax = static_cast<int64_t>(plane + ((radcur1 / zRes) + 1));
+    OrientationF om(9, 0.0);
+    OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(phi1, PHI, phi2)).toGMatrix(ga);
+    column = static_cast<int64_t>(xc / spacing[0]);
+    row = static_cast<int64_t>(yc / spacing[1]);
+    plane = static_cast<int64_t>(zc / spacing[2]);
+    xmin = static_cast<int64_t>(column - ((radcur1 / spacing[0]) + 1));
+    xmax = static_cast<int64_t>(column + ((radcur1 / spacing[0]) + 1));
+    ymin = static_cast<int64_t>(row - ((radcur1 / spacing[1]) + 1));
+    ymax = static_cast<int64_t>(row + ((radcur1 / spacing[1]) + 1));
+    zmin = static_cast<int64_t>(plane - ((radcur1 / spacing[2]) + 1));
+    zmax = static_cast<int64_t>(plane + ((radcur1 / spacing[2]) + 1));
 
     if(m_PeriodicBoundaries)
     {
@@ -2794,12 +2797,12 @@ void PackPrimaryPhases::assignVoxels()
     if(doParallel)
     {
       tbb::parallel_for(tbb::blocked_range3d<int64_t, int64_t, int64_t>(zmin, zmax + 1, ymin, ymax + 1, xmin, xmax + 1),
-                        AssignVoxelsGapsImpl(dims, res, m_FeatureIds, radCur, xx, shapeOps, ga, size, i, newownersPtr, ellipfuncsPtr), tbb::auto_partitioner());
+                        AssignVoxelsGapsImpl(dims, spacing.data(), radCur, xx, shapeOps, ga, size, i, newownersPtr, ellipfuncsPtr), tbb::auto_partitioner());
     }
     else
 #endif
     {
-      AssignVoxelsGapsImpl serial(dims, res, m_FeatureIds, radCur, xx, shapeOps, ga, size, i, newownersPtr, ellipfuncsPtr);
+      AssignVoxelsGapsImpl serial(dims, spacing.data(), radCur, xx, shapeOps, ga, size, i, newownersPtr, ellipfuncsPtr);
       serial.convert(zmin, zmax + 1, ymin, ymax + 1, xmin, xmax + 1);
     }
   }
@@ -2890,7 +2893,7 @@ void PackPrimaryPhases::assignGapsOnly()
   neighpoints[4] = xPoints;
   neighpoints[5] = xPoints * yPoints;
 
-  Int64ArrayType::Pointer neighborsPtr = Int64ArrayType::CreateArray(m->getGeometryAs<ImageGeom>()->getNumberOfElements(), "_INTERNAL_USE_ONLY_Neighbors");
+  Int64ArrayType::Pointer neighborsPtr = Int64ArrayType::CreateArray(m->getGeometryAs<ImageGeom>()->getNumberOfElements(), "_INTERNAL_USE_ONLY_Neighbors", true);
   neighborsPtr->initializeWithValue(-1);
   m_Neighbors = neighborsPtr->getPointer(0);
 
@@ -3013,7 +3016,7 @@ void PackPrimaryPhases::assignGapsOnly()
     if(iterationCounter >= 1)
     {
       QString ss = QObject::tr("Assign Gaps || Cycle#: %1 || Remaining Unassigned Voxel Count: %2").arg(iterationCounter).arg(gapVoxelCount);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
     }
     if(getCancel())
     {
@@ -3044,8 +3047,7 @@ void PackPrimaryPhases::cleanupFeatures()
 
   size_t totalPoints = m->getAttributeMatrix(m_OutputCellAttributeMatrixPath.getAttributeMatrixName())->getNumberOfTuples();
   size_t totalFeatures = m->getAttributeMatrix(m_OutputCellFeatureAttributeMatrixName)->getNumberOfTuples();
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -3080,12 +3082,9 @@ void PackPrimaryPhases::cleanupFeatures()
     m_GSizes[i] = 0;
   }
 
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
+  float resConst = std::accumulate(spacing.begin(), spacing.end(), 1.0f, std::multiplies<float>());
 
-  float resConst = xRes * yRes * zRes;
   const double k_PiOver6 = M_PI / 6.0;
   for(size_t i = 0; i < totalPoints; i++)
   {
@@ -3267,7 +3266,7 @@ int32_t PackPrimaryPhases::estimateNumFeatures(size_t xpoints, size_t ypoints, s
   DataContainerArray::Pointer dca = getDataContainerArray();
 
   // DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getOutputCellAttributeMatrixPath().getDataContainerName());
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_PhaseTypesPtr = dca->getPrereqArrayFromPath<DataArray<uint32_t>, AbstractFilter>(this, getInputPhaseTypesArrayPath(), cDims);
   DataArray<uint32_t>* phaseType = m_PhaseTypesPtr.lock().get();
 
@@ -3276,8 +3275,7 @@ int32_t PackPrimaryPhases::estimateNumFeatures(size_t xpoints, size_t ypoints, s
   if(m_StatsDataArray.lock() == nullptr)
   {
     QString ss = QObject::tr("Stats Array Not Initialized correctly");
-    setErrorCondition(-78011);
-    notifyErrorMessage(getHumanLabel(), ss, -308);
+    setErrorCondition(-78011, ss);
     return 1;
   }
 
@@ -3381,8 +3379,7 @@ void PackPrimaryPhases::writeGoalAttributes()
   if(!parentPath.mkpath("."))
   {
     QString ss = QObject::tr("Error creating parent path '%1'").arg(parentPath.absolutePath());
-    setErrorCondition(-78013);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-78013, ss);
     return;
   }
 
@@ -3390,8 +3387,7 @@ void PackPrimaryPhases::writeGoalAttributes()
   if(!outFile.open(QIODevice::WriteOnly))
   {
     QString msg = QObject::tr("CSV Output file could not be opened: %1").arg(getCsvOutputFile());
-    setErrorCondition(-78014);
-    notifyErrorMessage(getHumanLabel(), msg, getErrorCondition());
+    setErrorCondition(-78014, msg);
     return;
   }
 
@@ -3446,7 +3442,7 @@ void PackPrimaryPhases::writeGoalAttributes()
     {
 
       QString ss = QObject::tr("Writing Feature Data || %1% Complete").arg(((float)i / numTuples) * 100);
-      notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+      notifyStatusMessage(ss);
       threshold = threshold + 5.0f;
       if(threshold < ((float)i / numTuples) * 100.0f)
       {
@@ -3477,7 +3473,7 @@ void PackPrimaryPhases::moveShapeDescriptions()
   names << m_EquivalentDiametersArrayName << m_Omega3sArrayName << m_AxisEulerAnglesArrayName << m_AxisLengthsArrayName << m_VolumesArrayName << m_CentroidsArrayName << m_NeighborhoodsArrayName;
 
   AttributeMatrix::Pointer cellFeatureAttrMat = m->getAttributeMatrix(m_OutputCellFeatureAttributeMatrixName);
-  QVector<size_t> tDims(1, 0);
+  std::vector<size_t> tDims(1, 0);
 
   QList<IDataArray::Pointer> attrArrays;
   foreach(const QString name, names)
@@ -3505,7 +3501,7 @@ void PackPrimaryPhases::moveShapeDescriptions()
 
       foreach(IDataArray::Pointer incomingArray, attrArrays)
       {
-        newAM->addAttributeArray(incomingArray->getName(), incomingArray);
+        newAM->insertOrAssign(incomingArray);
       }
     }
   }
@@ -3552,7 +3548,7 @@ AbstractFilter::Pointer PackPrimaryPhases::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PackPrimaryPhases::getCompiledLibraryName() const
+QString PackPrimaryPhases::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -3560,7 +3556,7 @@ const QString PackPrimaryPhases::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PackPrimaryPhases::getBrandingString() const
+QString PackPrimaryPhases::getBrandingString() const
 {
   return "SyntheticBuilding";
 }
@@ -3568,7 +3564,7 @@ const QString PackPrimaryPhases::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PackPrimaryPhases::getFilterVersion() const
+QString PackPrimaryPhases::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -3578,7 +3574,7 @@ const QString PackPrimaryPhases::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PackPrimaryPhases::getGroupName() const
+QString PackPrimaryPhases::getGroupName() const
 {
   return SIMPL::FilterGroups::SyntheticBuildingFilters;
 }
@@ -3586,7 +3582,7 @@ const QString PackPrimaryPhases::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid PackPrimaryPhases::getUuid()
+QUuid PackPrimaryPhases::getUuid() const
 {
   return QUuid("{84305312-0d10-50ca-b89a-fda17a353cc9}");
 }
@@ -3594,7 +3590,7 @@ const QUuid PackPrimaryPhases::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PackPrimaryPhases::getSubGroupName() const
+QString PackPrimaryPhases::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::PackingFilters;
 }
@@ -3602,7 +3598,288 @@ const QString PackPrimaryPhases::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PackPrimaryPhases::getHumanLabel() const
+QString PackPrimaryPhases::getHumanLabel() const
 {
   return "Pack Primary Phases";
+}
+
+// -----------------------------------------------------------------------------
+PackPrimaryPhases::Pointer PackPrimaryPhases::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<PackPrimaryPhases> PackPrimaryPhases::New()
+{
+  struct make_shared_enabler : public PackPrimaryPhases
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getNameOfClass() const
+{
+  return QString("PackPrimaryPhases");
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::ClassName()
+{
+  return QString("PackPrimaryPhases");
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setOutputCellAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_OutputCellAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getOutputCellAttributeMatrixPath() const
+{
+  return m_OutputCellAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setOutputCellFeatureAttributeMatrixName(const QString& value)
+{
+  m_OutputCellFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getOutputCellFeatureAttributeMatrixName() const
+{
+  return m_OutputCellFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setOutputCellEnsembleAttributeMatrixName(const QString& value)
+{
+  m_OutputCellEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getOutputCellEnsembleAttributeMatrixName() const
+{
+  return m_OutputCellEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setFeatureIdsArrayName(const QString& value)
+{
+  m_FeatureIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getFeatureIdsArrayName() const
+{
+  return m_FeatureIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setCellPhasesArrayName(const QString& value)
+{
+  m_CellPhasesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getCellPhasesArrayName() const
+{
+  return m_CellPhasesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setFeaturePhasesArrayName(const QString& value)
+{
+  m_FeaturePhasesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getFeaturePhasesArrayName() const
+{
+  return m_FeaturePhasesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setNumFeaturesArrayName(const QString& value)
+{
+  m_NumFeaturesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getNumFeaturesArrayName() const
+{
+  return m_NumFeaturesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setInputStatsArrayPath(const DataArrayPath& value)
+{
+  m_InputStatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getInputStatsArrayPath() const
+{
+  return m_InputStatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setInputPhaseTypesArrayPath(const DataArrayPath& value)
+{
+  m_InputPhaseTypesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getInputPhaseTypesArrayPath() const
+{
+  return m_InputPhaseTypesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setInputPhaseNamesArrayPath(const DataArrayPath& value)
+{
+  m_InputPhaseNamesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getInputPhaseNamesArrayPath() const
+{
+  return m_InputPhaseNamesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setInputShapeTypesArrayPath(const DataArrayPath& value)
+{
+  m_InputShapeTypesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getInputShapeTypesArrayPath() const
+{
+  return m_InputShapeTypesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setMaskArrayPath(const DataArrayPath& value)
+{
+  m_MaskArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getMaskArrayPath() const
+{
+  return m_MaskArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setUseMask(bool value)
+{
+  m_UseMask = value;
+}
+
+// -----------------------------------------------------------------------------
+bool PackPrimaryPhases::getUseMask() const
+{
+  return m_UseMask;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setFeatureGeneration(int value)
+{
+  m_FeatureGeneration = value;
+}
+
+// -----------------------------------------------------------------------------
+int PackPrimaryPhases::getFeatureGeneration() const
+{
+  return m_FeatureGeneration;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setFeatureInputFile(const QString& value)
+{
+  m_FeatureInputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getFeatureInputFile() const
+{
+  return m_FeatureInputFile;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setCsvOutputFile(const QString& value)
+{
+  m_CsvOutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PackPrimaryPhases::getCsvOutputFile() const
+{
+  return m_CsvOutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setPeriodicBoundaries(bool value)
+{
+  m_PeriodicBoundaries = value;
+}
+
+// -----------------------------------------------------------------------------
+bool PackPrimaryPhases::getPeriodicBoundaries() const
+{
+  return m_PeriodicBoundaries;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setWriteGoalAttributes(bool value)
+{
+  m_WriteGoalAttributes = value;
+}
+
+// -----------------------------------------------------------------------------
+bool PackPrimaryPhases::getWriteGoalAttributes() const
+{
+  return m_WriteGoalAttributes;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setSaveGeometricDescriptions(int value)
+{
+  m_SaveGeometricDescriptions = value;
+}
+
+// -----------------------------------------------------------------------------
+int PackPrimaryPhases::getSaveGeometricDescriptions() const
+{
+  return m_SaveGeometricDescriptions;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setNewAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_NewAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getNewAttributeMatrixPath() const
+{
+  return m_NewAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void PackPrimaryPhases::setSelectedAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_SelectedAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PackPrimaryPhases::getSelectedAttributeMatrixPath() const
+{
+  return m_SelectedAttributeMatrixPath;
 }

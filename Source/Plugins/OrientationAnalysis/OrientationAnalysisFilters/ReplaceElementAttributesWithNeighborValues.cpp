@@ -32,9 +32,14 @@
 *    United States Prime Contract Navy N00173-07-C-2068
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+#include <memory>
+
 #include "ReplaceElementAttributesWithNeighborValues.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Common/TemplateHelpers.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
@@ -44,6 +49,8 @@
 #include "SIMPLib/FilterParameters/MultiDataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -56,9 +63,36 @@ static const int GreaterThan = 1;
 template <typename T> class LessThanComparison
 {
 public:
-  SIMPL_SHARED_POINTERS(LessThanComparison<T>)
-  SIMPL_STATIC_NEW_MACRO(LessThanComparison<T>)
-  SIMPL_TYPE_MACRO(LessThanComparison<T>)
+  using Self = LessThanComparison<T>;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer()
+  {
+    return Pointer(static_cast<Self*>(nullptr));
+  }
+
+  /**
+   * @brief Returns the name of the class for AbstractMessage
+   */
+  QString getNameOfClass() const
+  {
+    return QString("LessThanComparison<T>");
+  }
+  /**
+   * @brief Returns the name of the class for AbstractMessage
+   */
+  static QString ClassName()
+  {
+    return QString("LessThanComparison<T>");
+  }
+
+  static Pointer New()
+  {
+    Pointer sharedPtr(new(Self));
+    return sharedPtr;
+  }
   virtual ~LessThanComparison() = default;
 
   virtual bool compare(T a, T b)
@@ -81,9 +115,40 @@ protected:
 template <typename T> class GreaterThanComparison : public LessThanComparison<T>
 {
 public:
-  SIMPL_SHARED_POINTERS(GreaterThanComparison<T>)
-  SIMPL_STATIC_NEW_MACRO(GreaterThanComparison<T>)
-  SIMPL_TYPE_MACRO_SUPER(GreaterThanComparison<T>, LessThanComparison<T>)
+  using Self = GreaterThanComparison<T>;
+  using Pointer = std::shared_ptr<Self>;
+  using ConstPointer = std::shared_ptr<const Self>;
+  using WeakPointer = std::weak_ptr<Self>;
+  using ConstWeakPointer = std::weak_ptr<const Self>;
+  static Pointer NullPointer()
+  {
+    return Pointer(static_cast<Self*>(nullptr));
+  }
+
+  static Pointer New()
+  {
+    Pointer sharedPtr(new(Self));
+    return sharedPtr;
+  }
+  /**
+   * @brief Returns the name of the class for GreaterThanComparison<T>
+   */
+  /**
+   * @brief Returns the name of the class for GreaterThanComparison<T>
+   */
+  QString getNameOfClass() const
+  {
+    return QString("_SUPERGreaterThanComparison<T>");
+  }
+
+  /**
+   * @brief Returns the name of the class for GreaterThanComparison<T>
+   */
+  QString ClassName()
+  {
+    return QString("_SUPERGreaterThanComparison<T>");
+  }
+
   ~GreaterThanComparison() override = default;
 
   bool compare(T a, T b) override
@@ -112,8 +177,7 @@ template <typename T> void ExecuteTemplate(ReplaceElementAttributesWithNeighborV
   DataContainer::Pointer m = filter->getDataContainerArray()->getDataContainer(dataArrayPath.getDataContainerName());
   size_t totalPoints = inArrayPtr->getNumberOfTuples();
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
   };
@@ -217,8 +281,8 @@ template <typename T> void ExecuteTemplate(ReplaceElementAttributesWithNeighborV
       if(int64_t(i) > prog)
       {
         progressInt = static_cast<int64_t>(((float)i / totalPoints) * 100.0f);
-        QString ss = QObject::tr("|| Processing Data Current Loop (%1) Progress: %2% Complete").arg(count).arg(progressInt);
-        filter->notifyStatusMessage(filter->getMessagePrefix(), filter->getHumanLabel(), ss);
+        QString ss = QObject::tr("Processing Data Current Loop (%1) Progress: %2% Complete").arg(count).arg(progressInt);
+        filter->notifyStatusMessage(ss);
         prog = prog + progIncrement;
       }
     }
@@ -236,8 +300,8 @@ template <typename T> void ExecuteTemplate(ReplaceElementAttributesWithNeighborV
       if(int64_t(i) > prog)
       {
         progressInt = static_cast<int64_t>(((float)i / totalPoints) * 100.0f);
-        QString ss = QObject::tr("|| Processing Data Current Loop (%1) || Transferring Cell Data: %2% Complete").arg(count).arg(progressInt);
-        filter->notifyStatusMessage(filter->getMessagePrefix(), filter->getHumanLabel(), ss);
+        QString ss = QObject::tr("Processing Data Current Loop (%1) || Transferring Cell Data: %2% Complete").arg(count).arg(progressInt);
+        filter->notifyStatusMessage(ss);
         prog = prog + progIncrement;
       }
 
@@ -264,7 +328,6 @@ template <typename T> void ExecuteTemplate(ReplaceElementAttributesWithNeighborV
 // -----------------------------------------------------------------------------
 ReplaceElementAttributesWithNeighborValues::ReplaceElementAttributesWithNeighborValues()
 : m_MinConfidence(0.1f)
-, m_Loop(false)
 , m_ConfidenceIndexArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::CellData::ConfidenceIndex)
 , m_SelectedComparison(Detail::LessThan)
 {
@@ -280,7 +343,7 @@ ReplaceElementAttributesWithNeighborValues::~ReplaceElementAttributesWithNeighbo
 // -----------------------------------------------------------------------------
 void ReplaceElementAttributesWithNeighborValues::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Threshold Value", MinConfidence, FilterParameter::Parameter, ReplaceElementAttributesWithNeighborValues));
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
@@ -332,23 +395,22 @@ void ReplaceElementAttributesWithNeighborValues::initialize()
 // -----------------------------------------------------------------------------
 void ReplaceElementAttributesWithNeighborValues::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getConfidenceIndexArrayPath().getDataContainerName());
 
   m_InArrayPtr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, getConfidenceIndexArrayPath());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  QVector<size_t> cDims = m_InArrayPtr.lock()->getComponentDimensions();
+  std::vector<size_t> cDims = m_InArrayPtr.lock()->getComponentDimensions();
   if(cDims.size() != 1 && cDims.at(0) != 1)
   {
     QString ss = QObject::tr("The number of components must be 1.");
-    setErrorCondition(-5655);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5655, ss);
   }
 }
 
@@ -370,10 +432,10 @@ void ReplaceElementAttributesWithNeighborValues::preflight()
 // -----------------------------------------------------------------------------
 void ReplaceElementAttributesWithNeighborValues::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -402,7 +464,7 @@ AbstractFilter::Pointer ReplaceElementAttributesWithNeighborValues::newFilterIns
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReplaceElementAttributesWithNeighborValues::getCompiledLibraryName() const
+QString ReplaceElementAttributesWithNeighborValues::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -410,7 +472,7 @@ const QString ReplaceElementAttributesWithNeighborValues::getCompiledLibraryName
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReplaceElementAttributesWithNeighborValues::getBrandingString() const
+QString ReplaceElementAttributesWithNeighborValues::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -418,7 +480,7 @@ const QString ReplaceElementAttributesWithNeighborValues::getBrandingString() co
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReplaceElementAttributesWithNeighborValues::getFilterVersion() const
+QString ReplaceElementAttributesWithNeighborValues::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -428,7 +490,7 @@ const QString ReplaceElementAttributesWithNeighborValues::getFilterVersion() con
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReplaceElementAttributesWithNeighborValues::getGroupName() const
+QString ReplaceElementAttributesWithNeighborValues::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -436,7 +498,7 @@ const QString ReplaceElementAttributesWithNeighborValues::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ReplaceElementAttributesWithNeighborValues::getUuid()
+QUuid ReplaceElementAttributesWithNeighborValues::getUuid() const
 {
   return QUuid("{17410178-4e5f-58b9-900e-8194c69200ab}");
 }
@@ -444,7 +506,7 @@ const QUuid ReplaceElementAttributesWithNeighborValues::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReplaceElementAttributesWithNeighborValues::getSubGroupName() const
+QString ReplaceElementAttributesWithNeighborValues::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CleanupFilters;
 }
@@ -452,7 +514,98 @@ const QString ReplaceElementAttributesWithNeighborValues::getSubGroupName() cons
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ReplaceElementAttributesWithNeighborValues::getHumanLabel() const
+QString ReplaceElementAttributesWithNeighborValues::getHumanLabel() const
 {
   return "Replace Element Attributes with Neighbor (Threshold)";
+}
+
+// -----------------------------------------------------------------------------
+ReplaceElementAttributesWithNeighborValues::Pointer ReplaceElementAttributesWithNeighborValues::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ReplaceElementAttributesWithNeighborValues> ReplaceElementAttributesWithNeighborValues::New()
+{
+  struct make_shared_enabler : public ReplaceElementAttributesWithNeighborValues
+  {
+
+  private:
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ReplaceElementAttributesWithNeighborValues::getNameOfClass() const
+{
+  return QString("ReplaceElementAttributesWithNeighborValues");
+}
+
+// -----------------------------------------------------------------------------
+QString ReplaceElementAttributesWithNeighborValues::ClassName()
+{
+  return QString("ReplaceElementAttributesWithNeighborValues");
+}
+
+// -----------------------------------------------------------------------------
+void ReplaceElementAttributesWithNeighborValues::setMinConfidence(float value)
+{
+  m_MinConfidence = value;
+}
+
+// -----------------------------------------------------------------------------
+float ReplaceElementAttributesWithNeighborValues::getMinConfidence() const
+{
+  return m_MinConfidence;
+}
+
+// -----------------------------------------------------------------------------
+void ReplaceElementAttributesWithNeighborValues::setLoop(bool value)
+{
+  m_Loop = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ReplaceElementAttributesWithNeighborValues::getLoop() const
+{
+  return m_Loop;
+}
+
+// -----------------------------------------------------------------------------
+void ReplaceElementAttributesWithNeighborValues::setConfidenceIndexArrayPath(const DataArrayPath& value)
+{
+  m_ConfidenceIndexArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ReplaceElementAttributesWithNeighborValues::getConfidenceIndexArrayPath() const
+{
+  return m_ConfidenceIndexArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void ReplaceElementAttributesWithNeighborValues::setSelectedComparison(int value)
+{
+  m_SelectedComparison = value;
+}
+
+// -----------------------------------------------------------------------------
+int ReplaceElementAttributesWithNeighborValues::getSelectedComparison() const
+{
+  return m_SelectedComparison;
+}
+
+// -----------------------------------------------------------------------------
+void ReplaceElementAttributesWithNeighborValues::setIgnoredDataArrayPaths(const QVector<DataArrayPath>& value)
+{
+  m_IgnoredDataArrayPaths = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<DataArrayPath> ReplaceElementAttributesWithNeighborValues::getIgnoredDataArrayPaths() const
+{
+  return m_IgnoredDataArrayPaths;
 }

@@ -36,7 +36,6 @@
 #pragma once
 
 #include <QtCore/QAbstractTableModel>
-#include <QtCore/QStringList>
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
 
@@ -62,7 +61,7 @@ public:
     ColumnCount
   };
 
-  EnsembleInfoTableModel(bool showOperators, QObject* parent = 0);
+  EnsembleInfoTableModel(bool showOperators, QObject* parent = nullptr);
 
   virtual ~EnsembleInfoTableModel();
 

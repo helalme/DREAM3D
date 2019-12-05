@@ -32,11 +32,16 @@
 *    United States Prime Contract Navy N00173-07-C-2068
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+#include <memory>
+
 #include "AlignSectionsMutualInformation.h"
 
 #include <fstream>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
@@ -44,6 +49,8 @@
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Reconstruction/ReconstructionConstants.h"
 #include "Reconstruction/ReconstructionVersion.h"
@@ -80,7 +87,7 @@ void AlignSectionsMutualInformation::setupFilterParameters()
 {
   // getting the current parameters that were set by the parent and adding to it before resetting it
   AlignSections::setupFilterParameters();
-  FilterParameterVector parameters = getFilterParameters();
+  FilterParameterVectorType parameters = getFilterParameters();
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Misorientation Tolerance", MisorientationTolerance, FilterParameter::Parameter, AlignSectionsMutualInformation));
   QStringList linkedProps("GoodVoxelsArrayPath");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Use Mask Array", UseGoodVoxels, FilterParameter::Parameter, AlignSectionsMutualInformation, linkedProps));
@@ -137,31 +144,31 @@ void AlignSectionsMutualInformation::initialize()
 // -----------------------------------------------------------------------------
 void AlignSectionsMutualInformation::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   // Set the DataContainerName and AttributematrixName for the Parent Class (AlignSections) to Use.
-  setDataContainerName(m_QuatsArrayPath.getDataContainerName());
+  setDataContainerName(DataArrayPath(m_QuatsArrayPath.getDataContainerName(), "", ""));
   setCellAttributeMatrixName(m_QuatsArrayPath.getAttributeMatrixName());
 
   AlignSections::dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  INIT_DataArray(m_FeatureCounts, int32_t);
+  m_FeatureCounts = DataArray<int32_t>::CreateArray(0, "m_FeatureCounts", true);
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 4);
+  std::vector<size_t> cDims(1, 4);
   m_QuatsPtr =
       getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getQuatsArrayPath(), cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_QuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getQuatsArrayPath());
   }
@@ -173,7 +180,7 @@ void AlignSectionsMutualInformation::dataCheck()
   {
     m_CellPhases = m_CellPhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getCellPhasesArrayPath());
   }
@@ -185,7 +192,7 @@ void AlignSectionsMutualInformation::dataCheck()
     {
       m_GoodVoxels = m_GoodVoxelsPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
-    if(getErrorCondition() >= 0)
+    if(getErrorCode() >= 0)
     {
       dataArrayPaths.push_back(getGoodVoxelsArrayPath());
     }
@@ -222,7 +229,7 @@ void AlignSectionsMutualInformation::find_shifts(std::vector<int64_t>& xshifts, 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getDataContainerName());
 
   int64_t totalPoints = m->getAttributeMatrix(getCellAttributeMatrixName())->getNumberOfTuples();
-  m_MIFeaturesPtr = Int32ArrayType::CreateArray((totalPoints * 1), "_INTERNAL_USE_ONLY_MIFeatureIds");
+  m_MIFeaturesPtr = Int32ArrayType::CreateArray((totalPoints * 1), "_INTERNAL_USE_ONLY_MIFeatureIds", true);
   m_MIFeaturesPtr->initializeWithZeros();
   int32_t* miFeatureIds = m_MIFeaturesPtr->getPointer(0);
 
@@ -232,8 +239,7 @@ void AlignSectionsMutualInformation::find_shifts(std::vector<int64_t>& xshifts, 
     outFile.open(getAlignmentShiftFileName().toLatin1().data());
   }
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -269,7 +275,7 @@ void AlignSectionsMutualInformation::find_shifts(std::vector<int64_t>& xshifts, 
   {
     float prog = ((float)iter / dims[2]) * 100;
     QString ss = QObject::tr("Aligning Sections || Determining Shifts || %1% Complete").arg(QString::number(prog, 'f', 0));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     mindisorientation = std::numeric_limits<float>::max();
     slice = (dims[2] - 1) - iter;
     featurecount1 = featurecounts[slice];
@@ -431,8 +437,7 @@ void AlignSectionsMutualInformation::form_features_sections()
   SIMPL_RANDOMNG_NEW()
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getDataContainerName());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]), static_cast<int64_t>(udims[1]), static_cast<int64_t>(udims[2]),
@@ -443,9 +448,13 @@ void AlignSectionsMutualInformation::form_features_sections()
   bool noseeds = false;
   int32_t featurecount = 1;
   int64_t neighbor = 0;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF q2 = QuaternionMathF::New();
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+
+  //  QuatF q1 = QuaternionMathF::New();
+  //  QuatF q2 = QuaternionMathF::New();
+  //  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
+
+  FloatArrayType::Pointer quats = m_QuatsPtr.lock();
+
   float w = 0.0f;
   float n1 = 0.0f;
   float n2 = 0.0f;
@@ -460,7 +469,7 @@ void AlignSectionsMutualInformation::form_features_sections()
 
   float misorientationTolerance = m_MisorientationTolerance * SIMPLib::Constants::k_Pif / 180.0f;
 
-  m_FeatureCounts->resize(dims[2]);
+  m_FeatureCounts->resizeTuples(dims[2]);
   featurecounts = m_FeatureCounts->getPointer(0);
 
   int32_t* miFeatureIds = m_MIFeaturesPtr->getPointer(0);
@@ -478,7 +487,7 @@ void AlignSectionsMutualInformation::form_features_sections()
   {
     float prog = ((float)slice / dims[2]) * 100;
     QString ss = QObject::tr("Aligning Sections || Identifying Features on Sections || %1% Complete").arg(QString::number(prog, 'f', 0));
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
     featurecount = 1;
     noseeds = false;
     while(!noseeds)
@@ -531,7 +540,8 @@ void AlignSectionsMutualInformation::form_features_sections()
           int64_t currentpoint = voxelslist[j];
           col = currentpoint % dims[0];
           row = (currentpoint / dims[0]) % dims[1];
-          QuaternionMathF::Copy(quats[currentpoint], q1);
+
+          QuatF q1(quats->getTuplePointer(currentpoint));
           phase1 = m_CrystalStructures[m_CellPhases[currentpoint]];
           for(int32_t i = 0; i < 4; i++)
           {
@@ -556,7 +566,8 @@ void AlignSectionsMutualInformation::form_features_sections()
             if(good && miFeatureIds[neighbor] <= 0 && m_CellPhases[neighbor] > 0)
             {
               w = std::numeric_limits<float>::max();
-              QuaternionMathF::Copy(quats[neighbor], q2);
+
+              QuatF q2(quats->getTuplePointer(neighbor));
               phase2 = m_CrystalStructures[m_CellPhases[neighbor]];
               if(phase1 == phase2)
               {
@@ -594,10 +605,10 @@ void AlignSectionsMutualInformation::form_features_sections()
 // -----------------------------------------------------------------------------
 void AlignSectionsMutualInformation::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -623,7 +634,7 @@ AbstractFilter::Pointer AlignSectionsMutualInformation::newFilterInstance(bool c
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsMutualInformation::getCompiledLibraryName() const
+QString AlignSectionsMutualInformation::getCompiledLibraryName() const
 {
   return ReconstructionConstants::ReconstructionBaseName;
 }
@@ -631,7 +642,7 @@ const QString AlignSectionsMutualInformation::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsMutualInformation::getBrandingString() const
+QString AlignSectionsMutualInformation::getBrandingString() const
 {
   return "Reconstruction";
 }
@@ -639,7 +650,7 @@ const QString AlignSectionsMutualInformation::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsMutualInformation::getFilterVersion() const
+QString AlignSectionsMutualInformation::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -649,7 +660,7 @@ const QString AlignSectionsMutualInformation::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsMutualInformation::getGroupName() const
+QString AlignSectionsMutualInformation::getGroupName() const
 {
   return SIMPL::FilterGroups::ReconstructionFilters;
 }
@@ -657,7 +668,7 @@ const QString AlignSectionsMutualInformation::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AlignSectionsMutualInformation::getUuid()
+QUuid AlignSectionsMutualInformation::getUuid() const
 {
   return QUuid("{61c5519b-5561-58b8-a522-2ce1324e244d}");
 }
@@ -665,7 +676,7 @@ const QUuid AlignSectionsMutualInformation::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsMutualInformation::getSubGroupName() const
+QString AlignSectionsMutualInformation::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::AlignmentFilters;
 }
@@ -673,7 +684,120 @@ const QString AlignSectionsMutualInformation::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AlignSectionsMutualInformation::getHumanLabel() const
+QString AlignSectionsMutualInformation::getHumanLabel() const
 {
   return "Align Sections (Mutual Information)";
+}
+
+// -----------------------------------------------------------------------------
+AlignSectionsMutualInformation::Pointer AlignSectionsMutualInformation::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AlignSectionsMutualInformation> AlignSectionsMutualInformation::New()
+{
+  struct make_shared_enabler : public AlignSectionsMutualInformation
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsMutualInformation::getNameOfClass() const
+{
+  return QString("AlignSectionsMutualInformation");
+}
+
+// -----------------------------------------------------------------------------
+QString AlignSectionsMutualInformation::ClassName()
+{
+  return QString("AlignSectionsMutualInformation");
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setMisorientationTolerance(float value)
+{
+  m_MisorientationTolerance = value;
+}
+
+// -----------------------------------------------------------------------------
+float AlignSectionsMutualInformation::getMisorientationTolerance() const
+{
+  return m_MisorientationTolerance;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setUseGoodVoxels(bool value)
+{
+  m_UseGoodVoxels = value;
+}
+
+// -----------------------------------------------------------------------------
+bool AlignSectionsMutualInformation::getUseGoodVoxels() const
+{
+  return m_UseGoodVoxels;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AlignSectionsMutualInformation::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setCellPhasesArrayPath(const DataArrayPath& value)
+{
+  m_CellPhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AlignSectionsMutualInformation::getCellPhasesArrayPath() const
+{
+  return m_CellPhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setGoodVoxelsArrayPath(const DataArrayPath& value)
+{
+  m_GoodVoxelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AlignSectionsMutualInformation::getGoodVoxelsArrayPath() const
+{
+  return m_GoodVoxelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AlignSectionsMutualInformation::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void AlignSectionsMutualInformation::setFeatureCounts(const std::shared_ptr<DataArray<int32_t>>& value)
+{
+  m_FeatureCounts = value;
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<DataArray<int32_t>> AlignSectionsMutualInformation::getFeatureCounts() const
+{
+  return m_FeatureCounts;
 }

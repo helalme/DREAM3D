@@ -38,15 +38,9 @@
 
 
 #include <QtCore/QString>
-#include <QtCore/QStringList>
-#include <QtCore/QSettings>
-#include <QtCore/QVector>
-#include <QtCore/QUrl>
 
 #include "EbsdLib/EbsdTransform.h"
 #include "EbsdLib/EbsdConstants.h"
-
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 
 #include "SVWidgetsLib/QtSupport/QtSPluginFrame.h"
 
@@ -204,9 +198,9 @@ class EbsdToH5EbsdWidget : public FilterParameterWidget, private Ui::EbsdToH5Ebs
     AxisAngleInput_t m_SampleTransformation;
     AxisAngleInput_t m_EulerTransformation;
     QAction* m_ShowFileAction = nullptr;
-    QString  m_CurrentlyValidPath = "";
     QString  m_CurrentText = "";
     bool     m_DidCausePreflight = false;
+    bool m_fileExtUsedForTransformInit = false;
 
   public:
     EbsdToH5EbsdWidget(const EbsdToH5EbsdWidget&) = delete; // Copy Constructor Not Implemented

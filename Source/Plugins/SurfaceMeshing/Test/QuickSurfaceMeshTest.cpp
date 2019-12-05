@@ -33,11 +33,12 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QFile>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
+#include <QtCore/QDebug>
+
 #include "SIMPLib/DataArrays/DataArray.hpp"
+
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -48,6 +49,9 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "SurfaceMeshingTestFileLocations.h"
@@ -70,7 +74,24 @@ public:
   QuickSurfaceMeshTest() = default;
   ~QuickSurfaceMeshTest() = default;
 
-  SIMPL_TYPE_MACRO(QuickSurfaceMeshTest)
+  /**
+   * @brief Returns the name of the class for QuickSurfaceMeshTest
+   */
+  /**
+   * @brief Returns the name of the class for QuickSurfaceMeshTest
+   */
+  QString getNameOfClass() const
+  {
+    return QString("QuickSurfaceMeshTest");
+  }
+
+  /**
+   * @brief Returns the name of the class for QuickSurfaceMeshTest
+   */
+  QString ClassName()
+  {
+    return QString("QuickSurfaceMeshTest");
+  }
 
   QuickSurfaceMeshTest(const QuickSurfaceMeshTest&) = delete;            // Copy Constructor Not Implemented
   QuickSurfaceMeshTest(QuickSurfaceMeshTest&&) = delete;                 // Move Constructor Not Implemented
@@ -115,10 +136,10 @@ public:
 
     // Create a DataContainer for each geometry
     DataContainer::Pointer image3D_DC = DataContainer::New("ImageGeom3D");
-    dca->addDataContainer(image3D_DC);
+    dca->addOrReplaceDataContainer(image3D_DC);
 
     DataContainer::Pointer rectGrid_DC = DataContainer::New("RectGrid");
-    dca->addDataContainer(rectGrid_DC);
+    dca->addOrReplaceDataContainer(rectGrid_DC);
 
     // Create an instance of each geometry for testing
     ImageGeom::Pointer image3D = ImageGeom::CreateGeometry(SIMPL::Geometry::ImageGeometry);
@@ -128,49 +149,49 @@ public:
 
     RectGridGeom::Pointer rectGrid = RectGridGeom::CreateGeometry(SIMPL::Geometry::RectGridGeometry);
     rectGrid->setDimensions(dims);
-    FloatArrayType::Pointer xBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::xBoundsList);
+    FloatArrayType::Pointer xBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::xBoundsList, true);
     xBounds->setValue(0, 0.0f);
     xBounds->setValue(1, 1.0f);
     xBounds->setValue(2, 2.0f);
     rectGrid->setXBounds(xBounds);
-    FloatArrayType::Pointer yBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::yBoundsList);
+    FloatArrayType::Pointer yBounds = FloatArrayType::CreateArray(3, SIMPL::Geometry::yBoundsList, true);
     yBounds->setValue(0, 0.0f);
     yBounds->setValue(1, 1.0f);
     yBounds->setValue(2, 2.0f);
     rectGrid->setYBounds(yBounds);
-    FloatArrayType::Pointer zBounds = FloatArrayType::CreateArray(2, SIMPL::Geometry::zBoundsList);
+    FloatArrayType::Pointer zBounds = FloatArrayType::CreateArray(2, SIMPL::Geometry::zBoundsList, true);
     zBounds->setValue(0, 0.0f);
     zBounds->setValue(1, 2.0f);
     rectGrid->setZBounds(zBounds);
     rectGrid_DC->setGeometry(rectGrid);
 
     // Create an element AttributeMatrix and FeatureIds array for each geometry
-    QVector<size_t> tDims(1, 4);
+    std::vector<size_t> tDims(1, 4);
 
     AttributeMatrix::Pointer image3D_AttrMat = AttributeMatrix::New(tDims, "Image3DData", AttributeMatrix::Type::Cell);
-    Int32ArrayType::Pointer image3D_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer image3D_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds, true);
     image3D_fIDs->initializeWithValue(1);
     image3D_fIDs->setValue(2, 2);
     image3D_fIDs->setValue(3, 2);
-    image3D_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, image3D_fIDs);
-    image3D_DC->addAttributeMatrix("Image3DData", image3D_AttrMat);
+    image3D_AttrMat->insertOrAssign(image3D_fIDs);
+    image3D_DC->addOrReplaceAttributeMatrix(image3D_AttrMat);
 
     AttributeMatrix::Pointer rectGrid_AttrMat = AttributeMatrix::New(tDims, "RectGridData", AttributeMatrix::Type::Cell);
-    Int32ArrayType::Pointer rectGrid_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds);
+    Int32ArrayType::Pointer rectGrid_fIDs = Int32ArrayType::CreateArray(4, SIMPL::CellData::FeatureIds, true);
     rectGrid_fIDs->initializeWithValue(1);
     rectGrid_fIDs->setValue(2, 2);
     rectGrid_fIDs->setValue(3, 2);
-    rectGrid_AttrMat->addAttributeArray(SIMPL::CellData::FeatureIds, rectGrid_fIDs);
-    rectGrid_DC->addAttributeMatrix("RectGridData", rectGrid_AttrMat);
+    rectGrid_AttrMat->insertOrAssign(rectGrid_fIDs);
+    rectGrid_DC->addOrReplaceAttributeMatrix(rectGrid_AttrMat);
 
     // Create a feature AttributeMatrix for each geometry, which all have 2 features
     tDims[0] = 3;
 
     AttributeMatrix::Pointer image3D_featureAttrMat = AttributeMatrix::New(tDims, "Image3DFeatureData", AttributeMatrix::Type::CellFeature);
-    image3D_DC->addAttributeMatrix("Image3DFeatureData", image3D_featureAttrMat);
+    image3D_DC->addOrReplaceAttributeMatrix(image3D_featureAttrMat);
 
     AttributeMatrix::Pointer rectGrid_featureAttrMat = AttributeMatrix::New(tDims, "RectGridFeatureData", AttributeMatrix::Type::CellFeature);
-    rectGrid_DC->addAttributeMatrix("RectGridFeatureData", rectGrid_featureAttrMat);
+    rectGrid_DC->addOrReplaceAttributeMatrix(rectGrid_featureAttrMat);
 
     return dca;
   }
@@ -183,28 +204,28 @@ public:
     int err = 0;
 
     DataArrayPath imageGeom3D_featureIds("ImageGeom3D", "Image3DData", "FeatureIds");
-    QString imageSurfMesh = "ImageSurfMesh";
-    QString imageSurfMeshTripleLineDCName = "SurfaceMesh TripleLines";
+    DataArrayPath imageSurfMesh("ImageSurfMesh", "", "");
+    DataArrayPath imageSurfMeshTripleLineDCName("SurfaceMesh TripleLines", "", "");
 
     SET_FILTER_PROPERTY_WITH_CHECK(filter, "FeatureIdsArrayPath", imageGeom3D_featureIds, err)
     SET_FILTER_PROPERTY_WITH_CHECK(filter, "SurfaceDataContainerName", imageSurfMesh, err)
     SET_FILTER_PROPERTY_WITH_CHECK(filter, "TripleLineDataContainerName", imageSurfMeshTripleLineDCName, err)
     // Run the filter NOW to create the ImageGeom based surface mesh
     filter->execute();
-    err = filter->getErrorCondition();
+    err = filter->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, 0);
 
     // Now setup to create a surface mesh from a RectilinearGrid Geometry
     DataArrayPath rectGrid_featureIds("RectGrid", "RectGridData", "FeatureIds");
-    QString rectGridSurfMesh = "RectGridSurfMesh";
-    QString rectGridSurfMeshTripleLineDCName = "RectGrid TripleLines";
+    DataArrayPath rectGridSurfMesh("RectGridSurfMesh", "", "");
+    DataArrayPath rectGridSurfMeshTripleLineDCName("RectGrid TripleLines", "", "");
 
     SET_FILTER_PROPERTY_WITH_CHECK(filter, "FeatureIdsArrayPath", rectGrid_featureIds, err)
     SET_FILTER_PROPERTY_WITH_CHECK(filter, "SurfaceDataContainerName", rectGridSurfMesh, err)
     SET_FILTER_PROPERTY_WITH_CHECK(filter, "TripleLineDataContainerName", rectGridSurfMeshTripleLineDCName, err)
 
     filter->execute();
-    err = filter->getErrorCondition();
+    err = filter->getErrorCode();
     DREAM3D_REQUIRE_EQUAL(err, 0);
 
     //##################################################################################################################
@@ -222,7 +243,7 @@ public:
       qDebug() << "Unable to set property OutputFile";
     }
     writer->execute();
-    err = writer->getErrorCondition();
+    err = writer->getErrorCode();
     DREAM3D_REQUIRED(err, >=, 0)
 
     //##################################################################################################################
@@ -236,12 +257,12 @@ public:
 
     SharedTriList::Pointer imageMeshTris = imageSurfMeshGeom->getTriangles();
     SharedTriList::Pointer rectGridMeshTris = rectGridSurfMeshGeom->getTriangles();
-    int64_t* imageTriPtr = imageMeshTris->getPointer(0);
-    int64_t* rectGridTriPtr = rectGridMeshTris->getPointer(0);
+    size_t* imageTriPtr = imageMeshTris->getPointer(0);
+    size_t* rectGridTriPtr = rectGridMeshTris->getPointer(0);
 
     DREAM3D_REQUIRE_EQUAL(imageMeshTris->getNumberOfTuples(), rectGridMeshTris->getNumberOfTuples());
 
-    int64_t tri[3] = {0, 0, 0};
+    size_t tri[3] = {0, 0, 0};
 
     /**
      * This next bit of code uses a fixed array based that was manually verified by using ParaView to look at the mesh
@@ -405,4 +426,6 @@ public:
 
     DREAM3D_REGISTER_TEST(RemoveTestFiles())
   }
+
+private:
 };

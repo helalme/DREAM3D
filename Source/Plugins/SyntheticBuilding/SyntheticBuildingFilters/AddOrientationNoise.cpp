@@ -33,16 +33,26 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "AddOrientationNoise.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/Math/SIMPLibMath.h"
 #include "SIMPLib/Math/SIMPLibRandom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "SyntheticBuilding/SyntheticBuildingConstants.h"
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
@@ -65,7 +75,7 @@ AddOrientationNoise::~AddOrientationNoise() = default;
 // -----------------------------------------------------------------------------
 void AddOrientationNoise::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Magnitude of Orientation Noise (Degrees)", Magnitude, FilterParameter::Parameter, AddOrientationNoise));
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::RequiredArray));
   {
@@ -97,17 +107,17 @@ void AddOrientationNoise::initialize()
 // -----------------------------------------------------------------------------
 void AddOrientationNoise::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> cDims(1, 3);
+  std::vector<size_t> cDims(1, 3);
   m_CellEulerAnglesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getCellEulerAnglesArrayPath(),
                                                                                                            cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CellEulerAnglesPtr.lock())                                                                       /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_CellEulerAngles = m_CellEulerAnglesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -131,10 +141,10 @@ void AddOrientationNoise::preflight()
 // -----------------------------------------------------------------------------
 void AddOrientationNoise::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -151,13 +161,11 @@ void AddOrientationNoise::execute()
 // -----------------------------------------------------------------------------
 void AddOrientationNoise::add_orientation_noise()
 {
-  notifyStatusMessage(getHumanLabel(), "Adding Orientation Noise");
+  notifyStatusMessage("Adding Orientation Noise");
   SIMPL_RANDOMNG_NEW()
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getCellEulerAnglesArrayPath().getDataContainerName());
 
-  FOrientArrayType om(9, 0.0);
-  FOrientArrayType ax(4, 0.0);
   float g[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float newg[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float rot[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
@@ -168,20 +176,18 @@ void AddOrientationNoise::add_orientation_noise()
   size_t totalPoints = m->getGeometryAs<ImageGeom>()->getNumberOfElements();
   for(size_t i = 0; i < totalPoints; ++i)
   {
-    FOrientTransformsType::eu2om(FOrientArrayType(&(m_CellEulerAngles[3 * i]), 3), om);
-    om.toGMatrix(g);
+    OrientationTransformation::eu2om<OrientationF, OrientationF>(OrientationF(m_CellEulerAngles + 3 * i, 3)).toGMatrix(g);
     nx = static_cast<float>(rg.genrand_res53());
     ny = static_cast<float>(rg.genrand_res53());
     nz = static_cast<float>(rg.genrand_res53());
     w = static_cast<float>(rg.genrand_res53());
     w = 2.0f * (w - 0.5f);
     w *= m_Magnitude;
-    ax.fromAxisAngle(nx, ny, nz, w);
-    FOrientTransformsType::ax2om(ax, om);
-    om.toGMatrix(rot);
+    ;
+    OrientationTransformation::ax2om<OrientationF, OrientationF>(OrientationF(nx, ny, nz, w)).toGMatrix(rot);
     MatrixMath::Multiply3x3with3x3(g, rot, newg);
-    FOrientArrayType eu(m_CellEulerAngles + (3 * i), 3);
-    FOrientTransformsType::om2eu(FOrientArrayType(newg), eu);
+    OrientationF eu(m_CellEulerAngles + (3 * i), 3);
+    eu = OrientationTransformation::om2eu<OrientationF, OrientationF>(OrientationF(newg));
   }
 }
 
@@ -201,7 +207,7 @@ AbstractFilter::Pointer AddOrientationNoise::newFilterInstance(bool copyFilterPa
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddOrientationNoise::getCompiledLibraryName() const
+QString AddOrientationNoise::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -209,7 +215,7 @@ const QString AddOrientationNoise::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddOrientationNoise::getBrandingString() const
+QString AddOrientationNoise::getBrandingString() const
 {
   return "SyntheticBuilding";
 }
@@ -217,7 +223,7 @@ const QString AddOrientationNoise::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddOrientationNoise::getFilterVersion() const
+QString AddOrientationNoise::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -227,7 +233,7 @@ const QString AddOrientationNoise::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddOrientationNoise::getGroupName() const
+QString AddOrientationNoise::getGroupName() const
 {
   return SIMPL::FilterGroups::SyntheticBuildingFilters;
 }
@@ -235,7 +241,7 @@ const QString AddOrientationNoise::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid AddOrientationNoise::getUuid()
+QUuid AddOrientationNoise::getUuid() const
 {
   return QUuid("{9f392fba-1520-5f8f-988b-0032d7c51811}");
 }
@@ -243,7 +249,7 @@ const QUuid AddOrientationNoise::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddOrientationNoise::getSubGroupName() const
+QString AddOrientationNoise::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -251,7 +257,60 @@ const QString AddOrientationNoise::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString AddOrientationNoise::getHumanLabel() const
+QString AddOrientationNoise::getHumanLabel() const
 {
   return "Add Orientation Noise";
+}
+
+// -----------------------------------------------------------------------------
+AddOrientationNoise::Pointer AddOrientationNoise::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<AddOrientationNoise> AddOrientationNoise::New()
+{
+  struct make_shared_enabler : public AddOrientationNoise
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString AddOrientationNoise::getNameOfClass() const
+{
+  return QString("AddOrientationNoise");
+}
+
+// -----------------------------------------------------------------------------
+QString AddOrientationNoise::ClassName()
+{
+  return QString("AddOrientationNoise");
+}
+
+// -----------------------------------------------------------------------------
+void AddOrientationNoise::setMagnitude(float value)
+{
+  m_Magnitude = value;
+}
+
+// -----------------------------------------------------------------------------
+float AddOrientationNoise::getMagnitude() const
+{
+  return m_Magnitude;
+}
+
+// -----------------------------------------------------------------------------
+void AddOrientationNoise::setCellEulerAnglesArrayPath(const DataArrayPath& value)
+{
+  m_CellEulerAnglesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath AddOrientationNoise::getCellEulerAnglesArrayPath() const
+{
+  return m_CellEulerAnglesArrayPath;
 }

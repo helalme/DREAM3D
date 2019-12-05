@@ -2,13 +2,20 @@
  * Your License or Copyright can go here
  */
 
+#include <memory>
+
 #include "FindDifferenceMap.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Common/TemplateHelpers.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
 
@@ -127,7 +134,7 @@ FindDifferenceMap::~FindDifferenceMap() = default;
 // -----------------------------------------------------------------------------
 void FindDifferenceMap::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     DataArraySelectionFilterParameter::RequirementType req;
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("First Attribute Array", FirstInputArrayPath, FilterParameter::RequiredArray, FindDifferenceMap, req));
@@ -164,16 +171,14 @@ template <typename DataType> void validateArrayTypes(AbstractFilter* filter, QVe
   {
     if(TemplateHelpers::CanDynamicCast<DataArray<bool>>()(*it))
     {
-      filter->setErrorCondition(-90000);
       QString ss = QObject::tr("Selected Attribute Arrays cannot be of type bool");
-      filter->notifyErrorMessage(filter->getHumanLabel(), ss, filter->getErrorCondition());
+      filter->setErrorCondition(-90000, ss);
       return;
     }
     if(!TemplateHelpers::CanDynamicCast<DataArray<DataType>>()(*it))
     {
-      filter->setErrorCondition(-90001);
       QString ss = QObject::tr("Selected Attribute Arrays must all be of the same type");
-      filter->notifyErrorMessage(filter->getHumanLabel(), ss, filter->getErrorCondition());
+      filter->setErrorCondition(-90001, ss);
       return;
     }
   }
@@ -186,27 +191,23 @@ template <typename DataType> void warnOnUnsignedTypes(AbstractFilter* filter, ID
 {
   if(TemplateHelpers::CanDynamicCast<DataArray<uint8_t>>()(ptr))
   {
-    filter->setWarningCondition(-90004);
     QString ss = QObject::tr("Selected Attribute Arrays are of type uint8_t. Using unsigned integer types may result in underflow leading to extremely large values!");
-    filter->notifyWarningMessage(filter->getHumanLabel(), ss, filter->getWarningCondition());
+    filter->setWarningCondition(-90004, ss);
   }
   if(TemplateHelpers::CanDynamicCast<DataArray<uint16_t>>()(ptr))
   {
-    filter->setWarningCondition(-90005);
     QString ss = QObject::tr("Selected Attribute Arrays are of type uint16_t. Using unsigned integer types may result in underflow leading to extremely large values!");
-    filter->notifyWarningMessage(filter->getHumanLabel(), ss, filter->getWarningCondition());
+    filter->setWarningCondition(-90005, ss);
   }
   if(TemplateHelpers::CanDynamicCast<DataArray<uint32_t>>()(ptr))
   {
-    filter->setWarningCondition(-90006);
     QString ss = QObject::tr("Selected Attribute Arrays are of type uint32_t. Using unsigned integer types may result in underflow leading to extremely large values!");
-    filter->notifyWarningMessage(filter->getHumanLabel(), ss, filter->getWarningCondition());
+    filter->setWarningCondition(-90006, ss);
   }
   if(TemplateHelpers::CanDynamicCast<DataArray<uint64_t>>()(ptr))
   {
-    filter->setWarningCondition(-90007);
     QString ss = QObject::tr("Selected Attribute Arrays are of type uint64_t. Using unsigned integer types may result in underflow leading to extremely large values!");
-    filter->notifyWarningMessage(filter->getHumanLabel(), ss, filter->getWarningCondition());
+    filter->setWarningCondition(-90007, ss);
   }
 }
 
@@ -222,19 +223,19 @@ void FindDifferenceMap::initialize()
 // -----------------------------------------------------------------------------
 void FindDifferenceMap::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QVector<IDataArray::Pointer> dataArrays;
 
   m_FirstInputArrayPtr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, getFirstInputArrayPath());
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_FirstInputArrayPtr.lock());
   }
 
   m_SecondInputArrayPtr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, getSecondInputArrayPath());
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_SecondInputArrayPtr.lock());
   }
@@ -244,7 +245,7 @@ void FindDifferenceMap::dataCheck()
     EXECUTE_FUNCTION_TEMPLATE(this, validateArrayTypes, dataArrays[0], this, dataArrays)
   }
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -257,21 +258,20 @@ void FindDifferenceMap::dataCheck()
   // Safe to check array component dimensions since we won't get here if the pointers are null
   if(m_FirstInputArrayPtr.lock()->getComponentDimensions() != m_SecondInputArrayPtr.lock()->getComponentDimensions())
   {
-    setErrorCondition(-90003);
     QString ss = QObject::tr("Selected Attribute Arrays must have the same component dimensions");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-90003, ss);
   }
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   // At this point we have two valid arrays of the same type and component dimensions, so we
   // are safe to make the output array with the correct type and component dimensions
-  QVector<size_t> cDims = m_FirstInputArrayPtr.lock()->getComponentDimensions();
+  std::vector<size_t> cDims = m_FirstInputArrayPtr.lock()->getComponentDimensions();
   m_DifferenceMapPtr = TemplateHelpers::CreateNonPrereqArrayFromArrayType()(this, getDifferenceMapArrayPath(), cDims, m_FirstInputArrayPtr.lock());
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_DifferenceMapPtr.lock());
   }
@@ -298,10 +298,10 @@ void FindDifferenceMap::preflight()
 // -----------------------------------------------------------------------------
 void FindDifferenceMap::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -326,7 +326,7 @@ AbstractFilter::Pointer FindDifferenceMap::newFilterInstance(bool copyFilterPara
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDifferenceMap::getCompiledLibraryName() const
+QString FindDifferenceMap::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -334,7 +334,7 @@ const QString FindDifferenceMap::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDifferenceMap::getBrandingString() const
+QString FindDifferenceMap::getBrandingString() const
 {
   return "Statistics";
 }
@@ -342,7 +342,7 @@ const QString FindDifferenceMap::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDifferenceMap::getFilterVersion() const
+QString FindDifferenceMap::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -352,7 +352,7 @@ const QString FindDifferenceMap::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDifferenceMap::getGroupName() const
+QString FindDifferenceMap::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -360,7 +360,7 @@ const QString FindDifferenceMap::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDifferenceMap::getHumanLabel() const
+QString FindDifferenceMap::getHumanLabel() const
 {
   return "Find Difference Map";
 }
@@ -368,7 +368,7 @@ const QString FindDifferenceMap::getHumanLabel() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindDifferenceMap::getUuid()
+QUuid FindDifferenceMap::getUuid() const
 {
   return QUuid("{29086169-20ce-52dc-b13e-824694d759aa}");
 }
@@ -376,7 +376,72 @@ const QUuid FindDifferenceMap::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindDifferenceMap::getSubGroupName() const
+QString FindDifferenceMap::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MiscFilters;
+}
+
+// -----------------------------------------------------------------------------
+FindDifferenceMap::Pointer FindDifferenceMap::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindDifferenceMap> FindDifferenceMap::New()
+{
+  struct make_shared_enabler : public FindDifferenceMap
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindDifferenceMap::getNameOfClass() const
+{
+  return QString("FindDifferenceMap");
+}
+
+// -----------------------------------------------------------------------------
+QString FindDifferenceMap::ClassName()
+{
+  return QString("FindDifferenceMap");
+}
+
+// -----------------------------------------------------------------------------
+void FindDifferenceMap::setFirstInputArrayPath(const DataArrayPath& value)
+{
+  m_FirstInputArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDifferenceMap::getFirstInputArrayPath() const
+{
+  return m_FirstInputArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDifferenceMap::setSecondInputArrayPath(const DataArrayPath& value)
+{
+  m_SecondInputArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDifferenceMap::getSecondInputArrayPath() const
+{
+  return m_SecondInputArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindDifferenceMap::setDifferenceMapArrayPath(const DataArrayPath& value)
+{
+  m_DifferenceMapArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindDifferenceMap::getDifferenceMapArrayPath() const
+{
+  return m_DifferenceMapArrayPath;
 }

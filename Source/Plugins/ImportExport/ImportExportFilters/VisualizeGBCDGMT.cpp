@@ -33,11 +33,18 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "VisualizeGBCDGMT.h"
 
 #include <QtCore/QDir>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AxisAngleFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
@@ -47,7 +54,9 @@
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Utilities/FileSystemPathHelper.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "ImportExport/ImportExportConstants.h"
 #include "ImportExport/ImportExportVersion.h"
@@ -79,7 +88,7 @@ VisualizeGBCDGMT::~VisualizeGBCDGMT() = default;
 // -----------------------------------------------------------------------------
 void VisualizeGBCDGMT::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INTEGER_FP("Phase of Interest", PhaseOfInterest, FilterParameter::Parameter, VisualizeGBCDGMT));
   parameters.push_back(SIMPL_NEW_AXISANGLE_FP("Misorientation Axis-Angle", MisorientationRotation, FilterParameter::Parameter, VisualizeGBCDGMT));
   parameters.push_back(SIMPL_NEW_OUTPUT_FILE_FP("Output GMT File", OutputFile, FilterParameter::Parameter, VisualizeGBCDGMT, "*.dat", "DAT File"));
@@ -123,8 +132,8 @@ void VisualizeGBCDGMT::initialize()
 // -----------------------------------------------------------------------------
 void VisualizeGBCDGMT::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   initialize();
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getGBCDArrayPath().getDataContainerName());
@@ -146,7 +155,7 @@ void VisualizeGBCDGMT::dataCheck()
     setOutputFile(absPath);
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_CrystalStructuresPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<unsigned int>, AbstractFilter>(this, getCrystalStructuresArrayPath(),
                                                                                                                     cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_CrystalStructuresPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -155,14 +164,14 @@ void VisualizeGBCDGMT::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   IDataArray::Pointer tmpGBCDPtr = getDataContainerArray()->getPrereqIDataArrayFromPath<IDataArray, AbstractFilter>(this, getGBCDArrayPath());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   if(nullptr != tmpGBCDPtr.get())
   {
-    QVector<size_t> cDims = tmpGBCDPtr->getComponentDimensions();
+    std::vector<size_t> cDims = tmpGBCDPtr->getComponentDimensions();
     m_GBCDPtr =
         getDataContainerArray()->getPrereqArrayFromPath<DataArray<double>, AbstractFilter>(this, getGBCDArrayPath(), cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
     if(nullptr != m_GBCDPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -174,8 +183,7 @@ void VisualizeGBCDGMT::dataCheck()
   if(nullptr != m_GBCDPtr.lock() && getPhaseOfInterest() >= m_GBCDPtr.lock()->getNumberOfTuples())
   {
     QString ss = QObject::tr("The phase index is larger than the number of Ensembles").arg(ClassName());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 }
 
@@ -197,10 +205,10 @@ void VisualizeGBCDGMT::preflight()
 // -----------------------------------------------------------------------------
 void VisualizeGBCDGMT::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -216,8 +224,7 @@ void VisualizeGBCDGMT::execute()
   {
     QString ss;
     ss = QObject::tr("Error creating parent path '%1'").arg(dir.path());
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -225,18 +232,17 @@ void VisualizeGBCDGMT::execute()
   if(!file.open(QIODevice::WriteOnly | QIODevice::Text))
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(getOutputFile());
-    setErrorCondition(-100);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-100, ss);
     return;
   }
 
-  FloatArrayType::Pointer gbcdDeltasArray = FloatArrayType::CreateArray(5, "GBCDDeltas");
+  FloatArrayType::Pointer gbcdDeltasArray = FloatArrayType::CreateArray(5, "GBCDDeltas", true);
   gbcdDeltasArray->initializeWithZeros();
 
-  FloatArrayType::Pointer gbcdLimitsArray = FloatArrayType::CreateArray(10, "GBCDLimits");
+  FloatArrayType::Pointer gbcdLimitsArray = FloatArrayType::CreateArray(10, "GBCDLimits", true);
   gbcdLimitsArray->initializeWithZeros();
 
-  Int32ArrayType::Pointer gbcdSizesArray = Int32ArrayType::CreateArray(5, "GBCDSizes");
+  Int32ArrayType::Pointer gbcdSizesArray = Int32ArrayType::CreateArray(5, "GBCDSizes", true);
   gbcdSizesArray->initializeWithZeros();
 
   float* gbcdDeltas = gbcdDeltasArray->getPointer(0);
@@ -259,16 +265,16 @@ void VisualizeGBCDGMT::execute()
   gbcdLimits[0] = 0.0f;
   gbcdLimits[1] = 0.0f;
   gbcdLimits[2] = 0.0f;
-  gbcdLimits[3] = -sqrtf(SIMPLib::Constants::k_Pi / 2.0f);
-  gbcdLimits[4] = -sqrtf(SIMPLib::Constants::k_Pi / 2.0f);
+  gbcdLimits[3] = -sqrtf(SIMPLib::Constants::k_PiOver2);
+  gbcdLimits[4] = -sqrtf(SIMPLib::Constants::k_PiOver2);
   gbcdLimits[5] = SIMPLib::Constants::k_Pi / 2.0f;
   gbcdLimits[6] = 1.0f;
   gbcdLimits[7] = SIMPLib::Constants::k_Pi / 2.0f;
-  gbcdLimits[8] = sqrtf(SIMPLib::Constants::k_Pi / 2.0f);
-  gbcdLimits[9] = sqrtf(SIMPLib::Constants::k_Pi / 2.0f);
+  gbcdLimits[8] = sqrtf(SIMPLib::Constants::k_PiOver2);
+  gbcdLimits[9] = sqrtf(SIMPLib::Constants::k_PiOver2);
 
   // get num components of GBCD
-  QVector<size_t> cDims = m_GBCDPtr.lock()->getComponentDimensions();
+  std::vector<size_t> cDims = m_GBCDPtr.lock()->getComponentDimensions();
 
   gbcdSizes[0] = cDims[0];
   gbcdSizes[1] = cDims[1];
@@ -300,9 +306,7 @@ void VisualizeGBCDGMT::execute()
   float normAxis[3] = {m_MisorientationRotation.h, m_MisorientationRotation.k, m_MisorientationRotation.l};
   MatrixMath::Normalize3x1(normAxis);
   // convert axis angle to matrix representation of misorientation
-  FOrientArrayType om(9, 0.0f);
-  FOrientTransformsType::ax2om(FOrientArrayType(normAxis[0], normAxis[1], normAxis[2], misAngle), om);
-  om.toGMatrix(dg);
+  OrientationTransformation::ax2om<OrientationF, OrientationF>(OrientationF(normAxis[0], normAxis[1], normAxis[2], misAngle)).toGMatrix(dg);
 
   // take inverse of misorientation variable to use for switching symmetry
   MatrixMath::Transpose3x3(dg, dgt);
@@ -364,8 +368,9 @@ void VisualizeGBCDGMT::execute()
           MatrixMath::Multiply3x3with3x3(dg, sym2t, dg1);
           MatrixMath::Multiply3x3with3x3(sym1, dg1, dg2);
           // convert to euler angle
-          FOrientArrayType mEuler(mis_euler1, 3);
-          FOrientTransformsType::om2eu(FOrientArrayType(dg2), mEuler);
+          OrientationF mEuler(mis_euler1, 3);
+          mEuler = OrientationTransformation::om2eu<OrientationF, OrientationF>(OrientationF(dg2));
+
           if(mis_euler1[0] < SIMPLib::Constants::k_PiOver2 && mis_euler1[1] < SIMPLib::Constants::k_PiOver2 && mis_euler1[2] < SIMPLib::Constants::k_PiOver2)
           {
             mis_euler1[1] = cosf(mis_euler1[1]);
@@ -398,7 +403,7 @@ void VisualizeGBCDGMT::execute()
           MatrixMath::Multiply3x3with3x3(dgt, sym2, dg1);
           MatrixMath::Multiply3x3with3x3(sym1, dg1, dg2);
           // convert to euler angle
-          FOrientTransformsType::om2eu(FOrientArrayType(dg2), mEuler);
+          mEuler = OrientationTransformation::om2eu<OrientationF, OrientationF>(OrientationF(dg2));
           if(mis_euler1[0] < SIMPLib::Constants::k_PiOver2 && mis_euler1[1] < SIMPLib::Constants::k_PiOver2 && mis_euler1[2] < SIMPLib::Constants::k_PiOver2)
           {
             mis_euler1[1] = cosf(mis_euler1[1]);
@@ -438,8 +443,7 @@ void VisualizeGBCDGMT::execute()
   if(nullptr == f)
   {
     QString ss = QObject::tr("Error opening output file '%1'").arg(m_OutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -496,7 +500,7 @@ AbstractFilter::Pointer VisualizeGBCDGMT::newFilterInstance(bool copyFilterParam
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDGMT::getCompiledLibraryName() const
+QString VisualizeGBCDGMT::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -504,7 +508,7 @@ const QString VisualizeGBCDGMT::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDGMT::getBrandingString() const
+QString VisualizeGBCDGMT::getBrandingString() const
 {
   return "IO";
 }
@@ -512,7 +516,7 @@ const QString VisualizeGBCDGMT::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDGMT::getFilterVersion() const
+QString VisualizeGBCDGMT::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -522,7 +526,7 @@ const QString VisualizeGBCDGMT::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDGMT::getGroupName() const
+QString VisualizeGBCDGMT::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -530,7 +534,7 @@ const QString VisualizeGBCDGMT::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid VisualizeGBCDGMT::getUuid()
+QUuid VisualizeGBCDGMT::getUuid() const
 {
   return QUuid("{f62065b4-54e9-53b1-bed7-2178a57d3c7a}");
 }
@@ -538,7 +542,7 @@ const QUuid VisualizeGBCDGMT::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDGMT::getSubGroupName() const
+QString VisualizeGBCDGMT::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::OutputFilters;
 }
@@ -546,7 +550,96 @@ const QString VisualizeGBCDGMT::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString VisualizeGBCDGMT::getHumanLabel() const
+QString VisualizeGBCDGMT::getHumanLabel() const
 {
   return "Export GBCD Pole Figure (GMT 5)";
+}
+
+// -----------------------------------------------------------------------------
+VisualizeGBCDGMT::Pointer VisualizeGBCDGMT::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<VisualizeGBCDGMT> VisualizeGBCDGMT::New()
+{
+  struct make_shared_enabler : public VisualizeGBCDGMT
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString VisualizeGBCDGMT::getNameOfClass() const
+{
+  return QString("VisualizeGBCDGMT");
+}
+
+// -----------------------------------------------------------------------------
+QString VisualizeGBCDGMT::ClassName()
+{
+  return QString("VisualizeGBCDGMT");
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDGMT::setOutputFile(const QString& value)
+{
+  m_OutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString VisualizeGBCDGMT::getOutputFile() const
+{
+  return m_OutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDGMT::setPhaseOfInterest(int value)
+{
+  m_PhaseOfInterest = value;
+}
+
+// -----------------------------------------------------------------------------
+int VisualizeGBCDGMT::getPhaseOfInterest() const
+{
+  return m_PhaseOfInterest;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDGMT::setMisorientationRotation(const AxisAngleInput_t& value)
+{
+  m_MisorientationRotation = value;
+}
+
+// -----------------------------------------------------------------------------
+AxisAngleInput_t VisualizeGBCDGMT::getMisorientationRotation() const
+{
+  return m_MisorientationRotation;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDGMT::setGBCDArrayPath(const DataArrayPath& value)
+{
+  m_GBCDArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath VisualizeGBCDGMT::getGBCDArrayPath() const
+{
+  return m_GBCDArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void VisualizeGBCDGMT::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath VisualizeGBCDGMT::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
 }

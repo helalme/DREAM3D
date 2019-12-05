@@ -33,21 +33,35 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindTriangleGeomCentroids.h"
 
 #include <set>
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Constants.h"
 
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
 #include "SIMPLib/Math/MatrixMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingConstants.h"
 #include "SurfaceMeshing/SurfaceMeshingVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -70,8 +84,8 @@ FindTriangleGeomCentroids::~FindTriangleGeomCentroids() = default;
 // -----------------------------------------------------------------------------
 void FindTriangleGeomCentroids::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -80,7 +94,7 @@ void FindTriangleGeomCentroids::initialize()
 // -----------------------------------------------------------------------------
 void FindTriangleGeomCentroids::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType dasReq =
@@ -93,7 +107,7 @@ void FindTriangleGeomCentroids::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_AM_SELECTION_FP("Face Feature Attribute Matrix", FeatureAttributeMatrixName, FilterParameter::RequiredArray, FindTriangleGeomCentroids, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Face Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Centroids", CentroidsArrayName, FilterParameter::CreatedArray, FindTriangleGeomCentroids));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Centroids", CentroidsArrayName, FeatureAttributeMatrixName, FeatureAttributeMatrixName, FilterParameter::CreatedArray, FindTriangleGeomCentroids));
   setFilterParameters(parameters);
 }
 
@@ -102,21 +116,21 @@ void FindTriangleGeomCentroids::setupFilterParameters()
 // -----------------------------------------------------------------------------
 void FindTriangleGeomCentroids::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QVector<IDataArray::Pointer> dataArrays;
 
   TriangleGeom::Pointer triangles = getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getFaceLabelsArrayPath().getDataContainerName());
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   dataArrays.push_back(triangles->getTriangles());
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
 
   m_FaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFaceLabelsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -124,21 +138,20 @@ void FindTriangleGeomCentroids::dataCheck()
   {
     m_FaceLabels = m_FaceLabelsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrays.push_back(m_FaceLabelsPtr.lock());
   }
 
   DataContainer::Pointer tdc = getDataContainerArray()->getPrereqDataContainer(this, getFaceLabelsArrayPath().getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   DataArrayPath path(getFeatureAttributeMatrixName().getDataContainerName(), getFeatureAttributeMatrixName().getAttributeMatrixName(), getCentroidsArrayName());
   cDims[0] = 3;
-  m_CentroidsPtr =
-      getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, path, 0.0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_CentroidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, path, 0.0, cDims, "", DataArrayID31);
   if(nullptr != m_CentroidsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Centroids = m_CentroidsPtr.lock()->getPointer(0);
@@ -166,7 +179,7 @@ void FindTriangleGeomCentroids::execute()
 {
   initialize();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -174,13 +187,13 @@ void FindTriangleGeomCentroids::execute()
   TriangleGeom::Pointer triangles = getDataContainerArray()->getDataContainer(m_FaceLabelsArrayPath.getDataContainerName())->getGeometryAs<TriangleGeom>();
   float* vertPtr = triangles->getVertexPointer(0);
 
-  int64_t numTriangles = triangles->getNumberOfTris();
-  int64_t* tris = triangles->getTriPointer(0);
+  MeshIndexType numTriangles = triangles->getNumberOfTris();
+  MeshIndexType* tris = triangles->getTriPointer(0);
 
-  int64_t numFeatures = m_CentroidsPtr.lock()->getNumberOfTuples();
-  std::vector<std::set<int64_t>> vertexSets(numFeatures);
+  MeshIndexType numFeatures = m_CentroidsPtr.lock()->getNumberOfTuples();
+  std::vector<std::set<MeshIndexType>> vertexSets(numFeatures);
 
-  for(int64_t i = 0; i < numTriangles; i++)
+  for(MeshIndexType i = 0; i < numTriangles; i++)
   {
     if(m_FaceLabels[2 * i + 0] > 0)
     {
@@ -196,8 +209,8 @@ void FindTriangleGeomCentroids::execute()
     }
   }
 
-  std::set<int64_t>::iterator it;
-  for(int64_t i = 0; i < numFeatures; i++)
+  std::set<MeshIndexType>::iterator it;
+  for(MeshIndexType i = 0; i < numFeatures; i++)
   {
     for(it = vertexSets[i].begin(); it != vertexSets[i].end(); ++it)
     {
@@ -233,7 +246,7 @@ AbstractFilter::Pointer FindTriangleGeomCentroids::newFilterInstance(bool copyFi
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomCentroids::getCompiledLibraryName() const
+QString FindTriangleGeomCentroids::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -241,7 +254,7 @@ const QString FindTriangleGeomCentroids::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomCentroids::getBrandingString() const
+QString FindTriangleGeomCentroids::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -249,7 +262,7 @@ const QString FindTriangleGeomCentroids::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomCentroids::getFilterVersion() const
+QString FindTriangleGeomCentroids::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -260,7 +273,7 @@ const QString FindTriangleGeomCentroids::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomCentroids::getGroupName() const
+QString FindTriangleGeomCentroids::getGroupName() const
 {
   return SIMPL::FilterGroups::Generic;
 }
@@ -268,7 +281,7 @@ const QString FindTriangleGeomCentroids::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindTriangleGeomCentroids::getUuid()
+QUuid FindTriangleGeomCentroids::getUuid() const
 {
   return QUuid("{a5cff82b-9fe4-5a8c-90c9-6db74b6dcd50}");
 }
@@ -276,7 +289,7 @@ const QUuid FindTriangleGeomCentroids::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomCentroids::getSubGroupName() const
+QString FindTriangleGeomCentroids::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -284,7 +297,72 @@ const QString FindTriangleGeomCentroids::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindTriangleGeomCentroids::getHumanLabel() const
+QString FindTriangleGeomCentroids::getHumanLabel() const
 {
   return "Find Feature Centroids from Triangle Geometry";
+}
+
+// -----------------------------------------------------------------------------
+FindTriangleGeomCentroids::Pointer FindTriangleGeomCentroids::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindTriangleGeomCentroids> FindTriangleGeomCentroids::New()
+{
+  struct make_shared_enabler : public FindTriangleGeomCentroids
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomCentroids::getNameOfClass() const
+{
+  return QString("FindTriangleGeomCentroids");
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomCentroids::ClassName()
+{
+  return QString("FindTriangleGeomCentroids");
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomCentroids::setFeatureAttributeMatrixName(const DataArrayPath& value)
+{
+  m_FeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTriangleGeomCentroids::getFeatureAttributeMatrixName() const
+{
+  return m_FeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomCentroids::setFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_FaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindTriangleGeomCentroids::getFaceLabelsArrayPath() const
+{
+  return m_FaceLabelsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindTriangleGeomCentroids::setCentroidsArrayName(const QString& value)
+{
+  m_CentroidsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindTriangleGeomCentroids::getCentroidsArrayName() const
+{
+  return m_CentroidsArrayName;
 }

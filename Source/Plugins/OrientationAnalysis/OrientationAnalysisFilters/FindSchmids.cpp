@@ -33,22 +33,42 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindSchmids.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatVec3FilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/LaueOps.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
 
 #include "EbsdLib/EbsdConstants.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+  DataArrayID34 = 34,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -65,20 +85,17 @@ FindSchmids::FindSchmids()
 , m_StoreAngleComponents(false)
 , m_OverrideSystem(false)
 {
-  m_LoadingDirection.x = 1.0f;
-  m_LoadingDirection.y = 1.0f;
-  m_LoadingDirection.z = 1.0f;
+  m_LoadingDirection[0] = 1.0f;
+  m_LoadingDirection[1] = 1.0f;
+  m_LoadingDirection[2] = 1.0f;
 
-  m_SlipPlane.x = 0.0f;
-  m_SlipPlane.y = 0.0f;
-  m_SlipPlane.z = 1.0f;
+  m_SlipPlane[0] = 0.0f;
+  m_SlipPlane[1] = 0.0f;
+  m_SlipPlane[2] = 1.0f;
 
-  m_SlipDirection.x = 1.0f;
-  m_SlipDirection.y = 0.0f;
-  m_SlipDirection.z = 0.0f;
-
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
-
+  m_SlipDirection[0] = 1.0f;
+  m_SlipDirection[1] = 0.0f;
+  m_SlipDirection[2] = 0.0f;
 }
 
 // -----------------------------------------------------------------------------
@@ -91,7 +108,7 @@ FindSchmids::~FindSchmids() = default;
 // -----------------------------------------------------------------------------
 void FindSchmids::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Loading Direction", LoadingDirection, FilterParameter::Parameter, FindSchmids));
 
@@ -122,11 +139,11 @@ void FindSchmids::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Crystal Structures", CrystalStructuresArrayPath, FilterParameter::RequiredArray, FindSchmids, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Schmids", SchmidsArrayName, FilterParameter::CreatedArray, FindSchmids));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Slip Systems", SlipSystemsArrayName, FilterParameter::CreatedArray, FindSchmids));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Poles", PolesArrayName, FilterParameter::CreatedArray, FindSchmids));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Phis", PhisArrayName, FilterParameter::CreatedArray, FindSchmids));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Lambdas", LambdasArrayName, FilterParameter::CreatedArray, FindSchmids));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Schmids", SchmidsArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, FindSchmids));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Slip Systems", SlipSystemsArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, FindSchmids));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Poles", PolesArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, FindSchmids));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Phis", PhisArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, FindSchmids));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Lambdas", LambdasArrayName, FeaturePhasesArrayPath, FeaturePhasesArrayPath, FilterParameter::CreatedArray, FindSchmids));
   setFilterParameters(parameters);
 }
 
@@ -164,17 +181,16 @@ void FindSchmids::initialize()
 // -----------------------------------------------------------------------------
 void FindSchmids::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
 
   QVector<DataArrayPath> dataArrayPaths;
 
   tempPath.update(getFeaturePhasesArrayPath().getDataContainerName(), getFeaturePhasesArrayPath().getAttributeMatrixName(), getSchmidsArrayName());
-  m_SchmidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0,
-                                                                                                                cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_SchmidsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_SchmidsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Schmids = m_SchmidsPtr.lock()->getPointer(0);
@@ -186,7 +202,7 @@ void FindSchmids::dataCheck()
   {
     m_FeaturePhases = m_FeaturePhasesPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeaturePhasesArrayPath());
   }
@@ -208,8 +224,7 @@ void FindSchmids::dataCheck()
 
   cDims[0] = 3;
   tempPath.update(getFeaturePhasesArrayPath().getDataContainerName(), getFeaturePhasesArrayPath().getAttributeMatrixName(), getPolesArrayName());
-  m_PolesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0,
-                                                                                                                  cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_PolesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID32);
   if(nullptr != m_PolesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Poles = m_PolesPtr.lock()->getPointer(0);
@@ -222,7 +237,7 @@ void FindSchmids::dataCheck()
   {
     m_AvgQuats = m_AvgQuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getAvgQuatsArrayPath());
   }
@@ -231,16 +246,14 @@ void FindSchmids::dataCheck()
   {
     cDims[0] = 1;
     tempPath.update(getFeaturePhasesArrayPath().getDataContainerName(), getFeaturePhasesArrayPath().getAttributeMatrixName(), getPhisArrayName());
-    m_PhisPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -301,
-                                                                                                               cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+    m_PhisPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -301, cDims, "", DataArrayID33);
     if(nullptr != m_PhisPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
     {
       m_Phis = m_PhisPtr.lock()->getPointer(0);
     } /* Now assign the raw pointer to data from the DataArray<T> object */
 
     tempPath.update(getFeaturePhasesArrayPath().getDataContainerName(), getFeaturePhasesArrayPath().getAttributeMatrixName(), getLambdasArrayName());
-    m_LambdasPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -301,
-                                                                                                                  cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+    m_LambdasPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, -301, cDims, "", DataArrayID34);
     if(nullptr != m_LambdasPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
     {
       m_Lambdas = m_LambdasPtr.lock()->getPointer(0);
@@ -250,12 +263,11 @@ void FindSchmids::dataCheck()
   if(m_OverrideSystem)
   {
     // make sure direction lies in plane
-    float cosVec = m_SlipPlane.x * m_SlipDirection.x + m_SlipPlane.y * m_SlipDirection.y + m_SlipPlane.z * m_SlipDirection.z;
+    float cosVec = m_SlipPlane[0] * m_SlipDirection[0] + m_SlipPlane[1] * m_SlipDirection[1] + m_SlipPlane[2] * m_SlipDirection[2];
     if(0 != cosVec)
     {
       QString ss = QObject::tr("Slip Plane and Slip Direction must be normal");
-      setErrorCondition(-1001);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1001, ss);
       return;
     }
   }
@@ -279,52 +291,51 @@ void FindSchmids::preflight()
 // -----------------------------------------------------------------------------
 void FindSchmids::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
+  QVector<LaueOps::Pointer> orientationOps = LaueOps::getOrientationOpsQVector();
 
   size_t totalFeatures = m_SchmidsPtr.lock()->getNumberOfTuples();
 
   int32_t ss = 0;
-  QuatF q1 = QuaternionMathF::New();
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  // QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  FloatArrayType::Pointer avgQuatPtr = m_AvgQuatsPtr.lock();
 
-  float g[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  float sampleLoading[3] = {0.0f, 0.0f, 0.0f};
-  float crystalLoading[3] = {0.0f, 0.0f, 0.0f};
-  float angleComps[2] = {0.0f, 0.0f};
-  float schmid = 0.0f;
+  double g[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
+  double sampleLoading[3] = {0.0f, 0.0f, 0.0f};
+  double crystalLoading[3] = {0.0f, 0.0f, 0.0f};
+  double angleComps[2] = {0.0f, 0.0f};
+  double schmid = 0.0f;
 
-  sampleLoading[0] = m_LoadingDirection.x;
-  sampleLoading[1] = m_LoadingDirection.y;
-  sampleLoading[2] = m_LoadingDirection.z;
+  sampleLoading[0] = m_LoadingDirection[0];
+  sampleLoading[1] = m_LoadingDirection[1];
+  sampleLoading[2] = m_LoadingDirection[2];
   MatrixMath::Normalize3x1(sampleLoading);
-  float plane[3] = {0.0f, 0.0f};
-  float direction[3] = {0.0f, 0.0f};
+  double plane[3] = {0.0f, 0.0f};
+  double direction[3] = {0.0f, 0.0f};
 
   if(m_OverrideSystem)
   {
-    plane[0] = m_SlipPlane.x;
-    plane[1] = m_SlipPlane.y;
-    plane[2] = m_SlipPlane.z;
+    plane[0] = m_SlipPlane[0];
+    plane[1] = m_SlipPlane[1];
+    plane[2] = m_SlipPlane[2];
     MatrixMath::Normalize3x1(plane);
 
-    direction[0] = m_SlipDirection.x;
-    direction[1] = m_SlipDirection.y;
-    direction[2] = m_SlipDirection.z;
+    direction[0] = m_SlipDirection[0];
+    direction[1] = m_SlipDirection[1];
+    direction[2] = m_SlipDirection[2];
     MatrixMath::Normalize3x1(direction);
   }
 
   for(size_t i = 1; i < totalFeatures; i++)
   {
-    QuaternionMathF::Copy(avgQuats[i], q1);
-    FOrientArrayType om(9);
-    FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-    om.toGMatrix(g);
+    QuatF q1(avgQuatPtr->getTuplePointer(i));
+    OrientationTransformation::qu2om<QuatF, OrientationD>(q1).toGMatrix(g);
 
     MatrixMath::Multiply3x3with3x1(g, sampleLoading, crystalLoading);
 
@@ -333,11 +344,11 @@ void FindSchmids::execute()
     {
       if(!m_OverrideSystem)
       {
-        m_OrientationOps[xtal]->getSchmidFactorAndSS(crystalLoading, schmid, angleComps, ss);
+        orientationOps[xtal]->getSchmidFactorAndSS(crystalLoading, schmid, angleComps, ss);
       }
       else
       {
-        m_OrientationOps[xtal]->getSchmidFactorAndSS(crystalLoading, plane, direction, schmid, angleComps, ss);
+        orientationOps[xtal]->getSchmidFactorAndSS(crystalLoading, plane, direction, schmid, angleComps, ss);
       }
 
       m_Schmids[i] = schmid;
@@ -352,7 +363,6 @@ void FindSchmids::execute()
       m_SlipSystems[i] = ss;
     }
   }
-
 }
 
 // -----------------------------------------------------------------------------
@@ -371,7 +381,7 @@ AbstractFilter::Pointer FindSchmids::newFilterInstance(bool copyFilterParameters
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSchmids::getCompiledLibraryName() const
+QString FindSchmids::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -379,7 +389,7 @@ const QString FindSchmids::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSchmids::getBrandingString() const
+QString FindSchmids::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -387,7 +397,7 @@ const QString FindSchmids::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSchmids::getFilterVersion() const
+QString FindSchmids::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -397,7 +407,7 @@ const QString FindSchmids::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSchmids::getGroupName() const
+QString FindSchmids::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -405,7 +415,7 @@ const QString FindSchmids::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindSchmids::getUuid()
+QUuid FindSchmids::getUuid() const
 {
   return QUuid("{e67ca06a-176f-58fc-a676-d6ee5553511a}");
 }
@@ -413,7 +423,7 @@ const QUuid FindSchmids::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSchmids::getSubGroupName() const
+QString FindSchmids::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -421,7 +431,192 @@ const QString FindSchmids::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSchmids::getHumanLabel() const
+QString FindSchmids::getHumanLabel() const
 {
   return "Find Schmid Factors";
+}
+
+// -----------------------------------------------------------------------------
+FindSchmids::Pointer FindSchmids::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindSchmids> FindSchmids::New()
+{
+  struct make_shared_enabler : public FindSchmids
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::getNameOfClass() const
+{
+  return QString("FindSchmids");
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::ClassName()
+{
+  return QString("FindSchmids");
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSchmids::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setCrystalStructuresArrayPath(const DataArrayPath& value)
+{
+  m_CrystalStructuresArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSchmids::getCrystalStructuresArrayPath() const
+{
+  return m_CrystalStructuresArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSchmids::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setSchmidsArrayName(const QString& value)
+{
+  m_SchmidsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::getSchmidsArrayName() const
+{
+  return m_SchmidsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setSlipSystemsArrayName(const QString& value)
+{
+  m_SlipSystemsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::getSlipSystemsArrayName() const
+{
+  return m_SlipSystemsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setPolesArrayName(const QString& value)
+{
+  m_PolesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::getPolesArrayName() const
+{
+  return m_PolesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setPhisArrayName(const QString& value)
+{
+  m_PhisArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::getPhisArrayName() const
+{
+  return m_PhisArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setLambdasArrayName(const QString& value)
+{
+  m_LambdasArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSchmids::getLambdasArrayName() const
+{
+  return m_LambdasArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setLoadingDirection(const FloatVec3Type& value)
+{
+  m_LoadingDirection = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type FindSchmids::getLoadingDirection() const
+{
+  return m_LoadingDirection;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setStoreAngleComponents(bool value)
+{
+  m_StoreAngleComponents = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindSchmids::getStoreAngleComponents() const
+{
+  return m_StoreAngleComponents;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setOverrideSystem(bool value)
+{
+  m_OverrideSystem = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindSchmids::getOverrideSystem() const
+{
+  return m_OverrideSystem;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setSlipPlane(const FloatVec3Type& value)
+{
+  m_SlipPlane = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type FindSchmids::getSlipPlane() const
+{
+  return m_SlipPlane;
+}
+
+// -----------------------------------------------------------------------------
+void FindSchmids::setSlipDirection(const FloatVec3Type& value)
+{
+  m_SlipDirection = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type FindSchmids::getSlipDirection() const
+{
+  return m_SlipDirection;
 }

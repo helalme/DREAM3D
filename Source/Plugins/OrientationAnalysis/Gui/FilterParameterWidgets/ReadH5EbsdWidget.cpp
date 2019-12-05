@@ -37,9 +37,7 @@
 
 #include <QtGui/QKeyEvent>
 #include <QtGui/QPainter>
-#include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
-#include <QtWidgets/QLabel>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMessageBox>
 
@@ -176,6 +174,7 @@ void ReadH5EbsdWidget::setupGui()
   }
 
   m_LineEdit->setText(inputPath);
+  setValidFilePath(m_LineEdit->text());
 
   // Update the widget when the data directory changes
   SIMPLDataPathValidator* validator = SIMPLDataPathValidator::Instance();
@@ -209,6 +208,8 @@ void ReadH5EbsdWidget::keyPressEvent(QKeyEvent* event)
   if(event->key() == Qt::Key_Escape)
   {
     m_LineEdit->setText(m_CurrentText);
+    setValidFilePath(m_LineEdit->text());
+
     m_LineEdit->setStyleSheet("");
     m_LineEdit->setToolTip("");
   }
@@ -313,6 +314,7 @@ void ReadH5EbsdWidget::on_m_LineEditBtn_clicked()
   if(!inputFile.isNull())
   {
     m_LineEdit->setText(inputFile); // Should cause a signal to be emitted
+    setValidFilePath(m_LineEdit->text());
   }
 }
 
@@ -335,7 +337,7 @@ void ReadH5EbsdWidget::on_m_LineEdit_textChanged(const QString& text)
     absPathLabel->hide();
   }
   
-  if(verifyPathExists(inputPath, m_LineEdit))
+  if(QtSFileUtils::VerifyPathExists(inputPath, m_LineEdit))
   {
     m_ShowFileAction->setEnabled(true);
   }
@@ -591,7 +593,7 @@ void ReadH5EbsdWidget::updateFileInfoWidgets()
   SIMPLDataPathValidator* validator = SIMPLDataPathValidator::Instance();
   QString inputPath = validator->convertToAbsolutePath(m_LineEdit->text());
 
-  if(verifyPathExists(inputPath, m_LineEdit))
+  if(QtSFileUtils::VerifyPathExists(inputPath, m_LineEdit))
   {
     QFileInfo fi(inputPath);
     if(fi.exists() && fi.isFile())
@@ -614,7 +616,7 @@ void ReadH5EbsdWidget::updateFileInfoWidgets()
       if(h5Reader->readVolumeInfo() >= 0)
       {
 
-        h5Reader->getResolution(xres, yres, zres);
+        h5Reader->getSpacing(xres, yres, zres);
         m_XRes->setText(QString::number(xres));
         m_YRes->setText(QString::number(yres));
         m_ZRes->setText(QString::number(zres));
@@ -746,6 +748,7 @@ void ReadH5EbsdWidget::resetGuiFileInfoWidgets()
 void ReadH5EbsdWidget::setInputFilePath(QString val)
 {
   m_LineEdit->setText(val);
+  setValidFilePath(m_LineEdit->text());
 }
 
 // -----------------------------------------------------------------------------

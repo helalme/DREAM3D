@@ -30,11 +30,16 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "StatsGeneratorFilter.h"
 
 #include <QtCore/QJsonDocument>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
@@ -44,6 +49,7 @@
 #include "SIMPLib/FilterParameters/H5FilterParametersWriter.h"
 #include "SIMPLib/FilterParameters/JsonFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/JsonFilterParametersWriter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 
@@ -51,6 +57,8 @@
 #include "SIMPLib/StatsData/PrecipitateStatsData.h"
 #include "SIMPLib/StatsData/PrimaryStatsData.h"
 #include "SIMPLib/StatsData/TransformationStatsData.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SyntheticBuilding/FilterParameters/StatsGeneratorFilterParameter.h"
 #include "SyntheticBuilding/SyntheticBuildingConstants.h"
@@ -58,6 +66,18 @@
 #include "SyntheticBuilding/SyntheticBuildingVersion.h"
 
 #include "EbsdLib/EbsdConstants.h"
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataContainerID = 1,
+
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+  DataArrayID32 = 32,
+  DataArrayID33 = 33,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -82,22 +102,22 @@ StatsGeneratorFilter::~StatsGeneratorFilter() = default;
 // -----------------------------------------------------------------------------
 void StatsGeneratorFilter::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(StatsGeneratorFilterParameter::New("StatsGenerator", "StatsGenerator", "", FilterParameter::Parameter));
 
   parameters.push_back(SeparatorFilterParameter::New("Created Data Container", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Statistics Data Container Name", StatsGeneratorDataContainerName, FilterParameter::CreatedArray, StatsGeneratorFilter));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Statistics Data Container Name", StatsGeneratorDataContainerName, FilterParameter::CreatedArray, StatsGeneratorFilter));
 
   parameters.push_back(SeparatorFilterParameter::New("Created Ensemble AttributeMatrix", FilterParameter::CreatedArray));
 
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Ensemble Attribute Matrix Name", CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, StatsGeneratorFilter));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Ensemble Attribute Matrix Name", CellEnsembleAttributeMatrixName, StatsGeneratorDataContainerName, FilterParameter::CreatedArray, StatsGeneratorFilter));
 
   parameters.push_back(SeparatorFilterParameter::New("Created Ensemble Arrays", FilterParameter::CreatedArray));
 
-  parameters.push_back(SIMPL_NEW_STRING_FP("Statistics Array Name", StatsDataArrayName, FilterParameter::CreatedArray, StatsGeneratorFilter));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Crystal Structures Array Name", CrystalStructuresArrayName, FilterParameter::CreatedArray, StatsGeneratorFilter));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Phase Types Array Name", PhaseTypesArrayName, FilterParameter::CreatedArray, StatsGeneratorFilter));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Phase Names Array Name", PhaseNamesArrayName, FilterParameter::CreatedArray, StatsGeneratorFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Statistics Array Name", StatsDataArrayName, StatsGeneratorDataContainerName, CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, StatsGeneratorFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Crystal Structures Array Name", CrystalStructuresArrayName, StatsGeneratorDataContainerName, CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, StatsGeneratorFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Phase Types Array Name", PhaseTypesArrayName, StatsGeneratorDataContainerName, CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, StatsGeneratorFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Phase Names Array Name", PhaseNamesArrayName, StatsGeneratorDataContainerName, CellEnsembleAttributeMatrixName, FilterParameter::CreatedArray, StatsGeneratorFilter));
 
   setFilterParameters(parameters);
 }
@@ -115,7 +135,7 @@ void StatsGeneratorFilter::readFilterParameters(AbstractFilterParametersReader* 
     m_StatsDataArray = StatsDataArray::NullPointer();
   }
 
-  m_StatsDataArray = StatsDataArray::CreateArray(0, "THIS SHOULD BE RESET");
+  m_StatsDataArray = StatsDataArray::CreateArray(0, "THIS SHOULD BE RESET", true);
 
   if(dynamic_cast<H5FilterParametersReader*>(reader) != nullptr)
   {
@@ -134,7 +154,7 @@ void StatsGeneratorFilter::readFilterParameters(AbstractFilterParametersReader* 
     readArray(jsonRoot, numTuples);
   }
 
-  setStatsGeneratorDataContainerName(reader->readString("StatsGeneratorDataContainerName", getStatsGeneratorDataContainerName()));
+  setStatsGeneratorDataContainerName(reader->readDataArrayPath("StatsGeneratorDataContainerName", getStatsGeneratorDataContainerName()));
   setCellEnsembleAttributeMatrixName(reader->readString("CellEnsembleAttributeMatrixName", getCellEnsembleAttributeMatrixName()));
   setStatsDataArrayName(reader->readString("StatsDataArrayName", getStatsDataArrayName()));
   setCrystalStructuresArrayName(reader->readString("CrystalStructuresArrayName", getCrystalStructuresArrayName()));
@@ -156,13 +176,13 @@ void StatsGeneratorFilter::readFilterParameters(QJsonObject& obj)
     m_StatsDataArray = StatsDataArray::NullPointer();
   }
 
-  m_StatsDataArray = StatsDataArray::CreateArray(0, "THIS SHOULD BE RESET");
+  m_StatsDataArray = StatsDataArray::CreateArray(0, "THIS SHOULD BE RESET", true);
 
   m_StatsDataArray->readFromJson(obj);
   size_t numTuples = m_StatsDataArray->getNumberOfTuples();
   readArray(obj, numTuples);
 
-  QVector<FilterParameter::Pointer> filterParameters = getFilterParameters();
+  FilterParameterVectorType filterParameters = getFilterParameters();
   for(int i = 0; i < filterParameters.size(); i++)
   {
     FilterParameter::Pointer fp = filterParameters[i];
@@ -175,7 +195,7 @@ void StatsGeneratorFilter::readFilterParameters(QJsonObject& obj)
 // -----------------------------------------------------------------------------
 void StatsGeneratorFilter::writeFilterParameters(QJsonObject& obj) const
 {
-  QVector<FilterParameter::Pointer> filterParameters = getFilterParameters();
+  FilterParameterVectorType filterParameters = getFilterParameters();
   for(int i = 0; i < filterParameters.size(); i++)
   {
     FilterParameter::Pointer fp = filterParameters[i];
@@ -237,44 +257,43 @@ void StatsGeneratorFilter::dataCheck()
 {
   if(nullptr != m_StatsDataArray)
   {
-    getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getStatsGeneratorDataContainerName());
+    getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getStatsGeneratorDataContainerName(), DataContainerID);
 
-    if(getErrorCondition() < 0)
+    if(getErrorCode() < 0)
     {
       return;
     }
 
     DataContainer::Pointer m = getDataContainerArray()->getDataContainer(getStatsGeneratorDataContainerName());
 
-    QVector<size_t> tDims(1, m_StatsDataArray->getNumberOfTuples());
-    AttributeMatrix::Pointer cellEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble);
+    std::vector<size_t> tDims(1, m_StatsDataArray->getNumberOfTuples());
+    AttributeMatrix::Pointer cellEnsembleAttrMat = m->createNonPrereqAttributeMatrix(this, getCellEnsembleAttributeMatrixName(), tDims, AttributeMatrix::Type::CellEnsemble, AttributeMatrixID21);
 
     m_StatsDataArray->setName(getStatsDataArrayName());
-    cellEnsembleAttrMat->addAttributeArray(getStatsDataArrayName(), m_StatsDataArray);
+    cellEnsembleAttrMat->insertOrAssign(m_StatsDataArray);
 
     if(nullptr != m_CrystalStructures)
     {
       m_CrystalStructures->setName(getCrystalStructuresArrayName());
-      cellEnsembleAttrMat->addAttributeArray(getCrystalStructuresArrayName(), m_CrystalStructures);
+      cellEnsembleAttrMat->insertOrAssign(m_CrystalStructures);
     }
 
     if(nullptr != m_PhaseTypes)
     {
       m_PhaseTypes->setName(getPhaseTypesArrayName());
-      cellEnsembleAttrMat->addAttributeArray(getPhaseTypesArrayName(), m_PhaseTypes);
+      cellEnsembleAttrMat->insertOrAssign(m_PhaseTypes);
     }
 
     if(nullptr != m_PhaseNames)
     {
       m_PhaseNames->setName(getPhaseNamesArrayName());
-      cellEnsembleAttrMat->addAttributeArray(getPhaseNamesArrayName(), m_PhaseNames);
+      cellEnsembleAttrMat->insertOrAssign(m_PhaseNames);
     }
   }
   else
   {
-    setErrorCondition(-1);
     QString ss = QObject::tr("Unable to retrieve a valid pointer for statistics data");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 }
@@ -298,10 +317,10 @@ void StatsGeneratorFilter::preflight()
 // -----------------------------------------------------------------------------
 void StatsGeneratorFilter::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -344,13 +363,10 @@ void StatsGeneratorFilter::execute()
 
         // RDF Data ************************************************************************
         RdfData::Pointer rdf = pp->getRadialDistFunction();
-        float boxSize[3] = {0.0f, 0.0f, 0.0f};
-        float boxRes[3] = {0.0f, 0.0f, 0.0f};
-        rdf->getBoxSize(boxSize);
-        rdf->getBoxResolution(boxRes);
-        std::vector<float> boxSizeVec = {boxSize[0], boxSize[1], boxSize[2]};
-        std::vector<float> boxResVec = {boxRes[0], boxRes[1], boxRes[2]};
-        std::vector<float> freqs = RadialDistributionFunction::GenerateRandomDistribution(rdf->getMinDistance(), rdf->getMaxDistance(), rdf->getNumberOfBins(), boxSizeVec, boxResVec);
+        std::array<float, 3> boxSize = rdf->getBoxSize();
+        std::array<float, 3> boxRes = rdf->getBoxResolution();
+
+        std::vector<float> freqs = RadialDistributionFunction::GenerateRandomDistribution(rdf->getMinDistance(), rdf->getMaxDistance(), rdf->getNumberOfBins(), boxSize, boxRes);
         RdfData::Pointer cleanRDF = RdfData::New();
         cleanRDF->setFrequencies(freqs);
         cleanRDF->setMinDistance(rdf->getMinDistance());
@@ -479,7 +495,7 @@ AbstractFilter::Pointer StatsGeneratorFilter::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString StatsGeneratorFilter::getCompiledLibraryName() const
+QString StatsGeneratorFilter::getCompiledLibraryName() const
 {
   return SyntheticBuildingConstants::SyntheticBuildingBaseName;
 }
@@ -487,7 +503,7 @@ const QString StatsGeneratorFilter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString StatsGeneratorFilter::getBrandingString() const
+QString StatsGeneratorFilter::getBrandingString() const
 {
   return "StatsGenerator";
 }
@@ -495,7 +511,7 @@ const QString StatsGeneratorFilter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString StatsGeneratorFilter::getFilterVersion() const
+QString StatsGeneratorFilter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -506,7 +522,7 @@ const QString StatsGeneratorFilter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString StatsGeneratorFilter::getGroupName() const
+QString StatsGeneratorFilter::getGroupName() const
 {
   return SIMPL::FilterGroups::SyntheticBuildingFilters;
 }
@@ -514,7 +530,7 @@ const QString StatsGeneratorFilter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid StatsGeneratorFilter::getUuid()
+QUuid StatsGeneratorFilter::getUuid() const
 {
   return QUuid("{f642e217-4722-5dd8-9df9-cee71e7b26ba}");
 }
@@ -522,7 +538,7 @@ const QUuid StatsGeneratorFilter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString StatsGeneratorFilter::getSubGroupName() const
+QString StatsGeneratorFilter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::GenerationFilters;
 }
@@ -530,7 +546,168 @@ const QString StatsGeneratorFilter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString StatsGeneratorFilter::getHumanLabel() const
+QString StatsGeneratorFilter::getHumanLabel() const
 {
   return "StatsGenerator";
+}
+
+// -----------------------------------------------------------------------------
+StatsGeneratorFilter::Pointer StatsGeneratorFilter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<StatsGeneratorFilter> StatsGeneratorFilter::New()
+{
+  struct make_shared_enabler : public StatsGeneratorFilter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::getNameOfClass() const
+{
+  return QString("StatsGeneratorFilter");
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::ClassName()
+{
+  return QString("StatsGeneratorFilter");
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setStatsGeneratorDataContainerName(const DataArrayPath& value)
+{
+  m_StatsGeneratorDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath StatsGeneratorFilter::getStatsGeneratorDataContainerName() const
+{
+  return m_StatsGeneratorDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setCellEnsembleAttributeMatrixName(const QString& value)
+{
+  m_CellEnsembleAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::getCellEnsembleAttributeMatrixName() const
+{
+  return m_CellEnsembleAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setStatsDataArrayName(const QString& value)
+{
+  m_StatsDataArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::getStatsDataArrayName() const
+{
+  return m_StatsDataArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setCrystalStructuresArrayName(const QString& value)
+{
+  m_CrystalStructuresArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::getCrystalStructuresArrayName() const
+{
+  return m_CrystalStructuresArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setPhaseTypesArrayName(const QString& value)
+{
+  m_PhaseTypesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::getPhaseTypesArrayName() const
+{
+  return m_PhaseTypesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setPhaseNamesArrayName(const QString& value)
+{
+  m_PhaseNamesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString StatsGeneratorFilter::getPhaseNamesArrayName() const
+{
+  return m_PhaseNamesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setStatsDataArray(const StatsDataArray::Pointer& value)
+{
+  m_StatsDataArray = value;
+}
+
+// -----------------------------------------------------------------------------
+StatsDataArray::Pointer StatsGeneratorFilter::getStatsDataArray() const
+{
+  return m_StatsDataArray;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setCrystalStructures(const UInt32ArrayType::Pointer& value)
+{
+  m_CrystalStructures = value;
+}
+
+// -----------------------------------------------------------------------------
+UInt32ArrayType::Pointer StatsGeneratorFilter::getCrystalStructures() const
+{
+  return m_CrystalStructures;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setPhaseTypes(const UInt32ArrayType::Pointer& value)
+{
+  m_PhaseTypes = value;
+}
+
+// -----------------------------------------------------------------------------
+UInt32ArrayType::Pointer StatsGeneratorFilter::getPhaseTypes() const
+{
+  return m_PhaseTypes;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setPhaseNames(const StringDataArray::Pointer& value)
+{
+  m_PhaseNames = value;
+}
+
+// -----------------------------------------------------------------------------
+StringDataArray::Pointer StatsGeneratorFilter::getPhaseNames() const
+{
+  return m_PhaseNames;
+}
+
+// -----------------------------------------------------------------------------
+void StatsGeneratorFilter::setPath(const DataArrayPath& value)
+{
+  m_Path = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath StatsGeneratorFilter::getPath() const
+{
+  return m_Path;
 }

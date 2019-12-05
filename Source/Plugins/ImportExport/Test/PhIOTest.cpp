@@ -34,12 +34,14 @@
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 #include <QtCore/QCoreApplication>
-#include <QtCore/QDateTime>
-#include <QtCore/QDir>
+#include <QtCore/QDebug>
 #include <QtCore/QFile>
+#include <QtCore/QTextStream>
+#include <QtCore/QTime>
 
-#include "SIMPLib/Common/SIMPLibSetGetMacros.h"
 #include "SIMPLib/DataArrays/DataArray.hpp"
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Filtering/FilterPipeline.h"
@@ -48,6 +50,7 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "ImportExportTestFileLocations.h"
@@ -57,13 +60,26 @@
 class PhIOTest
 {
 public:
-  PhIOTest()
+  PhIOTest() = default;
+  virtual ~PhIOTest() = default;
+  /**
+   * @brief Returns the name of the class for PhIOTest
+   */
+  /**
+   * @brief Returns the name of the class for PhIOTest
+   */
+  QString getNameOfClass() const
   {
+    return QString("PhIOTest");
   }
-  virtual ~PhIOTest()
+
+  /**
+   * @brief Returns the name of the class for PhIOTest
+   */
+  QString ClassName()
   {
+    return QString("PhIOTest");
   }
-  SIMPL_TYPE_MACRO(PhIOTest)
 
   // -----------------------------------------------------------------------------
   //
@@ -166,7 +182,7 @@ public:
       err = pipeline->preflightPipeline();
       DREAM3D_REQUIRE_EQUAL(err, 0);
       pipeline->execute();
-      err = pipeline->getErrorCondition();
+      err = pipeline->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, 0);
     }
 
@@ -216,7 +232,7 @@ public:
       err = pipeline->preflightPipeline();
       DREAM3D_REQUIRE_EQUAL(err, 0);
       pipeline->execute();
-      err = pipeline->getErrorCondition();
+      err = pipeline->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, 0);
     }
 
@@ -245,7 +261,7 @@ public:
       DREAM3D_REQUIRE_EQUAL(propWasSet, true)
       phReader->setDataContainerArray(dca);
       phReader->execute();
-      int err = phReader->getErrorCondition();
+      int err = phReader->getErrorCode();
       DREAM3D_REQUIRE_EQUAL(err, 0);
       // pipeline->pushBack(phReader);
     }
@@ -256,24 +272,20 @@ public:
       DREAM3D_REQUIRE_EQUAL(0, 1)
     }
 
-    size_t nx = 0;
-    size_t ny = 0;
-    size_t nz = 0;
-
     DataContainer::Pointer m = phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
     DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-    std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-    DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-    DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-    DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+    SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+    DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+    DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+    DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
     IDataArray::Pointer mdata =
         phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName)->getAttributeMatrix("CellData")->getAttributeArray(SIMPL::CellData::FeatureIds);
 
     int size = UnitTest::FeatureIdsTest::XSize * UnitTest::FeatureIdsTest::YSize * UnitTest::FeatureIdsTest::ZSize;
-    int32_t* data = Int32ArrayType::SafeReinterpretCast<IDataArray*, Int32ArrayType*, int32_t*>(mdata.get());
-
+    Int32ArrayType::Pointer dataPtr = std::dynamic_pointer_cast<Int32ArrayType>(mdata);
+    int32_t* data = dataPtr->getTuplePointer(0);
     for(int i = 0; i < size; ++i)
     {
       int32_t file_value = data[i];
@@ -321,7 +333,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         phReader->setDataContainerArray(dca);
         phReader->preflight();
-        int err = phReader->getErrorCondition();
+        int err = phReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -331,17 +343,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read the file
       bool prop = phReader->property("FileWasRead").toBool();
@@ -358,7 +366,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         phReader->setDataContainerArray(dca);
         phReader->preflight();
-        int err = phReader->getErrorCondition();
+        int err = phReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -368,17 +376,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read from the cache this time, since we're reading from the same file
       bool prop = phReader->property("FileWasRead").toBool();
@@ -395,7 +399,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         phReader->setDataContainerArray(dca);
         phReader->preflight();
-        int err = phReader->getErrorCondition();
+        int err = phReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -405,17 +409,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read from the file again, since we changed file names
       bool prop = phReader->property("FileWasRead").toBool();
@@ -443,7 +443,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         phReader->setDataContainerArray(dca);
         phReader->preflight();
-        int err = phReader->getErrorCondition();
+        int err = phReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -453,17 +453,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read from the file again, since we changed the contents of the file outside the program
       bool prop = phReader->property("FileWasRead").toBool();
@@ -484,7 +480,7 @@ public:
         DREAM3D_REQUIRE_EQUAL(propWasSet, true)
         phReader->setDataContainerArray(dca);
         phReader->preflight();
-        int err = phReader->getErrorCondition();
+        int err = phReader->getErrorCode();
         DREAM3D_REQUIRE_EQUAL(err, 0);
       }
       else
@@ -494,17 +490,13 @@ public:
         DREAM3D_REQUIRE_EQUAL(0, 1)
       }
 
-      size_t nx = 0;
-      size_t ny = 0;
-      size_t nz = 0;
-
       DataContainer::Pointer m = phReader->getDataContainerArray()->getDataContainer(SIMPL::Defaults::ImageDataContainerName);
       DREAM3D_REQUIRED_PTR(m.get(), !=, nullptr)
 
-      std::tie(nx, ny, nz) = m->getGeometryAs<ImageGeom>()->getDimensions();
-      DREAM3D_REQUIRE_EQUAL(nx, UnitTest::FeatureIdsTest::XSize);
-      DREAM3D_REQUIRE_EQUAL(ny, UnitTest::FeatureIdsTest::YSize);
-      DREAM3D_REQUIRE_EQUAL(nz, UnitTest::FeatureIdsTest::ZSize);
+      SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
+      DREAM3D_REQUIRE_EQUAL(dims[0], UnitTest::FeatureIdsTest::XSize);
+      DREAM3D_REQUIRE_EQUAL(dims[1], UnitTest::FeatureIdsTest::YSize);
+      DREAM3D_REQUIRE_EQUAL(dims[2], UnitTest::FeatureIdsTest::ZSize);
 
       // Check that the filter read from the file again, since we flushed the cache
       bool prop = phReader->property("FileWasRead").toBool();
@@ -531,6 +523,6 @@ public:
   }
 
 private:
-  PhIOTest(const PhIOTest&);       // Copy Constructor Not Implemented
-  void operator=(const PhIOTest&); // Move assignment Not Implemented
+  PhIOTest(const PhIOTest&) = delete;       // Copy Constructor Not Implemented
+  void operator=(const PhIOTest&) = delete; // Move assignment Not Implemented
 };

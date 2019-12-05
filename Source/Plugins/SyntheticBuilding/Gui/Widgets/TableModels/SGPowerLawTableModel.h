@@ -38,7 +38,6 @@
 #include "SGAbstractTableModel.h"
 #include <QtCore/QVariant>
 #include <QtCore/QVector>
-#include <QtGui/QColor>
 
 class QAbstractItemDelegate;
 
@@ -64,7 +63,7 @@ public:
     ColumnCount
   };
 
-  SGPowerLawTableModel(QObject* parent = 0);
+  SGPowerLawTableModel(QObject* parent = nullptr);
   virtual ~SGPowerLawTableModel();
 
   Qt::ItemFlags flags(const QModelIndex& index) const;

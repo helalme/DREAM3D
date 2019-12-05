@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "GenerateNodeTriangleConnectivity.h"
 
 #include "SIMPLib/Common/ManagedPointerArray.hpp"
@@ -57,7 +59,7 @@ GenerateNodeTriangleConnectivity::~GenerateNodeTriangleConnectivity() = default;
 // -----------------------------------------------------------------------------
 void GenerateNodeTriangleConnectivity::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   setFilterParameters(parameters);
 }
@@ -84,29 +86,26 @@ void GenerateNodeTriangleConnectivity::initialize()
 // -----------------------------------------------------------------------------
 void GenerateNodeTriangleConnectivity::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   SurfaceMeshDataContainer* sm = getSurfaceMeshDataContainer();
   if(nullptr == sm)
   {
-    setErrorCondition(-384);
-    notifyErrorMessage(getHumanLabel(), "SurfaceMeshDataContainer is missing", getErrorCondition());
+    setErrorCondition(-384, "SurfaceMeshDataContainer is missing");
   }
   else
   {
     // We MUST have Nodes
     if(sm->getVertices().get() == nullptr)
     {
-      setErrorCondition(-384);
-      notifyErrorMessage(getHumanLabel(), "SurfaceMesh DataContainer missing Nodes", getErrorCondition());
+      setErrorCondition(-384, "SurfaceMesh DataContainer missing Nodes");
     }
 
     // We MUST have Triangles defined also.
     if(sm->getFaces().get() == nullptr)
     {
-      setErrorCondition(-384);
-      notifyErrorMessage(getHumanLabel(), "SurfaceMesh DataContainer missing Triangles", getErrorCondition());
+      setErrorCondition(-384, "SurfaceMesh DataContainer missing Triangles");
     }
     else
     {
@@ -122,8 +121,8 @@ void GenerateNodeTriangleConnectivity::dataCheck()
 
     // We do not know the size of the array so we can not use the macro so we just manually call
     // the needed methods that will propagate these array additions to the pipeline
-    DataArray<int>::Pointer uniqueEdgesArray = DataArray<int>::CreateArray(1, 2, SIMPL::CellData::SurfaceMeshUniqueEdges);
-    sm->getAttributeMatrix(getCellAttributeMatrixName())->addAttributeArray(SIMPL::CellData::SurfaceMeshUniqueEdges, uniqueEdgesArray);
+    DataArray<int>::Pointer uniqueEdgesArray = DataArray<int>::CreateArray(1, 2, SIMPL::CellData::SurfaceMeshUniqueEdges, true);
+    sm->getAttributeMatrix(getCellAttributeMatrixName())->insertOrAssign(uniqueEdgesArray);
 
     // This is just for tracking what Arrays are being created by this filter. Normally the macro
     // would do this for us.
@@ -147,7 +146,8 @@ void GenerateNodeTriangleConnectivity::preflight()
 // -----------------------------------------------------------------------------
 void GenerateNodeTriangleConnectivity::execute()
 {
-  int err = 0;
+  clearErrorCode();
+  clearWarningCode();
 
   // Just to double check we have everything.
   dataCheck();
@@ -156,18 +156,14 @@ void GenerateNodeTriangleConnectivity::execute()
     return;
   }
 
-  setErrorCondition(err);
   SurfaceMeshDataContainer* m = getSurfaceMeshDataContainer();
   if(nullptr == m)
   {
-    setErrorCondition(-999);
-    notifyErrorMessage(getHumanLabel(), "The SurfaceMesh DataContainer Object was nullptr", -999);
+    setErrorCondition(-999, "The SurfaceMesh DataContainer Object was nullptr");
     return;
   }
-  setErrorCondition(0);
-  setWarningCondition(0);
 
-  notifyStatusMessage(getHumanLabel(), "Starting");
+  notifyStatusMessage("Starting");
 
   // Generate the connectivity data
   generateConnectivity();
@@ -195,13 +191,12 @@ void GenerateNodeTriangleConnectivity::generateConnectivity()
   StructArray<SurfaceMesh::DataStructures::Face_t>::Pointer trianglesPtr = getSurfaceMeshDataContainer()->getTriangles();
   if(nullptr == trianglesPtr.get())
   {
-    setErrorCondition(-556);
-    notifyErrorMessage(getHumanLabel(), "The SurfaceMesh DataContainer Does NOT contain Triangles", -556);
+    setErrorCondition(-556, "The SurfaceMesh DataContainer Does NOT contain Triangles");
     return;
   }
   int ntri = trianglesPtr->GetNumberOfTuples();
   NodeTrianglesMap_t m_Node2Triangle;
-  notifyStatusMessage(getHumanLabel(), "Creating the Mapping of Triangles to Node");
+  notifyStatusMessage("Creating the Mapping of Triangles to Node");
   // get the triangle definitions - use the pointer to the start of the Struct Array
   Triangle* triangles = trianglesPtr->GetPointer(0);
   // Generate the map of node_id -> Triangles that include that node_id value
@@ -217,7 +212,7 @@ void GenerateNodeTriangleConnectivity::generateConnectivity()
     return;
   }
 
-  ManagedPointerArray<int>::Pointer nodeTriangleArray = ManagedPointerArray<int>::CreateArray(m_Node2Triangle.size(), SIMPL::CellData::SurfaceMeshNodeTriangles);
+  ManagedPointerArray<int>::Pointer nodeTriangleArray = ManagedPointerArray<int>::CreateArray(m_Node2Triangle.size(), SIMPL::CellData::SurfaceMeshNodeTriangles, true);
 
   float progIndex = 0.0;
   float curPercent = 0.0;
@@ -230,7 +225,7 @@ void GenerateNodeTriangleConnectivity::generateConnectivity()
     {
       ss.str("");
       ss << (progIndex / total * 100.0f) << "% Complete";
-      notifyStatusMessage(getHumanLabel(), ss.str());
+      notifyStatusMessage(ss.str());
       curPercent += 5.0f;
     }
     progIndex++;
@@ -257,4 +252,45 @@ void GenerateNodeTriangleConnectivity::generateConnectivity()
 
   getSurfaceMeshDataContainer()->addCellData(nodeTriangleArray->getName(), nodeTriangleArray);
   return;
+}
+
+// -----------------------------------------------------------------------------
+GenerateNodeTriangleConnectivity::Pointer GenerateNodeTriangleConnectivity::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GenerateNodeTriangleConnectivity> GenerateNodeTriangleConnectivity::New()
+{
+  struct make_shared_enabler : public GenerateNodeTriangleConnectivity
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateNodeTriangleConnectivity::getNameOfClass() const
+{
+  return QString("GenerateNodeTriangleConnectivity");
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateNodeTriangleConnectivity::ClassName()
+{
+  return QString("GenerateNodeTriangleConnectivity");
+}
+
+// -----------------------------------------------------------------------------
+void GenerateNodeTriangleConnectivity::setSurfaceMeshUniqueEdgesArrayName(const QString& value)
+{
+  m_SurfaceMeshUniqueEdgesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateNodeTriangleConnectivity::getSurfaceMeshUniqueEdgesArrayName() const
+{
+  return m_SurfaceMeshUniqueEdgesArrayName;
 }

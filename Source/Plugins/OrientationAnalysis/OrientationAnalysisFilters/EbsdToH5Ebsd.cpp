@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "EbsdToH5Ebsd.h"
 
 #include <QtCore/QDir>
@@ -40,7 +42,10 @@
 #include "H5Support/QH5Utilities.h"
 #include "H5Support/H5ScopedSentinel.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/Utilities/FilePathGenerator.h"
 
@@ -88,7 +93,7 @@ EbsdToH5Ebsd::~EbsdToH5Ebsd() = default;
 // -----------------------------------------------------------------------------
 void EbsdToH5Ebsd::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(EbsdToH5EbsdFilterParameter::New("Import Orientation Data", "OrientationData", getOutputFile(), FilterParameter::Parameter, this));
 
@@ -128,22 +133,26 @@ void EbsdToH5Ebsd::initialize()
 // -----------------------------------------------------------------------------
 void EbsdToH5Ebsd::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   QString ss;
 
   if(m_OutputFile.isEmpty())
   {
     ss = QObject::tr("The output file must be set");
-    setErrorCondition(-12);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-12, ss);
   }
 
+  QFileInfo fi(m_InputPath);
   if(m_InputPath.isEmpty())
   {
     ss = QObject::tr("The Input Directory must be set");
-    setErrorCondition(-13);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-13, ss);
+  }
+  else if(!fi.exists())
+  {
+    QString ss = QObject::tr("The input directory does not exist: %1").arg(getInputPath());
+    setErrorCondition(-388, ss);
   }
 
   bool hasMissingFiles = false;
@@ -167,8 +176,7 @@ void EbsdToH5Ebsd::dataCheck()
     out << "StartIndex: " << m_ZStartIndex << "\n";
     out << "EndIndex: " << m_ZEndIndex << "\n";
 
-    setErrorCondition(-11);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11, ss);
   }
   else
   {
@@ -186,8 +194,7 @@ void EbsdToH5Ebsd::dataCheck()
     else
     {
       ss = QObject::tr("The file extension '%1' was not recognized. Currently .ang or .ctf are the only recognized file extensions").arg(ext);
-      setErrorCondition(-997);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-997, ss);
       return;
     }
   }
@@ -211,10 +218,10 @@ void EbsdToH5Ebsd::preflight()
 // -----------------------------------------------------------------------------
 void EbsdToH5Ebsd::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -227,8 +234,7 @@ void EbsdToH5Ebsd::execute()
     QString ss = QObject::tr("EbsdToH5Ebsd Error: The output file was not set correctly or is empty. The current value is '%1'"
                              ". Please set the output file before running the importer. ")
                      .arg(m_OutputFile);
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
   // Make sure any directory path is also available as the user may have just typed
@@ -239,8 +245,7 @@ void EbsdToH5Ebsd::execute()
   if(!dir.mkpath(parentPath))
   {
     QString ss;
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -250,8 +255,7 @@ void EbsdToH5Ebsd::execute()
   {
     err = -1;
     QString ss = QObject::tr("The output HDF5 file could not be created. Check permissions or if the file is in use by another program");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
     return;
   }
 
@@ -260,17 +264,15 @@ void EbsdToH5Ebsd::execute()
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::ZResolution, m_ZResolution);
   if(err < 0)
   {
-    QString ss = QObject::tr("Could not write the Z Resolution Scalar to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    QString ss = QObject::tr("Could not write the Z Spacing Scalar to the HDF5 File");
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::StackingOrder, m_RefFrameZDir);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Stacking Order Scalar to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   QString s = Ebsd::StackingOrder::Utils::getStringForEnum(m_RefFrameZDir);
@@ -278,16 +280,14 @@ void EbsdToH5Ebsd::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Stacking Order Name Attribute to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::SampleTransformationAngle, m_SampleTransformation.angle);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Sample Transformation Angle to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   int32_t rank = 1;
@@ -296,24 +296,21 @@ void EbsdToH5Ebsd::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Sample Transformation Axis to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::EulerTransformationAngle, m_EulerTransformation.angle);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Euler Transformation Angle to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writePointerDataset<float>(fileId, Ebsd::H5Ebsd::EulerTransformationAxis, rank, dims, &(m_EulerTransformation.h));
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Euler Transformation Axis to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   // QString filename = QString("%1%2%3.%4").arg(m_FilePrefix)
@@ -344,8 +341,7 @@ void EbsdToH5Ebsd::execute()
     {
 
       QString ss = QObject::tr("Could not write the Manufacturer Data to the HDF5 File");
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
     }
     fileImporter = H5AngImporter::New();
   }
@@ -356,8 +352,7 @@ void EbsdToH5Ebsd::execute()
     {
 
       QString ss = QObject::tr("Could not write the Manufacturer Data to the HDF5 File");
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
     }
     fileImporter = H5CtfImporter::New();
     CtfReader ctfReader;
@@ -374,8 +369,7 @@ void EbsdToH5Ebsd::execute()
     err = -1;
 
     QString ss = QObject::tr("The file extension was not detected correctly");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
 
     return;
   }
@@ -420,18 +414,17 @@ void EbsdToH5Ebsd::execute()
     progress = (int32_t)(100.0f * (float)(progress) / total);
     QString msg = "Converting File: " + ebsdFName;
 
-    notifyStatusMessage(getHumanLabel(), msg.toLatin1().data());
+    notifyStatusMessage(msg.toLatin1().data());
     err = fileImporter->importFile(fileId, z, ebsdFName);
     if(err < 0)
     {
-      setErrorCondition(err);
-      notifyErrorMessage(getHumanLabel(), fileImporter->getPipelineMessage(), fileImporter->getErrorCondition());
+      setErrorCondition(err, fileImporter->getPipelineMessage());
       return;
     }
     totalSlicesImported = totalSlicesImported + fileImporter->numberOfSlicesImported();
 
     fileImporter->getDims(xDim, yDim);
-    fileImporter->getResolution(xRes, yRes);
+    fileImporter->getSpacing(xRes, yRes);
     if(xDim > biggestxDim)
     {
       biggestxDim = xDim;
@@ -444,8 +437,7 @@ void EbsdToH5Ebsd::execute()
     if(err < 0)
     {
       QString ss = QObject::tr("Could not write dataset for slice to HDF5 file");
-      setErrorCondition(-1);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-1, ss);
     }
 
     indices.push_back(static_cast<int32_t>(z));
@@ -456,13 +448,12 @@ void EbsdToH5Ebsd::execute()
     }
   }
 
-  // Write Z index start, Z index end and Z Resolution to the HDF5 file
+  // Write Z index start, Z index end and Z Spacing to the HDF5 file
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::ZStartIndex, m_ZStartIndex);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Z Start Index Scalar to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   m_ZEndIndex = m_ZStartIndex + totalSlicesImported - 1;
@@ -470,40 +461,35 @@ void EbsdToH5Ebsd::execute()
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the Z End Index Scalar to the HDF5 File");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::XPoints, biggestxDim);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the XPoints Scalar to HDF5 file");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::YPoints, biggestyDim);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the YPoints Scalar to HDF5 file");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::XResolution, xRes);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the XResolution Scalar to HDF5 file");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   err = QH5Lite::writeScalarDataset(fileId, Ebsd::H5Ebsd::YResolution, yRes);
   if(err < 0)
   {
     QString ss = QObject::tr("Could not write the YResolution Scalar to HDF5 file");
-    setErrorCondition(-1);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-1, ss);
   }
 
   if(!getCancel())
@@ -528,18 +514,18 @@ AbstractFilter::Pointer EbsdToH5Ebsd::newFilterInstance(bool copyFilterParameter
     filter->setFilterParameters(getFilterParameters());
     // We are going to hand copy all of the parameters because the other way of copying the parameters are going to
     // miss some of them because we are not enumerating all of them.
-    SIMPL_COPY_INSTANCEVAR(OutputFile)
-    SIMPL_COPY_INSTANCEVAR(ZStartIndex)
-    SIMPL_COPY_INSTANCEVAR(ZEndIndex)
-    SIMPL_COPY_INSTANCEVAR(ZResolution)
-    SIMPL_COPY_INSTANCEVAR(RefFrameZDir)
-    SIMPL_COPY_INSTANCEVAR(InputPath)
-    SIMPL_COPY_INSTANCEVAR(FilePrefix)
-    SIMPL_COPY_INSTANCEVAR(FileSuffix)
-    SIMPL_COPY_INSTANCEVAR(FileExtension)
-    SIMPL_COPY_INSTANCEVAR(PaddingDigits)
-    SIMPL_COPY_INSTANCEVAR(SampleTransformation)
-    SIMPL_COPY_INSTANCEVAR(EulerTransformation)
+    filter->setOutputFile(getOutputFile());
+    filter->setZStartIndex(getZStartIndex());
+    filter->setZEndIndex(getZEndIndex());
+    filter->setZResolution(getZResolution());
+    filter->setRefFrameZDir(getRefFrameZDir());
+    filter->setInputPath(getInputPath());
+    filter->setFilePrefix(getFilePrefix());
+    filter->setFileSuffix(getFileSuffix());
+    filter->setFileExtension(getFileExtension());
+    filter->setPaddingDigits(getPaddingDigits());
+    filter->setSampleTransformation(getSampleTransformation());
+    filter->setEulerTransformation(getEulerTransformation());
   }
   return filter;
 }
@@ -547,7 +533,7 @@ AbstractFilter::Pointer EbsdToH5Ebsd::newFilterInstance(bool copyFilterParameter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EbsdToH5Ebsd::getCompiledLibraryName() const
+QString EbsdToH5Ebsd::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -555,7 +541,7 @@ const QString EbsdToH5Ebsd::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EbsdToH5Ebsd::getBrandingString() const
+QString EbsdToH5Ebsd::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -563,7 +549,7 @@ const QString EbsdToH5Ebsd::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EbsdToH5Ebsd::getFilterVersion() const
+QString EbsdToH5Ebsd::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -573,7 +559,7 @@ const QString EbsdToH5Ebsd::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EbsdToH5Ebsd::getGroupName() const
+QString EbsdToH5Ebsd::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -581,7 +567,7 @@ const QString EbsdToH5Ebsd::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid EbsdToH5Ebsd::getUuid()
+QUuid EbsdToH5Ebsd::getUuid() const
 {
   return QUuid("{6e332fca-0475-5fec-821e-e01f668ec1d3}");
 }
@@ -589,7 +575,7 @@ const QUuid EbsdToH5Ebsd::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EbsdToH5Ebsd::getSubGroupName() const
+QString EbsdToH5Ebsd::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -597,7 +583,180 @@ const QString EbsdToH5Ebsd::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString EbsdToH5Ebsd::getHumanLabel() const
+QString EbsdToH5Ebsd::getHumanLabel() const
 {
   return "Import Orientation File(s) to H5EBSD";
+}
+
+// -----------------------------------------------------------------------------
+EbsdToH5Ebsd::Pointer EbsdToH5Ebsd::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<EbsdToH5Ebsd> EbsdToH5Ebsd::New()
+{
+  struct make_shared_enabler : public EbsdToH5Ebsd
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::getNameOfClass() const
+{
+  return QString("EbsdToH5Ebsd");
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::ClassName()
+{
+  return QString("EbsdToH5Ebsd");
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setOutputFile(const QString& value)
+{
+  m_OutputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::getOutputFile() const
+{
+  return m_OutputFile;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setZStartIndex(int64_t value)
+{
+  m_ZStartIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int64_t EbsdToH5Ebsd::getZStartIndex() const
+{
+  return m_ZStartIndex;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setZEndIndex(int64_t value)
+{
+  m_ZEndIndex = value;
+}
+
+// -----------------------------------------------------------------------------
+int64_t EbsdToH5Ebsd::getZEndIndex() const
+{
+  return m_ZEndIndex;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setZResolution(float value)
+{
+  m_ZResolution = value;
+}
+
+// -----------------------------------------------------------------------------
+float EbsdToH5Ebsd::getZResolution() const
+{
+  return m_ZResolution;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setRefFrameZDir(uint32_t value)
+{
+  m_RefFrameZDir = value;
+}
+
+// -----------------------------------------------------------------------------
+uint32_t EbsdToH5Ebsd::getRefFrameZDir() const
+{
+  return m_RefFrameZDir;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setInputPath(const QString& value)
+{
+  m_InputPath = value;
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::getInputPath() const
+{
+  return m_InputPath;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setFilePrefix(const QString& value)
+{
+  m_FilePrefix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::getFilePrefix() const
+{
+  return m_FilePrefix;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setFileSuffix(const QString& value)
+{
+  m_FileSuffix = value;
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::getFileSuffix() const
+{
+  return m_FileSuffix;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setFileExtension(const QString& value)
+{
+  m_FileExtension = value;
+}
+
+// -----------------------------------------------------------------------------
+QString EbsdToH5Ebsd::getFileExtension() const
+{
+  return m_FileExtension;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setPaddingDigits(int value)
+{
+  m_PaddingDigits = value;
+}
+
+// -----------------------------------------------------------------------------
+int EbsdToH5Ebsd::getPaddingDigits() const
+{
+  return m_PaddingDigits;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setSampleTransformation(const AxisAngleInput_t& value)
+{
+  m_SampleTransformation = value;
+}
+
+// -----------------------------------------------------------------------------
+AxisAngleInput_t EbsdToH5Ebsd::getSampleTransformation() const
+{
+  return m_SampleTransformation;
+}
+
+// -----------------------------------------------------------------------------
+void EbsdToH5Ebsd::setEulerTransformation(const AxisAngleInput_t& value)
+{
+  m_EulerTransformation = value;
+}
+
+// -----------------------------------------------------------------------------
+AxisAngleInput_t EbsdToH5Ebsd::getEulerTransformation() const
+{
+  return m_EulerTransformation;
 }

@@ -33,9 +33,12 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindBasalLoadingFactor.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
@@ -45,9 +48,19 @@
 #include "SIMPLib/Math/GeometryMath.h"
 #include "SIMPLib/Math/MatrixMath.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+
+#include "OrientationLib/Core/OrientationTransformation.hpp"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -56,10 +69,9 @@ FindBasalLoadingFactor::FindBasalLoadingFactor()
 : m_AvgQuatsArrayPath("", "", "")
 , m_BasalLoadingFactorArrayPath("", "", "")
 {
-  m_LoadingDirection.x = 1.0f;
-  m_LoadingDirection.y = 1.0f;
-  m_LoadingDirection.z = 1.0f;
-
+  m_LoadingDirection[0] = 1.0f;
+  m_LoadingDirection[1] = 1.0f;
+  m_LoadingDirection[2] = 1.0f;
 }
 
 // -----------------------------------------------------------------------------
@@ -72,7 +84,7 @@ FindBasalLoadingFactor::~FindBasalLoadingFactor() = default;
 // -----------------------------------------------------------------------------
 void FindBasalLoadingFactor::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Loading Direction", LoadingDirection, FilterParameter::Parameter, FindBasalLoadingFactor));
 
@@ -110,10 +122,10 @@ void FindBasalLoadingFactor::initialize()
 // -----------------------------------------------------------------------------
 void FindBasalLoadingFactor::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 4);
+  std::vector<size_t> dims(1, 4);
   m_AvgQuatsPtr =
       getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getAvgQuatsArrayPath(), dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_AvgQuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -122,8 +134,7 @@ void FindBasalLoadingFactor::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   dims[0] = 1;
-  m_BasalLoadingFactorPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-      this, getBasalLoadingFactorArrayPath(), 0, dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_BasalLoadingFactorPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getBasalLoadingFactorArrayPath(), 0, dims, "", DataArrayID31);
   if(nullptr != m_BasalLoadingFactorPtr.lock())         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_BasalLoadingFactor = m_BasalLoadingFactorPtr.lock()->getPointer(0);
@@ -148,40 +159,35 @@ void FindBasalLoadingFactor::preflight()
 // -----------------------------------------------------------------------------
 void FindBasalLoadingFactor::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
   size_t totalFeatures = m_BasalLoadingFactorPtr.lock()->getNumberOfTuples();
 
-  // int ss = 0;
   QuatF q1;
-  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
+  //  QuatF* avgQuats = reinterpret_cast<QuatF*>(m_AvgQuats);
 
   float sampleLoading[3];
-  // typedef DataArray<unsigned int> XTalType;
-
   float w;
   float g1[3][3];
   float g1t[3][3];
   float caxis[3] = {0, 0, 1};
   float c1[3];
 
-  sampleLoading[0] = m_LoadingDirection.x;
-  sampleLoading[1] = m_LoadingDirection.y;
-  sampleLoading[2] = m_LoadingDirection.z;
+  sampleLoading[0] = m_LoadingDirection[0];
+  sampleLoading[1] = m_LoadingDirection[1];
+  sampleLoading[2] = m_LoadingDirection[2];
   MatrixMath::Normalize3x1(sampleLoading);
 
   for(size_t i = 1; i < totalFeatures; i++)
   {
-    QuaternionMathF::Copy(avgQuats[i], q1);
-    FOrientArrayType om(9);
-    FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-    om.toGMatrix(g1);
+    QuatF q1(m_AvgQuats + i * 4);
+    OrientationTransformation::qu2om<QuatF, OrientationF>(q1).toGMatrix(g1);
     // transpose the g matricies so when caxis is multiplied by it
     // it will give the sample direction that the caxis is along
     MatrixMath::Transpose3x3(g1, g1t);
@@ -190,7 +196,7 @@ void FindBasalLoadingFactor::execute()
     MatrixMath::Normalize3x1(c1);
     if(c1[2] < 0)
     {
-      MatrixMath::Multiply3x1withConstant(c1, -1);
+      MatrixMath::Multiply3x1withConstant(c1, -1.0f);
     }
     w = GeometryMath::CosThetaBetweenVectors(c1, sampleLoading);
     w = acos(w);
@@ -198,7 +204,7 @@ void FindBasalLoadingFactor::execute()
     m_BasalLoadingFactor[i] = w;
   }
 
-  notifyStatusMessage(getHumanLabel(), "FindBasalLoadingFactor Completed");
+  notifyStatusMessage("FindBasalLoadingFactor Completed");
 }
 
 // -----------------------------------------------------------------------------
@@ -217,7 +223,7 @@ AbstractFilter::Pointer FindBasalLoadingFactor::newFilterInstance(bool copyFilte
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBasalLoadingFactor::getCompiledLibraryName() const
+QString FindBasalLoadingFactor::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -225,7 +231,7 @@ const QString FindBasalLoadingFactor::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBasalLoadingFactor::getBrandingString() const
+QString FindBasalLoadingFactor::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -233,7 +239,7 @@ const QString FindBasalLoadingFactor::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBasalLoadingFactor::getFilterVersion() const
+QString FindBasalLoadingFactor::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -244,7 +250,7 @@ const QString FindBasalLoadingFactor::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBasalLoadingFactor::getGroupName() const
+QString FindBasalLoadingFactor::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -252,7 +258,7 @@ const QString FindBasalLoadingFactor::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindBasalLoadingFactor::getUuid()
+QUuid FindBasalLoadingFactor::getUuid() const
 {
   return QUuid("{4a8cf012-7ce0-5479-970e-3f5e2052396e}");
 }
@@ -260,7 +266,7 @@ const QUuid FindBasalLoadingFactor::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBasalLoadingFactor::getSubGroupName() const
+QString FindBasalLoadingFactor::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -268,7 +274,72 @@ const QString FindBasalLoadingFactor::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindBasalLoadingFactor::getHumanLabel() const
+QString FindBasalLoadingFactor::getHumanLabel() const
 {
   return "Find Basal Loading Factors";
+}
+
+// -----------------------------------------------------------------------------
+FindBasalLoadingFactor::Pointer FindBasalLoadingFactor::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindBasalLoadingFactor> FindBasalLoadingFactor::New()
+{
+  struct make_shared_enabler : public FindBasalLoadingFactor
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindBasalLoadingFactor::getNameOfClass() const
+{
+  return QString("FindBasalLoadingFactor");
+}
+
+// -----------------------------------------------------------------------------
+QString FindBasalLoadingFactor::ClassName()
+{
+  return QString("FindBasalLoadingFactor");
+}
+
+// -----------------------------------------------------------------------------
+void FindBasalLoadingFactor::setAvgQuatsArrayPath(const DataArrayPath& value)
+{
+  m_AvgQuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindBasalLoadingFactor::getAvgQuatsArrayPath() const
+{
+  return m_AvgQuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindBasalLoadingFactor::setBasalLoadingFactorArrayPath(const DataArrayPath& value)
+{
+  m_BasalLoadingFactorArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindBasalLoadingFactor::getBasalLoadingFactorArrayPath() const
+{
+  return m_BasalLoadingFactorArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindBasalLoadingFactor::setLoadingDirection(const FloatVec3Type& value)
+{
+  m_LoadingDirection = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type FindBasalLoadingFactor::getLoadingDirection() const
+{
+  return m_LoadingDirection;
 }

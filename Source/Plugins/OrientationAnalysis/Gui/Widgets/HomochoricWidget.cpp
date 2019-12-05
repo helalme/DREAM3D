@@ -37,6 +37,7 @@
 
 #include <QtGui/QDoubleValidator>
 
+#include "OrientationLib/Core/OrientationTransformation.hpp"
 
 // -----------------------------------------------------------------------------
 //
@@ -75,7 +76,7 @@ void HomochoricWidget::updateData(OrientationUtilityCalculator* calculator)
 {
   setStyleSheet("");
 
-  if(calculator->getInputType() == OrientationConverter<double>::Homochoric)
+  if(calculator->getInputType() == OrientationRepresentation::Type::Homochoric)
   {
     // The input type is the same as this widget, so don't update
     return;
@@ -89,7 +90,7 @@ void HomochoricWidget::updateData(OrientationUtilityCalculator* calculator)
     return;
   }
 
-  QVector<double> hValues = calculator->getValues(OrientationConverter<double>::Homochoric);
+  QVector<double> hValues = calculator->getValues(OrientationRepresentation::Type::Homochoric);
 
   if(hValues.size() == 3)
   {
@@ -105,7 +106,7 @@ void HomochoricWidget::updateData(OrientationUtilityCalculator* calculator)
 void HomochoricWidget::valuesUpdated(const QString& text)
 {
   QVector<double> values = getValues();
-  OrientationTransforms<QVector<double>, double>::ResultType result = OrientationTransforms<QVector<double>, double>::ho_check(values);
+  OrientationTransformation::ResultType result = OrientationTransformation::ho_check(values);
   int errorCode = result.result;
   QString errorMsg = QString::fromStdString(result.msg);
 
@@ -113,11 +114,11 @@ void HomochoricWidget::valuesUpdated(const QString& text)
 
   if(errorCode >= 0)
   {
-    emit valuesChanged(values, OrientationConverter<double>::Homochoric, false);
+    emit valuesChanged(values, OrientationRepresentation::Type::Homochoric, false);
   }
   else
   {
-    emit valuesChanged(QVector<double>(), OrientationConverter<double>::Homochoric, true);
+    emit valuesChanged(QVector<double>(), OrientationRepresentation::Type::Homochoric, true);
     emit invalidValues(errorCode, errorMsg);
   }
 }

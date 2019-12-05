@@ -41,11 +41,15 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
-#include <QtCore/QMetaProperty>
 #include <QtCore/QString>
 
 // DREAM3DLib includes
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+
 #include "SIMPLib/Filtering/FilterFactory.hpp"
 #include "SIMPLib/Filtering/FilterManager.h"
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
@@ -68,12 +72,12 @@ void GenerateCodeForFilter(const QString& outDir, AbstractFilter::Pointer filter
   f.open(QFile::WriteOnly);
   QTextStream out(&f);
 
-  QVector<FilterParameter::Pointer> options = filter->getFilterParameters();
+  FilterParameterVectorType options = filter->getFilterParameters();
 
   out << "function [ Filter_Parts ] = " << filterClassName << '\n';
 
   int i = 1;
-  for(QVector<FilterParameter::Pointer>::iterator iter = options.begin(); iter != options.end(); ++iter)
+  for(FilterParameterVectorType::iterator iter = options.begin(); iter != options.end(); ++iter)
   {
     SeparatorFilterParameter::Pointer sepFiltParam = SeparatorFilterParameter::New();
     FilterParameter* option = (*iter).get();

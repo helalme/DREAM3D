@@ -40,15 +40,14 @@
 #include <vector>
 
 #include <QtCore/QCoreApplication>
-#include <QtCore/QDir>
-#include <QtCore/QFile>
+#include <QtCore/QDebug>
 #include <QtCore/QMetaProperty>
-#include <QtCore/QObject>
-#include <QtCore/QSettings>
 #include <QtCore/QString>
-#include <QtCore/QtDebug>
+
+#include <QtCore/QTextStream>
 
 #include "SIMPLib/Common/Observer.h"
+
 #include "SIMPLib/FilterParameters/JsonFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/JsonFilterParametersWriter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
@@ -59,6 +58,8 @@
 #include "SIMPLib/Plugin/ISIMPLibPlugin.h"
 #include "SIMPLib/Plugin/SIMPLibPluginLoader.h"
 #include "SIMPLib/SIMPLib.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
+
 #include "UnitTestSupport.hpp"
 
 #include "DREAM3DTestFileLocations.h"
@@ -125,7 +126,7 @@ void RemoveTestFiles()
       (*filter)->setVoxelDataContainer(m.get());                                                                                                                                                       \
       setCurrentFilter(*filter);                                                                                                                                                                       \
       (*filter)->preflight();                                                                                                                                                                          \
-      err = (*filter)->getErrorCondition();                                                                                                                                                            \
+      err = (*filter)->getErrorCode();                                                                                                                                                                 \
       if(err < 0)                                                                                                                                                                                      \
       {                                                                                                                                                                                                \
         preflightError |= err;                                                                                                                                                                         \
@@ -180,10 +181,10 @@ void GenerateCopyCode()
     std::cout << "*/" << std::endl;
 
     std::cout << "  " << cn << "::Pointer filter = " << cn << "::New();" << std::endl;
-    std::cout << "  if(true == copyFilterParameters)\n  {" << std::endl;
+    std::cout << "  if(copyFilterParameters)\n  {" << std::endl;
 
-    QVector<FilterParameter::Pointer> options = filter->getFilterParameters();
-    for(QVector<FilterParameter::Pointer>::iterator iter = options.begin(); iter != options.end(); ++iter)
+    FilterParameterVectorType options = filter->getFilterParameters();
+    for(FilterParameterVectorType::iterator iter = options.begin(); iter != options.end(); ++iter)
     {
       FilterParameter* option = (*iter).get();
       QByteArray normType = QString("%1").arg(option->getPropertyName()).toLatin1();
@@ -226,8 +227,8 @@ void verifyFilterParameters()
     AbstractFilter::Pointer filter = factory->create();
     const QMetaObject* meta = filter->metaObject();
     //    qDebug() << filter->getNameOfClass() << "Default Values";
-    QVector<FilterParameter::Pointer> options = filter->getFilterParameters();
-    for(QVector<FilterParameter::Pointer>::iterator iter = options.begin(); iter != options.end(); ++iter)
+    FilterParameterVectorType options = filter->getFilterParameters();
+    for(FilterParameterVectorType::iterator iter = options.begin(); iter != options.end(); ++iter)
     {
       FilterParameter* option = (*iter).get();
       if(option->getHumanLabel().compare("Required Information") == 0 || option->getHumanLabel().compare("Created Information") == 0 || option->getHumanLabel().compare("Optional Information") == 0)
@@ -398,11 +399,11 @@ void TestPreflight(bool dataContainer = false, bool attributeMatrix = false, boo
       pipeline->preflightPipeline();
 
       // DREAM3D_REQUIRE_EQUAL(filter->getInPreflight(), false);
-      err = pipeline->getErrorCondition();
+      err = pipeline->getErrorCode();
       // An error condition GREATER than ZERO is an anomoly and should be looked at.
       if(err > 0)
       {
-        qDebug() << "Anomalous result for Preflight for " << filter->getGroupName() << "/" << filter->getNameOfClass() << " Error Condition = " << filter->getErrorCondition();
+        qDebug() << "Anomalous result for Preflight for " << filter->getGroupName() << "/" << filter->getNameOfClass() << " Error Condition = " << filter->getErrorCode();
       }
       pipeline->popBack();
     }
@@ -463,7 +464,7 @@ void TestUncategorizedFilterParameters()
       AbstractFilter::Pointer filter = factory->create();
       if(filter.get() != nullptr)
       {
-        QVector<FilterParameter::Pointer> parameters = filter->getFilterParameters();
+        FilterParameterVectorType parameters = filter->getFilterParameters();
         foreach(FilterParameter::Pointer fp, parameters)
         {
           if(fp->getCategory() == FilterParameter::Uncategorized)

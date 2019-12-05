@@ -2,11 +2,18 @@
  * Your License or Copyright can go here
  */
 
+#include <memory>
+
 #include "FixNonmanifoldVoxels.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -30,8 +37,8 @@ FixNonmanifoldVoxels::~FixNonmanifoldVoxels() = default;
 // -----------------------------------------------------------------------------
 void FixNonmanifoldVoxels::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -40,7 +47,7 @@ void FixNonmanifoldVoxels::initialize()
 // -----------------------------------------------------------------------------
 void FixNonmanifoldVoxels::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateCategoryRequirement(SIMPL::TypeNames::Int32, 1, AttributeMatrix::Category::Element);
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Feature Ids", FeatureIdsArrayPath, FilterParameter::RequiredArray, FixNonmanifoldVoxels, req));
@@ -53,19 +60,18 @@ void FixNonmanifoldVoxels::setupFilterParameters()
 // -----------------------------------------------------------------------------
 void FixNonmanifoldVoxels::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   IGeometry::Pointer geom = getDataContainerArray()->getPrereqGeometryFromDataContainer<IGeometry, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
   ImageGeom::Pointer imageGeom = std::dynamic_pointer_cast<ImageGeom>(geom);
   if(nullptr == imageGeom)
   {
-    setErrorCondition(-12001);
     QString ss = QObject::tr("This filter only works on ImageGeometry.");
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-12001, ss);
   }
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(), cDims);
   if(nullptr != m_FeatureIdsPtr.lock())
   {
@@ -102,8 +108,7 @@ void FixNonmanifoldVoxels::execute()
   DataArrayPath featurePath = getFeatureIdsArrayPath();
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(featurePath.getDataContainerName());
 
-  size_t udims[3] = {0, 0, 0};
-  std::tie(udims[0], udims[1], udims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type udims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
   int64_t dims[3] = {
       static_cast<int64_t>(udims[0]),
@@ -215,7 +220,7 @@ AbstractFilter::Pointer FixNonmanifoldVoxels::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FixNonmanifoldVoxels::getCompiledLibraryName() const
+QString FixNonmanifoldVoxels::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -223,7 +228,7 @@ const QString FixNonmanifoldVoxels::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FixNonmanifoldVoxels::getBrandingString() const
+QString FixNonmanifoldVoxels::getBrandingString() const
 {
   return "Processing";
 }
@@ -231,7 +236,7 @@ const QString FixNonmanifoldVoxels::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FixNonmanifoldVoxels::getFilterVersion() const
+QString FixNonmanifoldVoxels::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -242,7 +247,7 @@ const QString FixNonmanifoldVoxels::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FixNonmanifoldVoxels::getGroupName() const
+QString FixNonmanifoldVoxels::getGroupName() const
 {
   return SIMPL::FilterGroups::Unsupported;
 }
@@ -250,7 +255,7 @@ const QString FixNonmanifoldVoxels::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FixNonmanifoldVoxels::getSubGroupName() const
+QString FixNonmanifoldVoxels::getSubGroupName() const
 {
   return "Processing";
 }
@@ -258,7 +263,7 @@ const QString FixNonmanifoldVoxels::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FixNonmanifoldVoxels::getHumanLabel() const
+QString FixNonmanifoldVoxels::getHumanLabel() const
 {
   return "FixNonmanifoldVoxels";
 }
@@ -266,7 +271,48 @@ const QString FixNonmanifoldVoxels::getHumanLabel() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FixNonmanifoldVoxels::getUuid()
+QUuid FixNonmanifoldVoxels::getUuid() const
 {
   return QUuid("{1f7f2bec-50d9-5e24-a8d4-8fd291ffed9d}");
+}
+
+// -----------------------------------------------------------------------------
+FixNonmanifoldVoxels::Pointer FixNonmanifoldVoxels::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FixNonmanifoldVoxels> FixNonmanifoldVoxels::New()
+{
+  struct make_shared_enabler : public FixNonmanifoldVoxels
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FixNonmanifoldVoxels::getNameOfClass() const
+{
+  return QString("_SUPERFixNonmanifoldVoxels");
+}
+
+// -----------------------------------------------------------------------------
+QString FixNonmanifoldVoxels::ClassName()
+{
+  return QString("_SUPERFixNonmanifoldVoxels");
+}
+
+// -----------------------------------------------------------------------------
+void FixNonmanifoldVoxels::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FixNonmanifoldVoxels::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
 }

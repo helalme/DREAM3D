@@ -33,17 +33,25 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "ChangeResolution.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatVec3FilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingVersion.h"
@@ -59,10 +67,9 @@ ChangeResolution::ChangeResolution()
 , m_SaveAsNewDataContainer(false)
 , m_FeatureIdsArrayPath(SIMPL::Defaults::ImageDataContainerName, SIMPL::Defaults::CellAttributeMatrixName, SIMPL::CellData::FeatureIds)
 {
-  m_Resolution.x = 1.0f;
-  m_Resolution.y = 1.0f;
-  m_Resolution.z = 1.0f;
-
+  m_Spacing[0] = 1.0f;
+  m_Spacing[1] = 1.0f;
+  m_Spacing[2] = 1.0f;
 }
 
 // -----------------------------------------------------------------------------
@@ -75,8 +82,8 @@ ChangeResolution::~ChangeResolution() = default;
 // -----------------------------------------------------------------------------
 void ChangeResolution::setupFilterParameters()
 {
-  FilterParameterVector parameters;
-  parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Resolution", Resolution, FilterParameter::Parameter, ChangeResolution));
+  FilterParameterVectorType parameters;
+  parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Spacing", Spacing, FilterParameter::Parameter, ChangeResolution));
 
   QStringList linkedProps;
   linkedProps << "CellFeatureAttributeMatrixPath"
@@ -101,7 +108,7 @@ void ChangeResolution::setupFilterParameters()
         AttributeMatrixSelectionFilterParameter::CreateRequirement(AttributeMatrix::Type::CellFeature, IGeometry::Type::Image);
     parameters.push_back(SIMPL_NEW_AM_SELECTION_FP("Cell Feature Attribute Matrix", CellFeatureAttributeMatrixPath, FilterParameter::RequiredArray, ChangeResolution, req));
   }
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", NewDataContainerName, FilterParameter::CreatedArray, ChangeResolution));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", NewDataContainerName, FilterParameter::CreatedArray, ChangeResolution));
   setFilterParameters(parameters);
 }
 
@@ -111,11 +118,11 @@ void ChangeResolution::setupFilterParameters()
 void ChangeResolution::readFilterParameters(AbstractFilterParametersReader* reader, int index)
 {
   reader->openFilterGroup(this, index);
-  setNewDataContainerName(reader->readString("NewDataContainerName", getNewDataContainerName()));
+  setNewDataContainerName(reader->readDataArrayPath("NewDataContainerName", getNewDataContainerName()));
   setCellAttributeMatrixPath(reader->readDataArrayPath("CellAttributeMatrixPath", getCellAttributeMatrixPath()));
   setCellFeatureAttributeMatrixPath(reader->readDataArrayPath("CellFeatureAttributeMatrixPath", getCellFeatureAttributeMatrixPath()));
   setFeatureIdsArrayPath(reader->readDataArrayPath("FeatureIdsArrayPath", getFeatureIdsArrayPath()));
-  setResolution(reader->readFloatVec3("Resolution", getResolution()));
+  setSpacing(reader->readFloatVec3("Spacing", getSpacing()));
   setRenumberFeatures(reader->readValue("RenumberFeatures", getRenumberFeatures()));
   setSaveAsNewDataContainer(reader->readValue("SaveAsNewDataContainer", getSaveAsNewDataContainer()));
   reader->closeFilterGroup();
@@ -133,28 +140,25 @@ void ChangeResolution::initialize()
 // -----------------------------------------------------------------------------
 void ChangeResolution::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  if(getResolution().x <= 0)
+  if(getSpacing()[0] <= 0)
   {
-    QString ss = QObject::tr("The X resolution (%1) must be positive").arg(getResolution().x);
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    QString ss = QObject::tr("The X spacing (%1) must be positive").arg(getSpacing()[0]);
+    setErrorCondition(-5555, ss);
   }
 
-  if(getResolution().y <= 0)
+  if(getSpacing()[1] <= 0)
   {
-    QString ss = QObject::tr("The Y resolution (%1) must be positive").arg(getResolution().y);
-    setErrorCondition(-5556);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    QString ss = QObject::tr("The Y spacing (%1) must be positive").arg(getSpacing()[1]);
+    setErrorCondition(-5556, ss);
   }
 
-  if(getResolution().z <= 0)
+  if(getSpacing()[2] <= 0)
   {
-    QString ss = QObject::tr("The  resolution (%1) must be positive").arg(getResolution().z);
-    setErrorCondition(-5557);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    QString ss = QObject::tr("The  spacing (%1) must be positive").arg(getSpacing()[2]);
+    setErrorCondition(-5557, ss);
   }
 
   if(!getSaveAsNewDataContainer())
@@ -163,7 +167,7 @@ void ChangeResolution::dataCheck()
   }
   else
   {
-    getDataContainerArray()->duplicateDataContainer(getCellAttributeMatrixPath().getDataContainerName(), getNewDataContainerName());
+    getDataContainerArray()->duplicateDataContainer(getCellAttributeMatrixPath().getDataContainerName(), getNewDataContainerName().getDataContainerName());
     getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getCellAttributeMatrixPath().getDataContainerName());
   }
 
@@ -171,7 +175,7 @@ void ChangeResolution::dataCheck()
 
   if(getRenumberFeatures())
   {
-    QVector<size_t> cDims(1, 1);
+    std::vector<size_t> cDims(1, 1);
     m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                           cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
     if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -191,7 +195,7 @@ void ChangeResolution::preflight()
   emit updateFilterParameters(this);
   dataCheck();
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     emit preflightExecuted();
     setInPreflight(false);
@@ -208,22 +212,17 @@ void ChangeResolution::preflight()
     m = getDataContainerArray()->getDataContainer(getNewDataContainerName());
   }
 
-  size_t dims[3] = {0, 0, 0};
-
   ImageGeom::Pointer image = m->getGeometryAs<ImageGeom>();
-  std::tie(dims[0], dims[1], dims[2]) = image->getDimensions();
+  SizeVec3Type dims = image->getDimensions();
 
-  float sizex = 0.0f;
-  float sizey = 0.0f;
-  float sizez = 0.0f;
-  std::tie(sizex, sizey, sizez) = m->getGeometryAs<ImageGeom>()->getResolution();
-  sizex *= static_cast<float>(dims[0]);
-  sizey *= static_cast<float>(dims[1]);
-  sizez *= static_cast<float>(dims[2]);
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
+  spacing[0] *= static_cast<float>(dims[0]);
+  spacing[1] *= static_cast<float>(dims[1]);
+  spacing[2] *= static_cast<float>(dims[2]);
 
-  size_t m_XP = size_t(sizex / m_Resolution.x);
-  size_t m_YP = size_t(sizey / m_Resolution.y);
-  size_t m_ZP = size_t(sizez / m_Resolution.z);
+  size_t m_XP = size_t(spacing[0] / m_Spacing[0]);
+  size_t m_YP = size_t(spacing[1] / m_Spacing[1]);
+  size_t m_ZP = size_t(spacing[2] / m_Spacing[2]);
   if(m_XP == 0)
   {
     m_XP = 1;
@@ -238,9 +237,9 @@ void ChangeResolution::preflight()
   }
 
   image->setDimensions(std::make_tuple(m_XP, m_YP, m_ZP));
-  image->setResolution(std::make_tuple(m_Resolution.x, m_Resolution.y, m_Resolution.z));
+  image->setSpacing(std::make_tuple(m_Spacing[0], m_Spacing[1], m_Spacing[2]));
 
-  QVector<size_t> tDims(3, 0);
+  std::vector<size_t> tDims(3, 0);
   tDims[0] = m_XP;
   tDims[1] = m_YP;
   tDims[2] = m_ZP;
@@ -266,10 +265,10 @@ void ChangeResolution::preflight()
     IDataArray::Pointer data = p->createNewArray(totalPoints, p->getComponentDimensions(), p->getName(), false);
 
     cellAttrMat->removeAttributeArray(*iter);
-    newCellAttrMat->addAttributeArray(*iter, data);
+    newCellAttrMat->insertOrAssign(data);
   }
   m->removeAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName());
-  m->addAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName(), newCellAttrMat);
+  m->addOrReplaceAttributeMatrix(newCellAttrMat);
 
   if(m_RenumberFeatures)
   {
@@ -289,10 +288,10 @@ void ChangeResolution::preflight()
 // -----------------------------------------------------------------------------
 void ChangeResolution::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -306,32 +305,24 @@ void ChangeResolution::execute()
   {
     m = getDataContainerArray()->getDataContainer(getNewDataContainerName());
   }
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
-  if(xRes == m_Resolution.x && yRes == m_Resolution.y && zRes == m_Resolution.z)
+  if(spacing[0] == m_Spacing[0] && spacing[1] == m_Spacing[1] && spacing[2] == m_Spacing[2])
   {
     return;
   }
 
   AttributeMatrix::Pointer cellAttrMat = m->getAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName());
 
-  size_t dims[3] = {0, 0, 0};
-  std::tie(dims[0], dims[1], dims[2]) = m->getGeometryAs<ImageGeom>()->getDimensions();
+  SizeVec3Type dims = m->getGeometryAs<ImageGeom>()->getDimensions();
 
-  float sizex = 0.0f;
-  float sizey = 0.0f;
-  float sizez = 0.0f;
-  std::tie(sizex, sizey, sizez) = m->getGeometryAs<ImageGeom>()->getResolution();
-  sizex *= static_cast<float>(dims[0]);
-  sizey *= static_cast<float>(dims[1]);
-  sizez *= static_cast<float>(dims[2]);
+  spacing[0] *= static_cast<float>(dims[0]);
+  spacing[1] *= static_cast<float>(dims[1]);
+  spacing[2] *= static_cast<float>(dims[2]);
 
-  size_t m_XP = size_t(sizex / m_Resolution.x);
-  size_t m_YP = size_t(sizey / m_Resolution.y);
-  size_t m_ZP = size_t(sizez / m_Resolution.z);
+  size_t m_XP = size_t(spacing[0] / m_Spacing[0]);
+  size_t m_YP = size_t(spacing[1] / m_Spacing[1]);
+  size_t m_ZP = size_t(spacing[2] / m_Spacing[2]);
   if(m_XP == 0)
   {
     m_XP = 1;
@@ -352,8 +343,7 @@ void ChangeResolution::execute()
   size_t index_old = 0;
   size_t progressInt = 0;
   std::vector<size_t> newindicies(totalPoints);
-  float res[3] = {0.0f, 0.0f, 0.0f};
-  m->getGeometryAs<ImageGeom>()->getResolution(res);
+  FloatVec3Type res = m->getGeometryAs<ImageGeom>()->getSpacing();
 
   for(size_t i = 0; i < m_ZP; i++)
   {
@@ -362,15 +352,15 @@ void ChangeResolution::execute()
       break;
     }
     progressInt = static_cast<size_t>((static_cast<float>(i) / m_ZP) * 100.0f);
-    QString ss = QObject::tr("Changing Resolution || %1% Complete").arg(progressInt);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    QString ss = QObject::tr("Changing Spacing || %1% Complete").arg(progressInt);
+    notifyStatusMessage(ss);
     for(size_t j = 0; j < m_YP; j++)
     {
       for(size_t k = 0; k < m_XP; k++)
       {
-        x = (k * m_Resolution.x);
-        y = (j * m_Resolution.y);
-        z = (i * m_Resolution.z);
+        x = (k * m_Spacing[0]);
+        y = (j * m_Spacing[1]);
+        z = (i * m_Spacing[2]);
         col = size_t(x / res[0]);
         row = size_t(y / res[1]);
         plane = size_t(z / res[2]);
@@ -382,9 +372,9 @@ void ChangeResolution::execute()
   }
 
   QString ss = QObject::tr("Copying Data...");
-  notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+  notifyStatusMessage(ss);
 
-  QVector<size_t> tDims(3, 0);
+  std::vector<size_t> tDims(3, 0);
   tDims[0] = m_XP;
   tDims[1] = m_YP;
   tDims[2] = m_ZP;
@@ -398,7 +388,7 @@ void ChangeResolution::execute()
     // the data container this will over write the current array with
     // the same name. At least in theory.
     IDataArray::Pointer data = p->createNewArray(p->getNumberOfTuples(), p->getComponentDimensions(), p->getName());
-    data->resize(totalPoints);
+    data->resizeTuples(totalPoints);
     void* source = nullptr;
     void* destination = nullptr;
     size_t newIndicies_I = 0;
@@ -411,12 +401,12 @@ void ChangeResolution::execute()
       ::memcpy(destination, source, p->getTypeSize() * data->getNumberOfComponents());
     }
     cellAttrMat->removeAttributeArray(*iter);
-    newCellAttrMat->addAttributeArray(*iter, data);
+    newCellAttrMat->insertOrAssign(data);
   }
-  m->getGeometryAs<ImageGeom>()->setResolution(std::make_tuple(m_Resolution.x, m_Resolution.y, m_Resolution.z));
+  m->getGeometryAs<ImageGeom>()->setSpacing(std::make_tuple(m_Spacing[0], m_Spacing[1], m_Spacing[2]));
   m->getGeometryAs<ImageGeom>()->setDimensions(std::make_tuple(m_XP, m_YP, m_ZP));
   m->removeAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName());
-  m->addAttributeMatrix(getCellAttributeMatrixPath().getAttributeMatrixName(), newCellAttrMat);
+  m->addOrReplaceAttributeMatrix(newCellAttrMat);
 
   // Feature Ids MUST already be renumbered.
   if(m_RenumberFeatures)
@@ -427,7 +417,7 @@ void ChangeResolution::execute()
     QVector<bool> activeObjects(totalFeatures, false);
     if(0 == totalFeatures)
     {
-      notifyErrorMessage(getHumanLabel(), "The number of Features is 0 and should be greater than 0", -600);
+      setErrorCondition(-600, "The number of Features is 0 and should be greater than 0");
       return;
     }
 
@@ -462,7 +452,7 @@ AbstractFilter::Pointer ChangeResolution::newFilterInstance(bool copyFilterParam
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ChangeResolution::getCompiledLibraryName() const
+QString ChangeResolution::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -470,7 +460,7 @@ const QString ChangeResolution::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ChangeResolution::getBrandingString() const
+QString ChangeResolution::getBrandingString() const
 {
   return "Sampling";
 }
@@ -478,7 +468,7 @@ const QString ChangeResolution::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ChangeResolution::getFilterVersion() const
+QString ChangeResolution::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -488,7 +478,7 @@ const QString ChangeResolution::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ChangeResolution::getGroupName() const
+QString ChangeResolution::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -496,7 +486,7 @@ const QString ChangeResolution::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid ChangeResolution::getUuid()
+QUuid ChangeResolution::getUuid() const
 {
   return QUuid("{1966e540-759c-5798-ae26-0c6a3abc65c0}");
 }
@@ -504,7 +494,7 @@ const QUuid ChangeResolution::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ChangeResolution::getSubGroupName() const
+QString ChangeResolution::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ResolutionFilters;
 }
@@ -512,7 +502,120 @@ const QString ChangeResolution::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString ChangeResolution::getHumanLabel() const
+QString ChangeResolution::getHumanLabel() const
 {
-  return "Change Resolution";
+  return "Change Spacing";
+}
+
+// -----------------------------------------------------------------------------
+ChangeResolution::Pointer ChangeResolution::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<ChangeResolution> ChangeResolution::New()
+{
+  struct make_shared_enabler : public ChangeResolution
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString ChangeResolution::getNameOfClass() const
+{
+  return QString("ChangeResolution");
+}
+
+// -----------------------------------------------------------------------------
+QString ChangeResolution::ClassName()
+{
+  return QString("ChangeResolution");
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setNewDataContainerName(const DataArrayPath& value)
+{
+  m_NewDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ChangeResolution::getNewDataContainerName() const
+{
+  return m_NewDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setCellAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_CellAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ChangeResolution::getCellAttributeMatrixPath() const
+{
+  return m_CellAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setCellFeatureAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_CellFeatureAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ChangeResolution::getCellFeatureAttributeMatrixPath() const
+{
+  return m_CellFeatureAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setSpacing(const FloatVec3Type& value)
+{
+  m_Spacing = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type ChangeResolution::getSpacing() const
+{
+  return m_Spacing;
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setRenumberFeatures(bool value)
+{
+  m_RenumberFeatures = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ChangeResolution::getRenumberFeatures() const
+{
+  return m_RenumberFeatures;
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setSaveAsNewDataContainer(bool value)
+{
+  m_SaveAsNewDataContainer = value;
+}
+
+// -----------------------------------------------------------------------------
+bool ChangeResolution::getSaveAsNewDataContainer() const
+{
+  return m_SaveAsNewDataContainer;
+}
+
+// -----------------------------------------------------------------------------
+void ChangeResolution::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath ChangeResolution::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
 }

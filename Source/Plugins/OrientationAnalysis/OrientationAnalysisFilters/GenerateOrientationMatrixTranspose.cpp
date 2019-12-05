@@ -2,12 +2,18 @@
  * Your License or Copyright can go here
  */
 
+#include <memory>
+
 #include "GenerateOrientationMatrixTranspose.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/BooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
@@ -17,14 +23,21 @@
 #include <tbb/parallel_for.h>
 #include <tbb/partitioner.h>
 #include <tbb/task_scheduler_init.h>
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
+
 #endif
 
 class GenerateOrientationMatrixTransposeImpl
 {
 public:
-  GenerateOrientationMatrixTransposeImpl(GenerateOrientationMatrixTranspose* filter, float* inputRod, float* outputRod)
+  GenerateOrientationMatrixTransposeImpl(GenerateOrientationMatrixTranspose* filter, float* outputRod)
   : m_Filter(filter)
-  , m_Input(inputRod)
   , m_Output(outputRod)
   {
   }
@@ -64,7 +77,6 @@ public:
 #endif
 private:
   GenerateOrientationMatrixTranspose* m_Filter = nullptr;
-  float* m_Input;
   float* m_Output;
 };
 
@@ -87,8 +99,8 @@ GenerateOrientationMatrixTranspose::~GenerateOrientationMatrixTranspose() = defa
 // -----------------------------------------------------------------------------
 void GenerateOrientationMatrixTranspose::initialize()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   setCancel(false);
 }
 
@@ -97,10 +109,10 @@ void GenerateOrientationMatrixTranspose::initialize()
 // -----------------------------------------------------------------------------
 void GenerateOrientationMatrixTranspose::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   DataArraySelectionFilterParameter::RequirementType dasReq;
-  QVector<QVector<size_t>> comp;
-  comp.push_back(QVector<size_t>(1, 9));
+  std::vector<std::vector<size_t>> comp;
+  comp.push_back(std::vector<size_t>(1, 9));
   dasReq.componentDimensions = comp;
   dasReq.daTypes = { SIMPL::TypeNames::Float };
   
@@ -116,10 +128,10 @@ void GenerateOrientationMatrixTranspose::setupFilterParameters()
 // -----------------------------------------------------------------------------
 void GenerateOrientationMatrixTranspose::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   cDims[0] = 9;
   m_OrientationMatrixPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getOrientationMatrixDataArrayPath(), cDims);
   if(nullptr != m_OrientationMatrixPtr.lock())
@@ -128,8 +140,7 @@ void GenerateOrientationMatrixTranspose::dataCheck()
   }
 
   cDims[0] = 9;
-  m_OutputOrientationMatrixPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
-      this, getOutputDataArrayPath(), 0, cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_OutputOrientationMatrixPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getOutputDataArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_OutputOrientationMatrixPtr.lock())
   {
     m_OutputOrientationMatrix = m_OutputOrientationMatrixPtr.lock()->getPointer(0);
@@ -166,7 +177,7 @@ void GenerateOrientationMatrixTranspose::execute()
 {
   initialize();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -186,12 +197,12 @@ void GenerateOrientationMatrixTranspose::execute()
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
   if(doParallel)
   {
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, totalPoints), GenerateOrientationMatrixTransposeImpl(this, m_OrientationMatrix, m_OutputOrientationMatrix), tbb::auto_partitioner());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, totalPoints), GenerateOrientationMatrixTransposeImpl(this, m_OutputOrientationMatrix), tbb::auto_partitioner());
   }
   else
 #endif
   {
-    GenerateOrientationMatrixTransposeImpl serial(this, m_OrientationMatrix, m_OutputOrientationMatrix);
+    GenerateOrientationMatrixTransposeImpl serial(this, m_OutputOrientationMatrix);
     serial.convert(0, totalPoints);
   }
 
@@ -218,7 +229,7 @@ AbstractFilter::Pointer GenerateOrientationMatrixTranspose::newFilterInstance(bo
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateOrientationMatrixTranspose::getCompiledLibraryName() const
+QString GenerateOrientationMatrixTranspose::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -226,7 +237,7 @@ const QString GenerateOrientationMatrixTranspose::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateOrientationMatrixTranspose::getBrandingString() const
+QString GenerateOrientationMatrixTranspose::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -234,7 +245,7 @@ const QString GenerateOrientationMatrixTranspose::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateOrientationMatrixTranspose::getFilterVersion() const
+QString GenerateOrientationMatrixTranspose::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -245,7 +256,7 @@ const QString GenerateOrientationMatrixTranspose::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateOrientationMatrixTranspose::getGroupName() const
+QString GenerateOrientationMatrixTranspose::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -253,7 +264,7 @@ const QString GenerateOrientationMatrixTranspose::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateOrientationMatrixTranspose::getSubGroupName() const
+QString GenerateOrientationMatrixTranspose::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -261,7 +272,7 @@ const QString GenerateOrientationMatrixTranspose::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString GenerateOrientationMatrixTranspose::getHumanLabel() const
+QString GenerateOrientationMatrixTranspose::getHumanLabel() const
 {
   return "Generate Orientation Matrix Transpose";
 }
@@ -269,7 +280,72 @@ const QString GenerateOrientationMatrixTranspose::getHumanLabel() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid GenerateOrientationMatrixTranspose::getUuid()
+QUuid GenerateOrientationMatrixTranspose::getUuid() const
 {
   return QUuid("{ec58f4fe-8e51-527e-9536-8b6f185684be}");
+}
+
+// -----------------------------------------------------------------------------
+GenerateOrientationMatrixTranspose::Pointer GenerateOrientationMatrixTranspose::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<GenerateOrientationMatrixTranspose> GenerateOrientationMatrixTranspose::New()
+{
+  struct make_shared_enabler : public GenerateOrientationMatrixTranspose
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateOrientationMatrixTranspose::getNameOfClass() const
+{
+  return QString("_SUPERGenerateOrientationMatrixTranspose");
+}
+
+// -----------------------------------------------------------------------------
+QString GenerateOrientationMatrixTranspose::ClassName()
+{
+  return QString("_SUPERGenerateOrientationMatrixTranspose");
+}
+
+// -----------------------------------------------------------------------------
+void GenerateOrientationMatrixTranspose::setOrientationMatrixDataArrayPath(const DataArrayPath& value)
+{
+  m_OrientationMatrixDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateOrientationMatrixTranspose::getOrientationMatrixDataArrayPath() const
+{
+  return m_OrientationMatrixDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateOrientationMatrixTranspose::setOutputDataArrayPath(const DataArrayPath& value)
+{
+  m_OutputDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath GenerateOrientationMatrixTranspose::getOutputDataArrayPath() const
+{
+  return m_OutputDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void GenerateOrientationMatrixTranspose::setDeleteOriginalData(bool value)
+{
+  m_DeleteOriginalData = value;
+}
+
+// -----------------------------------------------------------------------------
+bool GenerateOrientationMatrixTranspose::getDeleteOriginalData() const
+{
+  return m_DeleteOriginalData;
 }

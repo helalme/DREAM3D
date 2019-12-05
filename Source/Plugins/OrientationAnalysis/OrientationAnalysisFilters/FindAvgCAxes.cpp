@@ -33,19 +33,35 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindAvgCAxes.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Math/GeometryMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
+#include "OrientationLib/LaueOps/LaueOps.h"
 
 #include "OrientationAnalysis/OrientationAnalysisConstants.h"
 #include "OrientationAnalysis/OrientationAnalysisVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -55,7 +71,6 @@ FindAvgCAxes::FindAvgCAxes()
 , m_FeatureIdsArrayPath("", "", "")
 , m_AvgCAxesArrayPath("", "", "")
 {
-  m_OrientationOps = LaueOps::getOrientationOpsQVector();
 
 }
 
@@ -69,7 +84,7 @@ FindAvgCAxes::~FindAvgCAxes() = default;
 // -----------------------------------------------------------------------------
 void FindAvgCAxes::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Element Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req = DataArraySelectionFilterParameter::CreateCategoryRequirement(SIMPL::TypeNames::Float, 4, AttributeMatrix::Category::Element);
@@ -112,19 +127,19 @@ void FindAvgCAxes::initialize()
 // -----------------------------------------------------------------------------
 void FindAvgCAxes::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   QVector<DataArrayPath> dataArrayPaths;
 
-  QVector<size_t> cDims(1, 4);
+  std::vector<size_t> cDims(1, 4);
   m_QuatsPtr =
       getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getQuatsArrayPath(), cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_QuatsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_Quats = m_QuatsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getQuatsArrayPath());
   }
@@ -136,14 +151,13 @@ void FindAvgCAxes::dataCheck()
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   } /* Now assign the raw pointer to data from the DataArray<T> object */
-  if(getErrorCondition() >= 0)
+  if(getErrorCode() >= 0)
   {
     dataArrayPaths.push_back(getFeatureIdsArrayPath());
   }
 
   cDims[0] = 3;
-  m_AvgCAxesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getAvgCAxesArrayPath(), 0,
-                                                                                                                 cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
+  m_AvgCAxesPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, getAvgCAxesArrayPath(), 0, cDims, "", DataArrayID31);
   if(nullptr != m_AvgCAxesPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
     m_AvgCAxes = m_AvgCAxesPtr.lock()->getPointer(0);
@@ -170,19 +184,18 @@ void FindAvgCAxes::preflight()
 // -----------------------------------------------------------------------------
 void FindAvgCAxes::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
+  QVector<LaueOps::Pointer> m_OrientationOps = LaueOps::getOrientationOpsQVector();
 
   size_t totalPoints = m_FeatureIdsPtr.lock()->getNumberOfTuples();
   size_t totalFeatures = m_AvgCAxesPtr.lock()->getNumberOfTuples();
 
-  QuatF q1 = QuaternionMathF::New();
-  QuatF* quats = reinterpret_cast<QuatF*>(m_Quats);
   float g1[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float g1t[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float caxis[3] = {0.0f, 0.0f, 1.0f};
@@ -198,11 +211,9 @@ void FindAvgCAxes::execute()
     if(m_FeatureIds[i] > 0)
     {
       index = 3 * m_FeatureIds[i];
-      QuaternionMathF::Copy(quats[i], q1);
+      Quaternion<float> q1(m_Quats + i * 4); // BEWARE POINTER MATH!!!
+      OrientationTransformation::qu2om<Quaternion<float>, Orientation<float>>(q1).toGMatrix(g1);
 
-      FOrientArrayType om(9);
-      FOrientTransformsType::qu2om(FOrientArrayType(q1), om);
-      om.toGMatrix(g1);
       // transpose the g matricies so when caxis is multiplied by it
       // it will give the sample direction that the caxis is along
       MatrixMath::Transpose3x3(g1, g1t);
@@ -216,7 +227,7 @@ void FindAvgCAxes::execute()
       w = GeometryMath::CosThetaBetweenVectors(c1, curCAxis);
       if(w < 0)
       {
-        MatrixMath::Multiply3x1withConstant(c1, -1);
+        MatrixMath::Multiply3x1withConstant(c1, -1.0f);
       }
       counter[m_FeatureIds[i]]++;
       m_AvgCAxes[index] += c1[0];
@@ -259,7 +270,7 @@ AbstractFilter::Pointer FindAvgCAxes::newFilterInstance(bool copyFilterParameter
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgCAxes::getCompiledLibraryName() const
+QString FindAvgCAxes::getCompiledLibraryName() const
 {
   return OrientationAnalysisConstants::OrientationAnalysisBaseName;
 }
@@ -267,7 +278,7 @@ const QString FindAvgCAxes::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgCAxes::getBrandingString() const
+QString FindAvgCAxes::getBrandingString() const
 {
   return "OrientationAnalysis";
 }
@@ -275,7 +286,7 @@ const QString FindAvgCAxes::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgCAxes::getFilterVersion() const
+QString FindAvgCAxes::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -285,7 +296,7 @@ const QString FindAvgCAxes::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgCAxes::getGroupName() const
+QString FindAvgCAxes::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -293,7 +304,7 @@ const QString FindAvgCAxes::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindAvgCAxes::getUuid()
+QUuid FindAvgCAxes::getUuid() const
 {
   return QUuid("{c5a9a96c-7570-5279-b383-cc25ebae0046}");
 }
@@ -301,7 +312,7 @@ const QUuid FindAvgCAxes::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgCAxes::getSubGroupName() const
+QString FindAvgCAxes::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -309,7 +320,72 @@ const QString FindAvgCAxes::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindAvgCAxes::getHumanLabel() const
+QString FindAvgCAxes::getHumanLabel() const
 {
   return "Find Average C-Axis Orientations";
+}
+
+// -----------------------------------------------------------------------------
+FindAvgCAxes::Pointer FindAvgCAxes::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindAvgCAxes> FindAvgCAxes::New()
+{
+  struct make_shared_enabler : public FindAvgCAxes
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindAvgCAxes::getNameOfClass() const
+{
+  return QString("FindAvgCAxes");
+}
+
+// -----------------------------------------------------------------------------
+QString FindAvgCAxes::ClassName()
+{
+  return QString("FindAvgCAxes");
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgCAxes::setQuatsArrayPath(const DataArrayPath& value)
+{
+  m_QuatsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgCAxes::getQuatsArrayPath() const
+{
+  return m_QuatsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgCAxes::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgCAxes::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindAvgCAxes::setAvgCAxesArrayPath(const DataArrayPath& value)
+{
+  m_AvgCAxesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindAvgCAxes::getAvgCAxesArrayPath() const
+{
+  return m_AvgCAxesArrayPath;
 }

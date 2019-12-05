@@ -41,6 +41,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* Heavily modified from the original by Michael A. Jackson for BlueQuartz Software
  * and funded by the Air Force Research Laboratory, Wright-Patterson AFB.
  */
+#include <memory>
+
 #include "MPMCalculation.h"
 
 //-- C Includes
@@ -48,6 +50,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 
 //-- C++ includes
 #include <random>
@@ -322,7 +325,7 @@ private:
 //
 // -----------------------------------------------------------------------------
 MPMCalculation::MPMCalculation()
-: m_ErrorCondition(0)
+: m_ErrorCode(0)
 {
 }
 
@@ -370,7 +373,7 @@ void MPMCalculation::execute()
   memset(msgbuff, 0, 256);
   data->progress++;
 
-  yk = (real_t*)malloc(cols * rows * classes * sizeof(real_t));
+  yk = new real_t[cols * rows * classes]();
 
   sqrt2pi = sqrt(2.0 * M_PI);
 
@@ -469,7 +472,7 @@ void MPMCalculation::execute()
 
     data->currentMPMLoop = k;
     QString ss = QString("MPM Loop %1").arg(k);
-    notifyStatusMessage(getMessagePrefix(), getHumanLabel(), ss);
+    notifyStatusMessage(ss);
 
     currentLoopCount = data->mpmIterations * data->currentEMLoop + data->currentMPMLoop;
     data->progress = currentLoopCount / totalLoops * 100.0;
@@ -508,13 +511,74 @@ void MPMCalculation::execute()
   }
 
   /* Clean Up Memory */
-  free(yk);
+  delete[](yk);
 }
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString MPMCalculation::getHumanLabel() const
+QString MPMCalculation::getHumanLabel() const
 {
   return "MPMCalculation";
+}
+
+// -----------------------------------------------------------------------------
+MPMCalculation::Pointer MPMCalculation::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+MPMCalculation::Pointer MPMCalculation::New()
+{
+  Pointer sharedPtr(new(MPMCalculation));
+  return sharedPtr;
+}
+
+// -----------------------------------------------------------------------------
+QString MPMCalculation::getNameOfClass() const
+{
+  return QString("MPMCalculation");
+}
+
+// -----------------------------------------------------------------------------
+QString MPMCalculation::ClassName()
+{
+  return QString("MPMCalculation");
+}
+
+// -----------------------------------------------------------------------------
+void MPMCalculation::setData(const EMMPM_Data::Pointer& value)
+{
+  m_Data = value;
+}
+
+// -----------------------------------------------------------------------------
+EMMPM_Data::Pointer MPMCalculation::getData() const
+{
+  return m_Data;
+}
+
+// -----------------------------------------------------------------------------
+void MPMCalculation::setErrorCode(int value)
+{
+  m_ErrorCode = value;
+}
+
+// -----------------------------------------------------------------------------
+int MPMCalculation::getErrorCode() const
+{
+  return m_ErrorCode;
+}
+
+// -----------------------------------------------------------------------------
+void MPMCalculation::setStatsDelegate(StatsDelegate* value)
+{
+  m_StatsDelegate = value;
+}
+
+// -----------------------------------------------------------------------------
+StatsDelegate* MPMCalculation::getStatsDelegate() const
+{
+  return m_StatsDelegate;
 }

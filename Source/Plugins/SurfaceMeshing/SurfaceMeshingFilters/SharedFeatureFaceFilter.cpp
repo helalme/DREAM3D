@@ -33,16 +33,31 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "SharedFeatureFaceFilter.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/TriangleGeom.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "SurfaceMeshing/SurfaceMeshingConstants.h"
 #include "SurfaceMeshing/SurfaceMeshingVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID20 = 20,
+  AttributeMatrixID21 = 21,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -67,7 +82,7 @@ SharedFeatureFaceFilter::~SharedFeatureFaceFilter() = default;
 void SharedFeatureFaceFilter::setupFilterParameters()
 {
   SurfaceMeshFilter::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -75,11 +90,11 @@ void SharedFeatureFaceFilter::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Face Labels", SurfaceMeshFaceLabelsArrayPath, FilterParameter::RequiredArray, SharedFeatureFaceFilter, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Face Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Feature Face Ids", SurfaceMeshFeatureFaceIdsArrayName, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Feature Face Ids", SurfaceMeshFeatureFaceIdsArrayName, SurfaceMeshFaceLabelsArrayPath, SurfaceMeshFaceLabelsArrayPath, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
   parameters.push_back(SeparatorFilterParameter::New("Face Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Feature Attribute Matrix", FaceFeatureAttributeMatrixName, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Face Labels", SurfaceMeshFeatureFaceLabelsArrayName, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Number of Triangles", SurfaceMeshFeatureFaceNumTrianglesArrayName, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Face Feature Attribute Matrix", FaceFeatureAttributeMatrixName, SurfaceMeshFaceLabelsArrayPath, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Face Labels", SurfaceMeshFeatureFaceLabelsArrayName, SurfaceMeshFaceLabelsArrayPath, FaceFeatureAttributeMatrixName, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Number of Triangles", SurfaceMeshFeatureFaceNumTrianglesArrayName, SurfaceMeshFaceLabelsArrayPath, FaceFeatureAttributeMatrixName, FilterParameter::CreatedArray, SharedFeatureFaceFilter));
   setFilterParameters(parameters);
 }
 
@@ -109,26 +124,26 @@ void SharedFeatureFaceFilter::initialize()
 // -----------------------------------------------------------------------------
 void SharedFeatureFaceFilter::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<TriangleGeom, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath().getDataContainerName());
 
   DataContainer::Pointer sm = getDataContainerArray()->getPrereqDataContainer(this, m_SurfaceMeshFaceLabelsArrayPath.getDataContainerName(), false);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  QVector<size_t> tDims(1, 0);
-  AttributeMatrix::Pointer facefeatureAttrMat = sm->createNonPrereqAttributeMatrix(this, getFaceFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::FaceFeature);
-  if(getErrorCondition() < 0 || nullptr == facefeatureAttrMat.get())
+  std::vector<size_t> tDims(1, 0);
+  AttributeMatrix::Pointer facefeatureAttrMat = sm->createNonPrereqAttributeMatrix(this, getFaceFeatureAttributeMatrixName(), tDims, AttributeMatrix::Type::FaceFeature, AttributeMatrixID21);
+  if(getErrorCode() < 0 || nullptr == facefeatureAttrMat.get())
   {
     return;
   }
 
-  QVector<size_t> cDims(1, 2);
+  std::vector<size_t> cDims(1, 2);
   m_SurfaceMeshFaceLabelsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getSurfaceMeshFaceLabelsArrayPath(),
                                                                                                                    cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_SurfaceMeshFaceLabelsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -181,10 +196,10 @@ void SharedFeatureFaceFilter::preflight()
 // -----------------------------------------------------------------------------
 void SharedFeatureFaceFilter::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -243,7 +258,7 @@ void SharedFeatureFaceFilter::execute()
   }
 
   // resize + update pointers
-  QVector<size_t> tDims(1, index);
+  std::vector<size_t> tDims(1, index);
   faceFeatureAttrMat->resizeAttributeArrays(tDims);
   m_SurfaceMeshFeatureFaceLabels = m_SurfaceMeshFeatureFaceLabelsPtr.lock()->getPointer(0);
   m_SurfaceMeshFeatureFaceNumTriangles = m_SurfaceMeshFeatureFaceNumTrianglesPtr.lock()->getPointer(0);
@@ -279,7 +294,7 @@ AbstractFilter::Pointer SharedFeatureFaceFilter::newFilterInstance(bool copyFilt
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SharedFeatureFaceFilter::getCompiledLibraryName() const
+QString SharedFeatureFaceFilter::getCompiledLibraryName() const
 {
   return SurfaceMeshingConstants::SurfaceMeshingBaseName;
 }
@@ -287,7 +302,7 @@ const QString SharedFeatureFaceFilter::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SharedFeatureFaceFilter::getBrandingString() const
+QString SharedFeatureFaceFilter::getBrandingString() const
 {
   return "SurfaceMeshing";
 }
@@ -295,7 +310,7 @@ const QString SharedFeatureFaceFilter::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SharedFeatureFaceFilter::getFilterVersion() const
+QString SharedFeatureFaceFilter::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -305,7 +320,7 @@ const QString SharedFeatureFaceFilter::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SharedFeatureFaceFilter::getGroupName() const
+QString SharedFeatureFaceFilter::getGroupName() const
 {
   return SIMPL::FilterGroups::SurfaceMeshingFilters;
 }
@@ -313,7 +328,7 @@ const QString SharedFeatureFaceFilter::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid SharedFeatureFaceFilter::getUuid()
+QUuid SharedFeatureFaceFilter::getUuid() const
 {
   return QUuid("{15c743db-5936-53a2-92cf-edf00526486d}");
 }
@@ -321,7 +336,7 @@ const QUuid SharedFeatureFaceFilter::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SharedFeatureFaceFilter::getSubGroupName() const
+QString SharedFeatureFaceFilter::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ConnectivityArrangementFilters;
 }
@@ -329,7 +344,96 @@ const QString SharedFeatureFaceFilter::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString SharedFeatureFaceFilter::getHumanLabel() const
+QString SharedFeatureFaceFilter::getHumanLabel() const
 {
   return "Generate Triangle Face Ids";
+}
+
+// -----------------------------------------------------------------------------
+SharedFeatureFaceFilter::Pointer SharedFeatureFaceFilter::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<SharedFeatureFaceFilter> SharedFeatureFaceFilter::New()
+{
+  struct make_shared_enabler : public SharedFeatureFaceFilter
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString SharedFeatureFaceFilter::getNameOfClass() const
+{
+  return QString("SharedFeatureFaceFilter");
+}
+
+// -----------------------------------------------------------------------------
+QString SharedFeatureFaceFilter::ClassName()
+{
+  return QString("SharedFeatureFaceFilter");
+}
+
+// -----------------------------------------------------------------------------
+void SharedFeatureFaceFilter::setFaceFeatureAttributeMatrixName(const QString& value)
+{
+  m_FaceFeatureAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SharedFeatureFaceFilter::getFaceFeatureAttributeMatrixName() const
+{
+  return m_FaceFeatureAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void SharedFeatureFaceFilter::setSurfaceMeshFeatureFaceIdsArrayName(const QString& value)
+{
+  m_SurfaceMeshFeatureFaceIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SharedFeatureFaceFilter::getSurfaceMeshFeatureFaceIdsArrayName() const
+{
+  return m_SurfaceMeshFeatureFaceIdsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void SharedFeatureFaceFilter::setSurfaceMeshFeatureFaceLabelsArrayName(const QString& value)
+{
+  m_SurfaceMeshFeatureFaceLabelsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SharedFeatureFaceFilter::getSurfaceMeshFeatureFaceLabelsArrayName() const
+{
+  return m_SurfaceMeshFeatureFaceLabelsArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void SharedFeatureFaceFilter::setSurfaceMeshFeatureFaceNumTrianglesArrayName(const QString& value)
+{
+  m_SurfaceMeshFeatureFaceNumTrianglesArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString SharedFeatureFaceFilter::getSurfaceMeshFeatureFaceNumTrianglesArrayName() const
+{
+  return m_SurfaceMeshFeatureFaceNumTrianglesArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void SharedFeatureFaceFilter::setSurfaceMeshFaceLabelsArrayPath(const DataArrayPath& value)
+{
+  m_SurfaceMeshFaceLabelsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath SharedFeatureFaceFilter::getSurfaceMeshFaceLabelsArrayPath() const
+{
+  return m_SurfaceMeshFaceLabelsArrayPath;
 }

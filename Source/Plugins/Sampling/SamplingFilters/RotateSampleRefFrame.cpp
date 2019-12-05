@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "RotateSampleRefFrame.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -42,7 +44,10 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/AttributeMatrixSelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatFilterParameter.h"
@@ -50,8 +55,12 @@
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/GeometryMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
-#include "OrientationLib/OrientationMath/OrientationTransforms.hpp"
+#include "OrientationLib/Core/Orientation.hpp"
+#include "OrientationLib/Core/OrientationTransformation.hpp"
+#include "OrientationLib/Core/Quaternion.hpp"
 
 #include "Sampling/SamplingConstants.h"
 #include "Sampling/SamplingVersion.h"
@@ -168,10 +177,9 @@ RotateSampleRefFrame::RotateSampleRefFrame()
 , m_RotationAngle(0.0)
 , m_SliceBySlice(false)
 {
-  m_RotationAxis.x = 0.0;
-  m_RotationAxis.y = 0.0;
-  m_RotationAxis.z = 1.0;
-
+  m_RotationAxis[0] = 0.0;
+  m_RotationAxis[1] = 0.0;
+  m_RotationAxis[2] = 1.0;
 }
 
 // -----------------------------------------------------------------------------
@@ -184,7 +192,7 @@ RotateSampleRefFrame::~RotateSampleRefFrame() = default;
 // -----------------------------------------------------------------------------
 void RotateSampleRefFrame::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   parameters.push_back(SIMPL_NEW_FLOAT_FP("Rotation Angle (Degrees)", RotationAngle, FilterParameter::Parameter, RotateSampleRefFrame));
   parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Rotation Axis (ijk)", RotationAxis, FilterParameter::Parameter, RotateSampleRefFrame));
@@ -221,8 +229,8 @@ void RotateSampleRefFrame::initialize()
 // -----------------------------------------------------------------------------
 void RotateSampleRefFrame::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 }
 
 // -----------------------------------------------------------------------------
@@ -231,14 +239,14 @@ void RotateSampleRefFrame::dataCheck()
 void RotateSampleRefFrame::preflight()
 {
   setInPreflight(true);
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   emit preflightAboutToExecute();
   emit updateFilterParameters(this);
   dataCheck();
   emit preflightExecuted();
 
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     setInPreflight(false);
     return;
@@ -246,7 +254,7 @@ void RotateSampleRefFrame::preflight()
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getCellAttributeMatrixPath().getDataContainerName());
   getDataContainerArray()->getPrereqAttributeMatrixFromPath<AbstractFilter>(this, getCellAttributeMatrixPath(), -301);
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     setInPreflight(false);
     return;
@@ -256,39 +264,33 @@ void RotateSampleRefFrame::preflight()
 
   float rotAngle = m_RotationAngle * SIMPLib::Constants::k_Pi / 180.0;
 
-  int64_t xp = 0, yp = 0, zp = 0;
-  float xRes = 0.0f, yRes = 0.0f, zRes = 0.0f;
-  int64_t xpNew = 0, ypNew = 0, zpNew = 0;
+  MeshIndexType xpNew = 0, ypNew = 0, zpNew = 0;
   float xResNew = 0.0f, yResNew = 0.0f, zResNew = 0.0f;
   RotateSampleRefFrameImplArg_t params;
+  ImageGeom::Pointer imageGeom = m->getGeometryAs<ImageGeom>();
+  SizeVec3Type origDims = imageGeom->getDimensions();
+  FloatVec3Type spacing = imageGeom->getSpacing();
+  FloatVec3Type origin = imageGeom->getOrigin();
 
-  xp = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getXPoints());
-  yp = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getYPoints());
-  zp = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getZPoints());
-
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
-
-  params.xp = xp;
-  params.xRes = xRes;
-  params.yp = yp;
-  params.yRes = yRes;
-  params.zp = zp;
-  params.zRes = zRes;
+  params.xp = origDims[0];
+  params.xRes = spacing[0];
+  params.yp = origDims[1];
+  params.yRes = spacing[1];
+  params.zp = origDims[2];
+  params.zRes = spacing[2];
 
   size_t col = 0, row = 0, plane = 0;
   float rotMat[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   float coords[3] = {0.0f, 0.0f, 0.0f};
   float newcoords[3] = {0.0f, 0.0f, 0.0f};
   float xMin = std::numeric_limits<float>::max();
-  float xMax = -xMin;
+  float xMax = std::numeric_limits<float>::min();
   float yMin = std::numeric_limits<float>::max();
-  float yMax = -yMin;
+  float yMax = std::numeric_limits<float>::min();
   float zMin = std::numeric_limits<float>::max();
-  float zMax = -zMin;
+  float zMax = std::numeric_limits<float>::min();
 
-  FOrientArrayType om(9);
-  FOrientTransformsType::ax2om(FOrientArrayType(m_RotationAxis.x, m_RotationAxis.y, m_RotationAxis.z, rotAngle), om);
-  om.toGMatrix(rotMat);
+  OrientationTransformation::ax2om<OrientationF, OrientationF>(OrientationF(m_RotationAxis[0], m_RotationAxis[1], m_RotationAxis[2], rotAngle)).toGMatrix(rotMat);
   for(int32_t i = 0; i < 8; i++)
   {
     if(i == 0)
@@ -297,35 +299,35 @@ void RotateSampleRefFrame::preflight()
     }
     if(i == 1)
     {
-      col = xp - 1, row = 0, plane = 0;
+      col = origDims[0] - 1, row = 0, plane = 0;
     }
     if(i == 2)
     {
-      col = 0, row = yp - 1, plane = 0;
+      col = 0, row = origDims[1] - 1, plane = 0;
     }
     if(i == 3)
     {
-      col = xp - 1, row = yp - 1, plane = 0;
+      col = origDims[0] - 1, row = origDims[1] - 1, plane = 0;
     }
     if(i == 4)
     {
-      col = 0, row = 0, plane = zp - 1;
+      col = 0, row = 0, plane = origDims[2] - 1;
     }
     if(i == 5)
     {
-      col = xp - 1, row = 0, plane = zp - 1;
+      col = origDims[0] - 1, row = 0, plane = origDims[2] - 1;
     }
     if(i == 6)
     {
-      col = 0, row = yp - 1, plane = zp - 1;
+      col = 0, row = origDims[1] - 1, plane = origDims[2] - 1;
     }
     if(i == 7)
     {
-      col = xp - 1, row = yp - 1, plane = zp - 1;
+      col = origDims[0] - 1, row = origDims[1] - 1, plane = origDims[2] - 1;
     }
-    coords[0] = static_cast<float>(col * xRes);
-    coords[1] = static_cast<float>(row * yRes);
-    coords[2] = static_cast<float>(plane * zRes);
+    coords[0] = static_cast<float>(col * spacing[0]);
+    coords[1] = static_cast<float>(row * spacing[1]);
+    coords[2] = static_cast<float>(plane * spacing[2]);
     MatrixMath::Multiply3x3with3x1(rotMat, coords, newcoords);
     if(newcoords[0] < xMin)
     {
@@ -362,35 +364,35 @@ void RotateSampleRefFrame::preflight()
   MatrixMath::Multiply3x3with3x1(rotMat, yAxis, yAxisNew);
   MatrixMath::Multiply3x3with3x1(rotMat, zAxis, zAxisNew);
   float closestAxis = 0.0f;
-  xResNew = xRes;
+  xResNew = spacing[0];
   closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, xAxisNew));
   if(fabs(GeometryMath::CosThetaBetweenVectors(yAxis, xAxisNew)) > closestAxis)
   {
-    xResNew = yRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, xAxisNew));
+    xResNew = spacing[1], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, xAxisNew));
   }
   if(fabs(GeometryMath::CosThetaBetweenVectors(zAxis, xAxisNew)) > closestAxis)
   {
-    xResNew = zRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, xAxisNew));
+    xResNew = spacing[2], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, xAxisNew));
   }
-  yResNew = yRes;
+  yResNew = spacing[1];
   closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, yAxisNew));
   if(fabs(GeometryMath::CosThetaBetweenVectors(xAxis, yAxisNew)) > closestAxis)
   {
-    yResNew = xRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, yAxisNew));
+    yResNew = spacing[0], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, yAxisNew));
   }
   if(fabs(GeometryMath::CosThetaBetweenVectors(zAxis, yAxisNew)) > closestAxis)
   {
-    yResNew = zRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, yAxisNew));
+    yResNew = spacing[2], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, yAxisNew));
   }
-  zResNew = zRes;
+  zResNew = spacing[2];
   closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, zAxisNew));
   if(fabs(GeometryMath::CosThetaBetweenVectors(xAxis, zAxisNew)) > closestAxis)
   {
-    zResNew = xRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, zAxisNew));
+    zResNew = spacing[0], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, zAxisNew));
   }
   if(fabs(GeometryMath::CosThetaBetweenVectors(yAxis, zAxisNew)) > closestAxis)
   {
-    zResNew = yRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, zAxisNew));
+    zResNew = spacing[1], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, zAxisNew));
   }
 
   xpNew = static_cast<int64_t>(nearbyint((xMax - xMin) / xResNew) + 1);
@@ -407,8 +409,15 @@ void RotateSampleRefFrame::preflight()
   params.zResNew = zResNew;
   params.zMinNew = zMin;
 
-  m->getGeometryAs<ImageGeom>()->setResolution(params.xResNew, params.yResNew, params.zResNew);
+  // int64_t newNumCellTuples = params.xpNew * params.ypNew * params.zpNew;
+
+  m->getGeometryAs<ImageGeom>()->setSpacing(FloatVec3Type(params.xResNew, params.yResNew, params.zResNew));
   m->getGeometryAs<ImageGeom>()->setDimensions(params.xpNew, params.ypNew, params.zpNew);
+  origin[0] += xMin;
+  origin[1] += yMin;
+  origin[2] += zMin;
+  m->getGeometryAs<ImageGeom>()->setOrigin(origin);
+
   setInPreflight(false);
 }
 
@@ -417,10 +426,10 @@ void RotateSampleRefFrame::preflight()
 // -----------------------------------------------------------------------------
 void RotateSampleRefFrame::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -429,24 +438,20 @@ void RotateSampleRefFrame::execute()
 
   float rotAngle = m_RotationAngle * SIMPLib::Constants::k_Pi / 180.0;
 
-  int64_t xp = 0, yp = 0, zp = 0;
-  float xRes = 0.0f, yRes = 0.0f, zRes = 0.0f;
-  int64_t xpNew = 0, ypNew = 0, zpNew = 0;
+  MeshIndexType xpNew = 0, ypNew = 0, zpNew = 0;
   float xResNew = 0.0f, yResNew = 0.0f, zResNew = 0.0f;
   RotateSampleRefFrameImplArg_t params;
+  ImageGeom::Pointer imageGeom = m->getGeometryAs<ImageGeom>();
+  SizeVec3Type origDims = imageGeom->getDimensions();
+  FloatVec3Type spacing = imageGeom->getSpacing();
+  FloatVec3Type origin = imageGeom->getOrigin();
 
-  xp = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getXPoints());
-  yp = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getYPoints());
-  zp = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getZPoints());
-
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
-
-  params.xp = xp;
-  params.xRes = xRes;
-  params.yp = yp;
-  params.yRes = yRes;
-  params.zp = zp;
-  params.zRes = zRes;
+  params.xp = origDims[0];
+  params.xRes = spacing[0];
+  params.yp = origDims[1];
+  params.yRes = spacing[1];
+  params.zp = origDims[2];
+  params.zRes = spacing[2];
 
   size_t col = 0, row = 0, plane = 0;
   float rotMat[3][3] = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
@@ -459,9 +464,7 @@ void RotateSampleRefFrame::execute()
   float zMin = std::numeric_limits<float>::max();
   float zMax = std::numeric_limits<float>::min();
 
-  FOrientArrayType om(9);
-  FOrientTransformsType::ax2om(FOrientArrayType(m_RotationAxis.x, m_RotationAxis.y, m_RotationAxis.z, rotAngle), om);
-  om.toGMatrix(rotMat);
+  OrientationTransformation::ax2om<OrientationF, OrientationF>(OrientationF(m_RotationAxis[0], m_RotationAxis[1], m_RotationAxis[2], rotAngle)).toGMatrix(rotMat);
   for(int32_t i = 0; i < 8; i++)
   {
     if(i == 0)
@@ -470,35 +473,35 @@ void RotateSampleRefFrame::execute()
     }
     if(i == 1)
     {
-      col = xp - 1, row = 0, plane = 0;
+      col = origDims[0] - 1, row = 0, plane = 0;
     }
     if(i == 2)
     {
-      col = 0, row = yp - 1, plane = 0;
+      col = 0, row = origDims[1] - 1, plane = 0;
     }
     if(i == 3)
     {
-      col = xp - 1, row = yp - 1, plane = 0;
+      col = origDims[0] - 1, row = origDims[1] - 1, plane = 0;
     }
     if(i == 4)
     {
-      col = 0, row = 0, plane = zp - 1;
+      col = 0, row = 0, plane = origDims[2] - 1;
     }
     if(i == 5)
     {
-      col = xp - 1, row = 0, plane = zp - 1;
+      col = origDims[0] - 1, row = 0, plane = origDims[2] - 1;
     }
     if(i == 6)
     {
-      col = 0, row = yp - 1, plane = zp - 1;
+      col = 0, row = origDims[1] - 1, plane = origDims[2] - 1;
     }
     if(i == 7)
     {
-      col = xp - 1, row = yp - 1, plane = zp - 1;
+      col = origDims[0] - 1, row = origDims[1] - 1, plane = origDims[2] - 1;
     }
-    coords[0] = static_cast<float>(col * xRes);
-    coords[1] = static_cast<float>(row * yRes);
-    coords[2] = static_cast<float>(plane * zRes);
+    coords[0] = static_cast<float>(col * spacing[0]);
+    coords[1] = static_cast<float>(row * spacing[1]);
+    coords[2] = static_cast<float>(plane * spacing[2]);
     MatrixMath::Multiply3x3with3x1(rotMat, coords, newcoords);
     if(newcoords[0] < xMin)
     {
@@ -535,35 +538,35 @@ void RotateSampleRefFrame::execute()
   MatrixMath::Multiply3x3with3x1(rotMat, yAxis, yAxisNew);
   MatrixMath::Multiply3x3with3x1(rotMat, zAxis, zAxisNew);
   float closestAxis = 0.0f;
-  xResNew = xRes;
+  xResNew = spacing[0];
   closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, xAxisNew));
   if(fabs(GeometryMath::CosThetaBetweenVectors(yAxis, xAxisNew)) > closestAxis)
   {
-    xResNew = yRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, xAxisNew));
+    xResNew = spacing[1], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, xAxisNew));
   }
   if(fabs(GeometryMath::CosThetaBetweenVectors(zAxis, xAxisNew)) > closestAxis)
   {
-    xResNew = zRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, xAxisNew));
+    xResNew = spacing[2], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, xAxisNew));
   }
-  yResNew = yRes;
+  yResNew = spacing[1];
   closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, yAxisNew));
   if(fabs(GeometryMath::CosThetaBetweenVectors(xAxis, yAxisNew)) > closestAxis)
   {
-    yResNew = xRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, yAxisNew));
+    yResNew = spacing[0], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, yAxisNew));
   }
   if(fabs(GeometryMath::CosThetaBetweenVectors(zAxis, yAxisNew)) > closestAxis)
   {
-    yResNew = zRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, yAxisNew));
+    yResNew = spacing[2], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, yAxisNew));
   }
-  zResNew = zRes;
+  zResNew = spacing[2];
   closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(zAxis, zAxisNew));
   if(fabs(GeometryMath::CosThetaBetweenVectors(xAxis, zAxisNew)) > closestAxis)
   {
-    zResNew = xRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, zAxisNew));
+    zResNew = spacing[0], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(xAxis, zAxisNew));
   }
   if(fabs(GeometryMath::CosThetaBetweenVectors(yAxis, zAxisNew)) > closestAxis)
   {
-    zResNew = yRes, closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, zAxisNew));
+    zResNew = spacing[1], closestAxis = fabs(GeometryMath::CosThetaBetweenVectors(yAxis, zAxisNew));
   }
 
   xpNew = static_cast<int64_t>(nearbyint((xMax - xMin) / xResNew) + 1);
@@ -582,13 +585,13 @@ void RotateSampleRefFrame::execute()
 
   int64_t newNumCellTuples = params.xpNew * params.ypNew * params.zpNew;
 
-  DataArray<int64_t>::Pointer newIndiciesPtr = DataArray<int64_t>::CreateArray(newNumCellTuples, "_INTERNAL_USE_ONLY_RotateSampleRef_NewIndicies");
+  DataArray<int64_t>::Pointer newIndiciesPtr = DataArray<int64_t>::CreateArray(newNumCellTuples, "_INTERNAL_USE_ONLY_RotateSampleRef_NewIndicies", true);
   newIndiciesPtr->initializeWithValue(-1);
   int64_t* newindicies = newIndiciesPtr->getPointer(0);
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
   tbb::task_scheduler_init init;
-  bool doParallel = true;
+  bool doParallel = false;
 #endif
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -610,38 +613,48 @@ void RotateSampleRefFrame::execute()
   QList<QString> voxelArrayNames = m->getAttributeMatrix(attrMatName)->getAttributeArrayNames();
 
   // resize attribute matrix
-  QVector<size_t> tDims(3);
+  std::vector<size_t> tDims(3);
   tDims[0] = params.xpNew;
   tDims[1] = params.ypNew;
   tDims[2] = params.zpNew;
   m->getAttributeMatrix(attrMatName)->resizeAttributeArrays(tDims);
 
-  for(QList<QString>::iterator iter = voxelArrayNames.begin(); iter != voxelArrayNames.end(); ++iter)
+  for(const auto& attrArrayName : voxelArrayNames)
   {
-    IDataArray::Pointer p = m->getAttributeMatrix(attrMatName)->getAttributeArray(*iter);
+    IDataArray::Pointer p = m->getAttributeMatrix(attrMatName)->getAttributeArray(attrArrayName);
     // Make a copy of the 'p' array that has the same name. When placed into
     // the data container this will over write the current array with
     // the same name.
     IDataArray::Pointer data = p->createNewArray(newNumCellTuples, p->getComponentDimensions(), p->getName());
-    void* source = nullptr;
-    void* destination = nullptr;
+    //    void* source = nullptr;
+    //    void* destination = nullptr;
     int64_t newIndicies_I = 0;
-    int32_t nComp = data->getNumberOfComponents();
+    //   int32_t nComp = data->getNumberOfComponents();
     for(size_t i = 0; i < static_cast<size_t>(newNumCellTuples); i++)
     {
       newIndicies_I = newindicies[i];
       if(newIndicies_I >= 0)
       {
-        source = p->getVoidPointer((nComp * newIndicies_I));
-        if(nullptr == source)
+        //        source = p->getVoidPointer((nComp * newIndicies_I));
+        //        if(nullptr == source)
+        //        {
+        //          QString ss = QObject::tr("The index is outside the bounds of the source array");
+        //          setErrorCondition(-11004);
+        //          notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+        //          return;
+        //        }
+        //        destination = data->getVoidPointer((data->getNumberOfComponents() * i));
+        //        ::memcpy(destination, source, p->getTypeSize() * data->getNumberOfComponents());
+
+        if(!data->copyFromArray(i, p, newIndicies_I, 1))
         {
-          QString ss = QObject::tr("The index is outside the bounds of the source array");
-          setErrorCondition(-11004);
-          notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+          QString ss = QObject::tr("copyFromArray Failed: ");
+          QTextStream out(&ss);
+          out << "Source Array Name: " << p->getName() << " Source Tuple Index: " << newIndicies_I << "\n";
+          out << "Dest Array Name: " << data->getName() << "  Dest. Tuple Index: " << i << "\n";
+          setErrorCondition(-11004, ss);
           return;
         }
-        destination = data->getVoidPointer((data->getNumberOfComponents() * i));
-        ::memcpy(destination, source, p->getTypeSize() * data->getNumberOfComponents());
       }
       else
       {
@@ -649,12 +662,14 @@ void RotateSampleRefFrame::execute()
         data->initializeTuple(i, &var);
       }
     }
-    m->getAttributeMatrix(attrMatName)->addAttributeArray(*iter, data);
+    m->getAttributeMatrix(attrMatName)->insertOrAssign(data);
   }
-  m->getGeometryAs<ImageGeom>()->setResolution(params.xResNew, params.yResNew, params.zResNew);
+  m->getGeometryAs<ImageGeom>()->setSpacing(FloatVec3Type(params.xResNew, params.yResNew, params.zResNew));
   m->getGeometryAs<ImageGeom>()->setDimensions(params.xpNew, params.ypNew, params.zpNew);
-  m->getGeometryAs<ImageGeom>()->setOrigin(xMin, yMin, zMin);
-
+  origin[0] += xMin;
+  origin[1] += yMin;
+  origin[2] += zMin;
+  m->getGeometryAs<ImageGeom>()->setOrigin(origin);
 }
 
 // -----------------------------------------------------------------------------
@@ -673,7 +688,7 @@ AbstractFilter::Pointer RotateSampleRefFrame::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RotateSampleRefFrame::getCompiledLibraryName() const
+QString RotateSampleRefFrame::getCompiledLibraryName() const
 {
   return SamplingConstants::SamplingBaseName;
 }
@@ -681,7 +696,7 @@ const QString RotateSampleRefFrame::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RotateSampleRefFrame::getBrandingString() const
+QString RotateSampleRefFrame::getBrandingString() const
 {
   return "Sampling";
 }
@@ -689,7 +704,7 @@ const QString RotateSampleRefFrame::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RotateSampleRefFrame::getFilterVersion() const
+QString RotateSampleRefFrame::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -699,7 +714,7 @@ const QString RotateSampleRefFrame::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RotateSampleRefFrame::getGroupName() const
+QString RotateSampleRefFrame::getGroupName() const
 {
   return SIMPL::FilterGroups::SamplingFilters;
 }
@@ -707,7 +722,7 @@ const QString RotateSampleRefFrame::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid RotateSampleRefFrame::getUuid()
+QUuid RotateSampleRefFrame::getUuid() const
 {
   return QUuid("{e25d9b4c-2b37-578c-b1de-cf7032b5ef19}");
 }
@@ -715,7 +730,7 @@ const QUuid RotateSampleRefFrame::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RotateSampleRefFrame::getSubGroupName() const
+QString RotateSampleRefFrame::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::RotationTransformationFilters;
 }
@@ -723,7 +738,84 @@ const QString RotateSampleRefFrame::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString RotateSampleRefFrame::getHumanLabel() const
+QString RotateSampleRefFrame::getHumanLabel() const
 {
   return "Rotate Sample Reference Frame";
+}
+
+// -----------------------------------------------------------------------------
+RotateSampleRefFrame::Pointer RotateSampleRefFrame::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<RotateSampleRefFrame> RotateSampleRefFrame::New()
+{
+  struct make_shared_enabler : public RotateSampleRefFrame
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString RotateSampleRefFrame::getNameOfClass() const
+{
+  return QString("RotateSampleRefFrame");
+}
+
+// -----------------------------------------------------------------------------
+QString RotateSampleRefFrame::ClassName()
+{
+  return QString("RotateSampleRefFrame");
+}
+
+// -----------------------------------------------------------------------------
+void RotateSampleRefFrame::setCellAttributeMatrixPath(const DataArrayPath& value)
+{
+  m_CellAttributeMatrixPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath RotateSampleRefFrame::getCellAttributeMatrixPath() const
+{
+  return m_CellAttributeMatrixPath;
+}
+
+// -----------------------------------------------------------------------------
+void RotateSampleRefFrame::setRotationAxis(const FloatVec3Type& value)
+{
+  m_RotationAxis = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type RotateSampleRefFrame::getRotationAxis() const
+{
+  return m_RotationAxis;
+}
+
+// -----------------------------------------------------------------------------
+void RotateSampleRefFrame::setRotationAngle(float value)
+{
+  m_RotationAngle = value;
+}
+
+// -----------------------------------------------------------------------------
+float RotateSampleRefFrame::getRotationAngle() const
+{
+  return m_RotationAngle;
+}
+
+// -----------------------------------------------------------------------------
+void RotateSampleRefFrame::setSliceBySlice(bool value)
+{
+  m_SliceBySlice = value;
+}
+
+// -----------------------------------------------------------------------------
+bool RotateSampleRefFrame::getSliceBySlice() const
+{
+  return m_SliceBySlice;
 }

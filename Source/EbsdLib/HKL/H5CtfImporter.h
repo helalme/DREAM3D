@@ -37,7 +37,6 @@
 
 #include "hdf5.h"
 
-#include <QtCore/QVector>
 #include <QtCore/QString>
 
 #include "EbsdLib/EbsdLib.h"
@@ -93,7 +92,7 @@ class EbsdLib_EXPORT H5CtfImporter : public EbsdImporter
      * @param x The x resolution (out)
      * @param y The y resolution (out)
      */
-    void getResolution(float& x, float& y) override;
+    void getSpacing(float& x, float& y) override;
 
     /**
      * @brief Return the number of slices imported

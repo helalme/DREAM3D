@@ -33,15 +33,24 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "PhReader.h"
 
 #include <QtCore/QDateTime>
 #include <QtCore/QFileInfo>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
+#include "SIMPLib/DataContainers/DataContainer.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
+#include "SIMPLib/FilterParameters/DataContainerCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/FloatVec3FilterParameter.h"
 #include "SIMPLib/FilterParameters/InputFileFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
@@ -50,6 +59,15 @@
 #include "ImportExport/ImportExportVersion.h"
 
 #define BUF_SIZE 1024
+
+enum createdPathID : RenameDataPath::DataID_t
+{
+  AttributeMatrixID21 = 21,
+
+  DataArrayID31 = 31,
+
+  DataContainerID = 1
+};
 
 /* ############## Start Private Implementation ############################### */
 // -----------------------------------------------------------------------------
@@ -61,7 +79,7 @@ class PhReaderPrivate
   Q_DECLARE_PUBLIC(PhReader)
   PhReader* const q_ptr;
   PhReaderPrivate(PhReader* ptr);
-  QVector<size_t> m_Dims;
+  std::vector<size_t> m_Dims;
   QString m_InputFile_Cache;
   QDateTime m_LastRead;
 };
@@ -86,13 +104,13 @@ PhReader::PhReader()
 , m_FeatureIdsArrayName(SIMPL::CellData::FeatureIds)
 , d_ptr(new PhReaderPrivate(this))
 {
-  m_Origin.x = 0.0f;
-  m_Origin.y = 0.0f;
-  m_Origin.z = 0.0f;
+  m_Origin[0] = 0.0f;
+  m_Origin[1] = 0.0f;
+  m_Origin[2] = 0.0f;
 
-  m_Resolution.x = 1.0f;
-  m_Resolution.y = 1.0f;
-  m_Resolution.z = 1.0f;
+  m_Spacing[0] = 1.0f;
+  m_Spacing[1] = 1.0f;
+  m_Spacing[2] = 1.0f;
 
   m_Dims[0] = 0;
   m_Dims[1] = 0;
@@ -105,11 +123,46 @@ PhReader::PhReader()
 PhReader::~PhReader() = default;
 
 // -----------------------------------------------------------------------------
-//
+void PhReader::setDims(const std::vector<size_t>& value)
+{
+  Q_D(PhReader);
+  d->m_Dims = value;
+}
+
 // -----------------------------------------------------------------------------
-SIMPL_PIMPL_PROPERTY_DEF(PhReader, QVector<size_t>, Dims)
-SIMPL_PIMPL_PROPERTY_DEF(PhReader, QString, InputFile_Cache)
-SIMPL_PIMPL_PROPERTY_DEF(PhReader, QDateTime, LastRead)
+std::vector<size_t> PhReader::getDims() const
+{
+  Q_D(const PhReader);
+  return d->m_Dims;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setInputFile_Cache(const QString& value)
+{
+  Q_D(PhReader);
+  d->m_InputFile_Cache = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PhReader::getInputFile_Cache() const
+{
+  Q_D(const PhReader);
+  return d->m_InputFile_Cache;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setLastRead(const QDateTime& value)
+{
+  Q_D(PhReader);
+  d->m_LastRead = value;
+}
+
+// -----------------------------------------------------------------------------
+QDateTime PhReader::getLastRead() const
+{
+  Q_D(const PhReader);
+  return d->m_LastRead;
+}
 
 // -----------------------------------------------------------------------------
 //
@@ -117,16 +170,16 @@ SIMPL_PIMPL_PROPERTY_DEF(PhReader, QDateTime, LastRead)
 void PhReader::setupFilterParameters()
 {
   FileReader::setupFilterParameters();
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SIMPL_NEW_INPUT_FILE_FP("Input File", InputFile, FilterParameter::Parameter, PhReader, "*.ph", "CMU Grain Growth"));
   parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Origin", Origin, FilterParameter::Parameter, PhReader));
 
-  parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Resolution", Resolution, FilterParameter::Parameter, PhReader));
+  parameters.push_back(SIMPL_NEW_FLOAT_VEC3_FP("Spacing", Spacing, FilterParameter::Parameter, PhReader));
 
-  parameters.push_back(SIMPL_NEW_STRING_FP("Data Container", VolumeDataContainerName, FilterParameter::CreatedArray, PhReader));
+  parameters.push_back(SIMPL_NEW_DC_CREATION_FP("Data Container", VolumeDataContainerName, FilterParameter::CreatedArray, PhReader));
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Cell Attribute Matrix", CellAttributeMatrixName, FilterParameter::CreatedArray, PhReader));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Feature Ids", FeatureIdsArrayName, FilterParameter::CreatedArray, PhReader));
+  parameters.push_back(SIMPL_NEW_AM_WITH_LINKED_DC_FP("Cell Attribute Matrix", CellAttributeMatrixName, VolumeDataContainerName, FilterParameter::CreatedArray, PhReader));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Feature Ids", FeatureIdsArrayName, VolumeDataContainerName, CellAttributeMatrixName, FilterParameter::CreatedArray, PhReader));
   setFilterParameters(parameters);
 }
 
@@ -136,12 +189,12 @@ void PhReader::setupFilterParameters()
 void PhReader::readFilterParameters(AbstractFilterParametersReader* reader, int index)
 {
   reader->openFilterGroup(this, index);
-  setVolumeDataContainerName(reader->readString("VolumeDataContainerName", getVolumeDataContainerName()));
+  setVolumeDataContainerName(reader->readDataArrayPath("VolumeDataContainerName", getVolumeDataContainerName()));
   setCellAttributeMatrixName(reader->readString("CellAttributeMatrixName", getCellAttributeMatrixName()));
   setFeatureIdsArrayName(reader->readString("FeatureIdsArrayName", getFeatureIdsArrayName()));
   setInputFile(reader->readString("InputFile", getInputFile()));
   setOrigin(reader->readFloatVec3("Origin", getOrigin()));
-  setResolution(reader->readFloatVec3("Resolution", getResolution()));
+  setSpacing(reader->readFloatVec3("Spacing", getSpacing()));
   reader->closeFilterGroup();
 }
 
@@ -150,8 +203,8 @@ void PhReader::readFilterParameters(AbstractFilterParametersReader* reader, int 
 // -----------------------------------------------------------------------------
 void PhReader::updateCellInstancePointers()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   if(nullptr != m_FeatureIdsPtr.lock()) /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
   {
@@ -165,7 +218,7 @@ void PhReader::updateCellInstancePointers()
 void PhReader::flushCache()
 {
   setInputFile_Cache("");
-  QVector<size_t> v;
+  std::vector<size_t> v;
   v.push_back(0);
   v.push_back(0);
   v.push_back(0);
@@ -185,12 +238,12 @@ void PhReader::initialize()
 // -----------------------------------------------------------------------------
 void PhReader::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
-  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getVolumeDataContainerName());
-  if(getErrorCondition() < 0)
+  DataContainer::Pointer m = getDataContainerArray()->createNonPrereqDataContainer<AbstractFilter>(this, getVolumeDataContainerName(), DataContainerID);
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -201,14 +254,12 @@ void PhReader::dataCheck()
   if(getInputFile().isEmpty())
   {
     QString ss = QObject::tr("The input file must be set");
-    setErrorCondition(-387);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-387, ss);
   }
   else if(!fi.exists())
   {
     QString ss = QObject::tr("The input file does not exist");
-    setErrorCondition(-388);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-388, ss);
   }
 
   if(!getInputFile().isEmpty() && fi.exists())
@@ -220,7 +271,7 @@ void PhReader::dataCheck()
       // We are reading from the cache, so set the FileWasRead flag to false
       m_FileWasRead = false;
 
-      QVector<size_t> v = getDims();
+      std::vector<size_t> v = getDims();
       ImageGeom::Pointer imageGeom = m->getGeometryAs<ImageGeom>();
       if(nullptr != imageGeom.get())
       {
@@ -236,9 +287,8 @@ void PhReader::dataCheck()
       m_InStream = fopen(getInputFile().toLatin1().data(), "r");
       if(m_InStream == nullptr)
       {
-        setErrorCondition(-48802);
         QString ss = QObject::tr("Error opening input file '%1'").arg(getInputFile());
-        notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+        setErrorCondition(-48802, ss);
         return;
       }
       int32_t error = readHeader();
@@ -246,9 +296,8 @@ void PhReader::dataCheck()
       m_InStream = nullptr;
       if(error < 0)
       {
-        setErrorCondition(error);
         QString ss = QObject::tr("Error occurred trying to parse the dimensions from the input file");
-        notifyErrorMessage(getHumanLabel(), ss, -48010);
+        setErrorCondition(error, ss);
       }
 
       // Set the file path and time stamp into the cache
@@ -257,23 +306,23 @@ void PhReader::dataCheck()
     }
   }
 
-  QVector<size_t> tDims = getDims();
-  m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell);
-  if(getErrorCondition() < 0)
+  std::vector<size_t> tDims = getDims();
+  m->createNonPrereqAttributeMatrix(this, getCellAttributeMatrixName(), tDims, AttributeMatrix::Type::Cell, AttributeMatrixID21);
+  if(getErrorCode() < 0)
   {
     return;
   }
 
-  QVector<size_t> cDims(1, 1);
-  tempPath.update(getVolumeDataContainerName(), getCellAttributeMatrixName(), getFeatureIdsArrayName());
-  m_FeatureIdsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims);
+  std::vector<size_t> cDims(1, 1);
+  tempPath.update(getVolumeDataContainerName().getDataContainerName(), getCellAttributeMatrixName(), getFeatureIdsArrayName());
+  m_FeatureIdsPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter, int32_t>(this, tempPath, 0, cDims, "", DataArrayID31);
   if(nullptr != m_FeatureIdsPtr.lock())
   {
     m_FeatureIds = m_FeatureIdsPtr.lock()->getPointer(0);
   }
 
-  m->getGeometryAs<ImageGeom>()->setResolution(std::make_tuple(m_Resolution.x, m_Resolution.y, m_Resolution.z));
-  m->getGeometryAs<ImageGeom>()->setOrigin(std::make_tuple(m_Origin.x, m_Origin.y, m_Origin.z));
+  m->getGeometryAs<ImageGeom>()->setSpacing(std::make_tuple(m_Spacing[0], m_Spacing[1], m_Spacing[2]));
+  m->getGeometryAs<ImageGeom>()->setOrigin(std::make_tuple(m_Origin[0], m_Origin[1], m_Origin[2]));
 }
 
 // -----------------------------------------------------------------------------
@@ -294,10 +343,10 @@ void PhReader::preflight()
 // -----------------------------------------------------------------------------
 void PhReader::execute()
 {
-  int32_t err = 0;
-  setErrorCondition(err);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -305,13 +354,12 @@ void PhReader::execute()
   m_InStream = fopen(getInputFile().toLatin1().data(), "r");
   if(m_InStream == nullptr)
   {
-    setErrorCondition(-48030);
     QString ss = QObject::tr("Error opening input file '%1'").arg(getInputFile());
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-48030, ss);
     return;
   }
 
-  err = readHeader();
+  int32_t err = readHeader();
   if(err < 0)
   {
     fclose(m_InStream);
@@ -342,7 +390,7 @@ int32_t PhReader::readHeader()
   fscanf(m_InStream, "%d %d %d\n", &nx, &ny, &nz);
 
   // Set the values into the cache, so that they can be used later
-  QVector<size_t> v;
+  std::vector<size_t> v;
   v.push_back(static_cast<size_t>(nx));
   v.push_back(static_cast<size_t>(ny));
   v.push_back(static_cast<size_t>(nz));
@@ -376,7 +424,7 @@ int32_t PhReader::readFile()
 
   size_t totalPoints = m->getGeometryAs<ImageGeom>()->getNumberOfElements();
 
-  QVector<size_t> tDims(3, 0);
+  std::vector<size_t> tDims(3, 0);
   tDims[0] = m->getGeometryAs<ImageGeom>()->getXPoints();
   tDims[1] = m->getGeometryAs<ImageGeom>()->getYPoints();
   tDims[2] = m->getGeometryAs<ImageGeom>()->getZPoints();
@@ -389,15 +437,14 @@ int32_t PhReader::readFile()
     {
       fclose(m_InStream);
       m_InStream = nullptr;
-      setErrorCondition(-48040);
-      notifyErrorMessage(getHumanLabel(), "Error reading Ph data", getErrorCondition());
-      return getErrorCondition();
+      setErrorCondition(-48040, "Error reading Ph data");
+      return getErrorCode();
     }
   }
 
-  // Now set the Resolution and Origin that the user provided on the GUI or as parameters
-  m->getGeometryAs<ImageGeom>()->setResolution(std::make_tuple(m_Resolution.x, m_Resolution.y, m_Resolution.z));
-  m->getGeometryAs<ImageGeom>()->setOrigin(std::make_tuple(m_Origin.x, m_Origin.y, m_Origin.z));
+  // Now set the Spacing and Origin that the user provided on the GUI or as parameters
+  m->getGeometryAs<ImageGeom>()->setSpacing(std::make_tuple(m_Spacing[0], m_Spacing[1], m_Spacing[2]));
+  m->getGeometryAs<ImageGeom>()->setOrigin(std::make_tuple(m_Origin[0], m_Origin[1], m_Origin[2]));
 
   return 0;
 }
@@ -418,7 +465,7 @@ AbstractFilter::Pointer PhReader::newFilterInstance(bool copyFilterParameters) c
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PhReader::getCompiledLibraryName() const
+QString PhReader::getCompiledLibraryName() const
 {
   return ImportExportConstants::ImportExportBaseName;
 }
@@ -426,7 +473,7 @@ const QString PhReader::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PhReader::getBrandingString() const
+QString PhReader::getBrandingString() const
 {
   return "IO";
 }
@@ -434,7 +481,7 @@ const QString PhReader::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PhReader::getFilterVersion() const
+QString PhReader::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -444,7 +491,7 @@ const QString PhReader::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PhReader::getGroupName() const
+QString PhReader::getGroupName() const
 {
   return SIMPL::FilterGroups::IOFilters;
 }
@@ -452,7 +499,7 @@ const QString PhReader::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid PhReader::getUuid()
+QUuid PhReader::getUuid() const
 {
   return QUuid("{c923176f-39c9-5521-9786-624f88d2b2c0}");
 }
@@ -460,7 +507,7 @@ const QUuid PhReader::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PhReader::getSubGroupName() const
+QString PhReader::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::InputFilters;
 }
@@ -468,7 +515,120 @@ const QString PhReader::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString PhReader::getHumanLabel() const
+QString PhReader::getHumanLabel() const
 {
   return "Import Ph File (Feature Ids)";
+}
+
+// -----------------------------------------------------------------------------
+PhReader::Pointer PhReader::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<PhReader> PhReader::New()
+{
+  struct make_shared_enabler : public PhReader
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString PhReader::getNameOfClass() const
+{
+  return QString("PhReader");
+}
+
+// -----------------------------------------------------------------------------
+QString PhReader::ClassName()
+{
+  return QString("PhReader");
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setVolumeDataContainerName(const DataArrayPath& value)
+{
+  m_VolumeDataContainerName = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath PhReader::getVolumeDataContainerName() const
+{
+  return m_VolumeDataContainerName;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setCellAttributeMatrixName(const QString& value)
+{
+  m_CellAttributeMatrixName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PhReader::getCellAttributeMatrixName() const
+{
+  return m_CellAttributeMatrixName;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setInputFile(const QString& value)
+{
+  m_InputFile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PhReader::getInputFile() const
+{
+  return m_InputFile;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setOrigin(const FloatVec3Type& value)
+{
+  m_Origin = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type PhReader::getOrigin() const
+{
+  return m_Origin;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setSpacing(const FloatVec3Type& value)
+{
+  m_Spacing = value;
+}
+
+// -----------------------------------------------------------------------------
+FloatVec3Type PhReader::getSpacing() const
+{
+  return m_Spacing;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setFileWasRead(bool value)
+{
+  m_FileWasRead = value;
+}
+
+// -----------------------------------------------------------------------------
+bool PhReader::getFileWasRead() const
+{
+  return m_FileWasRead;
+}
+
+// -----------------------------------------------------------------------------
+void PhReader::setFeatureIdsArrayName(const QString& value)
+{
+  m_FeatureIdsArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString PhReader::getFeatureIdsArrayName() const
+{
+  return m_FeatureIdsArrayName;
 }

@@ -33,19 +33,34 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindSurfaceAreaToVolume.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Statistics/StatisticsConstants.h"
 #include "Statistics/StatisticsVersion.h"
+
+/* Create Enumerations to allow the created Attribute Arrays to take part in renaming */
+enum createdPathID : RenameDataPath::DataID_t
+{
+  DataArrayID30 = 30,
+  DataArrayID31 = 31,
+};
 
 // -----------------------------------------------------------------------------
 //
@@ -69,7 +84,7 @@ FindSurfaceAreaToVolume::~FindSurfaceAreaToVolume() = default;
 // -----------------------------------------------------------------------------
 void FindSurfaceAreaToVolume::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::RequiredArray));
   {
     DataArraySelectionFilterParameter::RequirementType req =
@@ -84,11 +99,11 @@ void FindSurfaceAreaToVolume::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Number of Cells", NumCellsArrayPath, FilterParameter::RequiredArray, FindSurfaceAreaToVolume, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Feature Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Surface Area to Volume Ratio", SurfaceAreaVolumeRatioArrayName, FilterParameter::CreatedArray, FindSurfaceAreaToVolume));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Surface Area to Volume Ratio", SurfaceAreaVolumeRatioArrayName, NumCellsArrayPath, NumCellsArrayPath, FilterParameter::CreatedArray, FindSurfaceAreaToVolume));
 
   QStringList linkedProps("SphericityArrayName");
   parameters.push_back(SIMPL_NEW_LINKED_BOOL_FP("Calculate Sphericity", CalculateSphericity, FilterParameter::Parameter, FindSurfaceAreaToVolume, linkedProps));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Sphericity Array Name", SphericityArrayName, FilterParameter::CreatedArray, FindSurfaceAreaToVolume));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Sphericity Array Name", SphericityArrayName, NumCellsArrayPath, NumCellsArrayPath, FilterParameter::CreatedArray, FindSurfaceAreaToVolume));
 
   setFilterParameters(parameters);
 }
@@ -117,13 +132,13 @@ void FindSurfaceAreaToVolume::initialize()
 // -----------------------------------------------------------------------------
 void FindSurfaceAreaToVolume::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
   getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getFeatureIdsArrayPath().getDataContainerName());
 
-  QVector<size_t> cDims(1, 1);
+  std::vector<size_t> cDims(1, 1);
   m_FeatureIdsPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeatureIdsArrayPath(),
                                                                                                         cDims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeatureIdsPtr.lock())                                                                         /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -150,7 +165,7 @@ void FindSurfaceAreaToVolume::dataCheck()
   if(getCalculateSphericity())
   {
     tempPath.setDataArrayName(getSphericityArrayName());
-    m_SphericityPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims);
+    m_SphericityPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(this, tempPath, 0, cDims, "", DataArrayID31);
     if(nullptr != m_SphericityPtr.lock())
     {
       m_Sphericity = m_SphericityPtr.lock()->getPointer(0);
@@ -176,10 +191,10 @@ void FindSurfaceAreaToVolume::preflight()
 // -----------------------------------------------------------------------------
 void FindSurfaceAreaToVolume::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -208,31 +223,27 @@ void FindSurfaceAreaToVolume::execute()
   if(mismatchedFeatures)
   {
     QString ss = QObject::tr("The number of Features in the NumCells array (%1) is larger than the largest Feature Id in the FeatureIds array").arg(numFeatures);
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5555, ss);
     return;
   }
 
   if(largestFeature != (numFeatures - 1))
   {
     QString ss = QObject::tr("The number of Features in the NumCells array (%1) does not match the largest Feature Id in the FeatureIds array").arg(numFeatures);
-    setErrorCondition(-5555);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-5555, ss);
     return;
   }
 
   DataContainer::Pointer m = getDataContainerArray()->getDataContainer(m_NumCellsArrayPath.getDataContainerName());
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
+
   ImageGeom::Pointer imageGeom = m->getGeometryAs<ImageGeom>();
-  std::tie(xRes, yRes, zRes) = imageGeom->getResolution();
+  FloatVec3Type spacing = imageGeom->getSpacing();
 
   int64_t xPoints = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getXPoints());
   int64_t yPoints = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getYPoints());
   int64_t zPoints = static_cast<int64_t>(m->getGeometryAs<ImageGeom>()->getZPoints());
 
-  float voxelVol = xRes * yRes * zRes;
+  float voxelVol = spacing[0] * spacing[1] * spacing[2];
 
   std::vector<float> featureSurfaceArea(static_cast<size_t>(numFeatures), 0.0f);
 
@@ -294,15 +305,15 @@ void FindSurfaceAreaToVolume::execute()
             {
               if(l == 0 || l == 5) // XY face shared
               {
-                onsurf = onsurf + xRes * yRes;
+                onsurf = onsurf + spacing[0] * spacing[1];
               }
               if(l == 1 || l == 4) // YZ face shared
               {
-                onsurf = onsurf + yRes * zRes;
+                onsurf = onsurf + spacing[1] * spacing[2];
               }
               if(l == 2 || l == 3) // XZ face shared
               {
-                onsurf = onsurf + zRes * xRes;
+                onsurf = onsurf + spacing[2] * spacing[0];
               }
             }
           }
@@ -340,7 +351,7 @@ AbstractFilter::Pointer FindSurfaceAreaToVolume::newFilterInstance(bool copyFilt
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceAreaToVolume::getCompiledLibraryName() const
+QString FindSurfaceAreaToVolume::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -348,7 +359,7 @@ const QString FindSurfaceAreaToVolume::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceAreaToVolume::getBrandingString() const
+QString FindSurfaceAreaToVolume::getBrandingString() const
 {
   return "Statistics";
 }
@@ -356,7 +367,7 @@ const QString FindSurfaceAreaToVolume::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceAreaToVolume::getFilterVersion() const
+QString FindSurfaceAreaToVolume::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -366,7 +377,7 @@ const QString FindSurfaceAreaToVolume::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceAreaToVolume::getGroupName() const
+QString FindSurfaceAreaToVolume::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -374,7 +385,7 @@ const QString FindSurfaceAreaToVolume::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindSurfaceAreaToVolume::getUuid()
+QUuid FindSurfaceAreaToVolume::getUuid() const
 {
   return QUuid("{5d586366-6b59-566e-8de1-57aa9ae8a91c}");
 }
@@ -382,7 +393,7 @@ const QUuid FindSurfaceAreaToVolume::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceAreaToVolume::getSubGroupName() const
+QString FindSurfaceAreaToVolume::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::MorphologicalFilters;
 }
@@ -390,7 +401,96 @@ const QString FindSurfaceAreaToVolume::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindSurfaceAreaToVolume::getHumanLabel() const
+QString FindSurfaceAreaToVolume::getHumanLabel() const
 {
   return "Find Surface Area to Volume & Sphericity";
+}
+
+// -----------------------------------------------------------------------------
+FindSurfaceAreaToVolume::Pointer FindSurfaceAreaToVolume::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindSurfaceAreaToVolume> FindSurfaceAreaToVolume::New()
+{
+  struct make_shared_enabler : public FindSurfaceAreaToVolume
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSurfaceAreaToVolume::getNameOfClass() const
+{
+  return QString("FindSurfaceAreaToVolume");
+}
+
+// -----------------------------------------------------------------------------
+QString FindSurfaceAreaToVolume::ClassName()
+{
+  return QString("FindSurfaceAreaToVolume");
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceAreaToVolume::setFeatureIdsArrayPath(const DataArrayPath& value)
+{
+  m_FeatureIdsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSurfaceAreaToVolume::getFeatureIdsArrayPath() const
+{
+  return m_FeatureIdsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceAreaToVolume::setNumCellsArrayPath(const DataArrayPath& value)
+{
+  m_NumCellsArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindSurfaceAreaToVolume::getNumCellsArrayPath() const
+{
+  return m_NumCellsArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceAreaToVolume::setSurfaceAreaVolumeRatioArrayName(const QString& value)
+{
+  m_SurfaceAreaVolumeRatioArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSurfaceAreaToVolume::getSurfaceAreaVolumeRatioArrayName() const
+{
+  return m_SurfaceAreaVolumeRatioArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceAreaToVolume::setSphericityArrayName(const QString& value)
+{
+  m_SphericityArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindSurfaceAreaToVolume::getSphericityArrayName() const
+{
+  return m_SphericityArrayName;
+}
+
+// -----------------------------------------------------------------------------
+void FindSurfaceAreaToVolume::setCalculateSphericity(bool value)
+{
+  m_CalculateSphericity = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindSurfaceAreaToVolume::getCalculateSphericity() const
+{
+  return m_CalculateSphericity;
 }

@@ -56,7 +56,7 @@ ModifiedLambertProjectionArray::~ModifiedLambertProjectionArray() = default;
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void ModifiedLambertProjectionArray::getXdmfTypeAndSize(QString& xdmfTypeName, int& precision)
+void ModifiedLambertProjectionArray::getXdmfTypeAndSize(QString& xdmfTypeName, int& precision) const
 {
   xdmfTypeName = getNameOfClass();
   precision = 0;
@@ -65,12 +65,15 @@ void ModifiedLambertProjectionArray::getXdmfTypeAndSize(QString& xdmfTypeName, i
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-QString ModifiedLambertProjectionArray::getTypeAsString() { return "ModifiedLambertProjectionArray"; }
+QString ModifiedLambertProjectionArray::getTypeAsString() const
+{
+  return "ModifiedLambertProjectionArray";
+}
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numElements, int rank, size_t* dims, const QString& name, bool allocate)
+IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numElements, int rank, const size_t* dims, const QString& name, bool allocate) const
 {
   return ModifiedLambertProjectionArray::NullPointer();
 }
@@ -78,7 +81,7 @@ IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numEle
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numElements, std::vector<size_t> dims, const QString& name, bool allocate)
+IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numElements, const std::vector<size_t>& dims, const QString& name, bool allocate) const
 {
   return ModifiedLambertProjectionArray::NullPointer();
 }
@@ -86,20 +89,10 @@ IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numEle
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-IDataArray::Pointer ModifiedLambertProjectionArray::createNewArray(size_t numElements, QVector<size_t> dims, const QString& name, bool allocate)
-{
-  return ModifiedLambertProjectionArray::NullPointer();
-}
-
-
-// -----------------------------------------------------------------------------
-//
-// -----------------------------------------------------------------------------
-bool ModifiedLambertProjectionArray::isAllocated()
+bool ModifiedLambertProjectionArray::isAllocated() const
 {
   return m_IsAllocated;
 }
-
 
 // -----------------------------------------------------------------------------
 //
@@ -180,7 +173,7 @@ void ModifiedLambertProjectionArray::setName(const QString& name)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-QString ModifiedLambertProjectionArray::getName()
+QString ModifiedLambertProjectionArray::getName() const
 {
   return m_Name;
 }
@@ -220,7 +213,7 @@ void* ModifiedLambertProjectionArray::getVoidPointer(size_t i)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-size_t ModifiedLambertProjectionArray::getNumberOfTuples()
+size_t ModifiedLambertProjectionArray::getNumberOfTuples() const
 {
   return m_ModifiedLambertProjectionArray.size();
 }
@@ -228,7 +221,7 @@ size_t ModifiedLambertProjectionArray::getNumberOfTuples()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-size_t ModifiedLambertProjectionArray::getSize()
+size_t ModifiedLambertProjectionArray::getSize() const
 {
   return m_ModifiedLambertProjectionArray.size();
 }
@@ -247,7 +240,7 @@ void ModifiedLambertProjectionArray::SetNumberOfComponents(int nc)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-int ModifiedLambertProjectionArray::getNumberOfComponents()
+int ModifiedLambertProjectionArray::getNumberOfComponents() const
 {
   return 1;
 }
@@ -255,9 +248,9 @@ int ModifiedLambertProjectionArray::getNumberOfComponents()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-QVector<size_t> ModifiedLambertProjectionArray::getComponentDimensions()
+std::vector<size_t> ModifiedLambertProjectionArray::getComponentDimensions() const
 {
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   return dims;
 }
 
@@ -271,7 +264,7 @@ void ModifiedLambertProjectionArray::SetRank(int rnk)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-int ModifiedLambertProjectionArray::getRank()
+int ModifiedLambertProjectionArray::getRank() const
 {
   return 1;
 }
@@ -279,7 +272,7 @@ int ModifiedLambertProjectionArray::getRank()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-size_t ModifiedLambertProjectionArray::getTypeSize()
+size_t ModifiedLambertProjectionArray::getTypeSize() const
 {
   return sizeof(ModifiedLambertProjection);
 }
@@ -287,7 +280,7 @@ size_t ModifiedLambertProjectionArray::getTypeSize()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-int ModifiedLambertProjectionArray::eraseTuples(QVector<size_t>& idxs)
+int ModifiedLambertProjectionArray::eraseTuples(std::vector<size_t>& idxs)
 {
   int err = 0;
 
@@ -299,13 +292,13 @@ int ModifiedLambertProjectionArray::eraseTuples(QVector<size_t>& idxs)
 
   if (static_cast<size_t>(idxs.size()) >= getNumberOfTuples() )
   {
-    resize(0);
+    resizeTuples(0);
     return 0;
   }
 
   // Sanity Check the Indices in the vector to make sure we are not trying to remove any indices that are
   // off the end of the array and return an error code.
-  for(QVector<size_t>::size_type i = 0; i < idxs.size(); ++i)
+  for(std::vector<size_t>::size_type i = 0; i < idxs.size(); ++i)
   {
     if (idxs[i] >= static_cast<size_t>(m_ModifiedLambertProjectionArray.size()))
     {
@@ -405,12 +398,12 @@ void ModifiedLambertProjectionArray::initializeWithZeros()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-IDataArray::Pointer ModifiedLambertProjectionArray::deepCopy(bool forceNoAllocate)
+IDataArray::Pointer ModifiedLambertProjectionArray::deepCopy(bool forceNoAllocate) const
 {
   ModifiedLambertProjectionArray::Pointer daCopyPtr = ModifiedLambertProjectionArray::New();
   if(!forceNoAllocate)
   {
-    daCopyPtr->resize(getNumberOfTuples());
+    daCopyPtr->resizeTuples(getNumberOfTuples());
     ModifiedLambertProjectionArray& daCopy = *daCopyPtr;
     for(size_t i = 0; i < getNumberOfTuples(); i++)
     {
@@ -432,22 +425,22 @@ int32_t ModifiedLambertProjectionArray::resizeTotalElements(size_t size)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-int32_t ModifiedLambertProjectionArray::resize(size_t numTuples)
+void ModifiedLambertProjectionArray::resizeTuples(size_t numTuples)
 {
-  return resizeTotalElements(numTuples);
+  resizeTotalElements(numTuples);
 }
 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void ModifiedLambertProjectionArray::printTuple(QTextStream& out, size_t i, char delimiter)
+void ModifiedLambertProjectionArray::printTuple(QTextStream& out, size_t i, char delimiter) const
 {
   Q_ASSERT(false);
 }
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-void ModifiedLambertProjectionArray::printComponent(QTextStream& out, size_t i, int j)
+void ModifiedLambertProjectionArray::printComponent(QTextStream& out, size_t i, int j) const
 {
   Q_ASSERT(false);
 }
@@ -607,7 +600,7 @@ void Create2DExpandableDataset(hid_t gid, const QString& dsetName, int lambertSi
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-int ModifiedLambertProjectionArray::writeH5Data(hid_t parentId, QVector<size_t> tDims)
+int ModifiedLambertProjectionArray::writeH5Data(hid_t parentId, std::vector<size_t> tDims) const
 {
   herr_t err = 0;
   if(m_ModifiedLambertProjectionArray.empty())
@@ -696,8 +689,7 @@ int ModifiedLambertProjectionArray::readH5Data(hid_t parentId)
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-int ModifiedLambertProjectionArray::writeXdmfAttribute(QTextStream& out, int64_t* volDims, const QString& hdfFileName,
-                                                       const QString& groupPath, const QString& labelb)
+int ModifiedLambertProjectionArray::writeXdmfAttribute(QTextStream& out, int64_t* volDims, const QString& hdfFileName, const QString& groupPath, const QString& labelb) const
 {
   out << "<!-- Xdmf is not supported for " << getNameOfClass() << " with type " << getTypeAsString() << " --> ";
   return -1;
@@ -706,7 +698,7 @@ int ModifiedLambertProjectionArray::writeXdmfAttribute(QTextStream& out, int64_t
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-QString ModifiedLambertProjectionArray::getInfoString(SIMPL::InfoStringFormat format)
+QString ModifiedLambertProjectionArray::getInfoString(SIMPL::InfoStringFormat format) const
 {
   QString info;
   QTextStream ss (&info);
@@ -745,4 +737,59 @@ QString ModifiedLambertProjectionArray::getInfoString(SIMPL::InfoStringFormat fo
 
   }
   return info;
+}
+
+// -----------------------------------------------------------------------------
+ModifiedLambertProjectionArray::Pointer ModifiedLambertProjectionArray::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+ModifiedLambertProjectionArray::Pointer ModifiedLambertProjectionArray::New()
+{
+  Pointer sharedPtr(new(ModifiedLambertProjectionArray));
+  return sharedPtr;
+}
+
+// -----------------------------------------------------------------------------
+QString ModifiedLambertProjectionArray::getNameOfClass() const
+{
+  return QString("ModifiedLambertProjectionArray");
+}
+
+// -----------------------------------------------------------------------------
+QString ModifiedLambertProjectionArray::ClassName()
+{
+  return QString("ModifiedLambertProjectionArray");
+}
+
+// -----------------------------------------------------------------------------
+void ModifiedLambertProjectionArray::setPhase(int value)
+{
+  m_Phase = value;
+}
+
+// -----------------------------------------------------------------------------
+int ModifiedLambertProjectionArray::getPhase() const
+{
+  return m_Phase;
+}
+
+// -----------------------------------------------------------------------------
+void ModifiedLambertProjectionArray::setModifiedLambertProjectionArray(const QVector<ModifiedLambertProjection::Pointer>& value)
+{
+  m_ModifiedLambertProjectionArray = value;
+}
+
+// -----------------------------------------------------------------------------
+QVector<ModifiedLambertProjection::Pointer> ModifiedLambertProjectionArray::getModifiedLambertProjectionArray() const
+{
+  return m_ModifiedLambertProjectionArray;
+}
+
+// -----------------------------------------------------------------------------
+int ModifiedLambertProjectionArray::getClassVersion() const
+{
+  return 2;
 }

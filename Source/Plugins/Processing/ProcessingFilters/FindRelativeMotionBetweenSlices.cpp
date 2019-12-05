@@ -33,6 +33,8 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindRelativeMotionBetweenSlices.h"
 
 #ifdef SIMPL_USE_PARALLEL_ALGORITHMS
@@ -42,16 +44,22 @@
 #include <tbb/task_scheduler_init.h>
 #endif
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Common/TemplateHelpers.h"
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/IntFilterParameter.h"
+#include "SIMPLib/FilterParameters/LinkedPathCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/FilterParameters/StringFilterParameter.h"
 #include "SIMPLib/Geometry/ImageGeom.h"
 #include "SIMPLib/Math/MatrixMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Processing/ProcessingConstants.h"
 #include "Processing/ProcessingVersion.h"
@@ -147,7 +155,7 @@ FindRelativeMotionBetweenSlices::~FindRelativeMotionBetweenSlices() = default;
 // -----------------------------------------------------------------------------
 void FindRelativeMotionBetweenSlices::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
     parameter->setHumanLabel("Plane of Interest");
@@ -187,7 +195,7 @@ void FindRelativeMotionBetweenSlices::setupFilterParameters()
     parameters.push_back(SIMPL_NEW_DA_SELECTION_FP("Attribute Array to Track Motion", SelectedArrayPath, FilterParameter::RequiredArray, FindRelativeMotionBetweenSlices, req));
   }
   parameters.push_back(SeparatorFilterParameter::New("Cell Data", FilterParameter::CreatedArray));
-  parameters.push_back(SIMPL_NEW_STRING_FP("Motion Direction", MotionDirectionArrayName, FilterParameter::CreatedArray, FindRelativeMotionBetweenSlices));
+  parameters.push_back(SIMPL_NEW_DA_WITH_LINKED_AM_FP("Motion Direction", MotionDirectionArrayName, SelectedArrayPath, SelectedArrayPath, FilterParameter::CreatedArray, FindRelativeMotionBetweenSlices));
   setFilterParameters(parameters);
 }
 
@@ -218,8 +226,8 @@ void FindRelativeMotionBetweenSlices::initialize()
 // -----------------------------------------------------------------------------
 void FindRelativeMotionBetweenSlices::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
   DataArrayPath tempPath;
   QString ss;
@@ -230,12 +238,11 @@ void FindRelativeMotionBetweenSlices::dataCheck()
     if(TemplateHelpers::CanDynamicCast<BoolArrayType>()(m_InDataPtr.lock()))
     {
       QString ss = QObject::tr("Selected array cannot be of type bool.  The path is %1").arg(getSelectedArrayPath().serialize());
-      setErrorCondition(-11001);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-11001, ss);
     }
   }
 
-  QVector<size_t> cDims(1, 3);
+  std::vector<size_t> cDims(1, 3);
   tempPath.update(m_SelectedArrayPath.getDataContainerName(), m_SelectedArrayPath.getAttributeMatrixName(), getMotionDirectionArrayName());
   m_MotionDirectionPtr = getDataContainerArray()->createNonPrereqArrayFromPath<DataArray<float>, AbstractFilter, float>(
       this, tempPath, 0, cDims);                   /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
@@ -245,7 +252,7 @@ void FindRelativeMotionBetweenSlices::dataCheck()
   } /* Now assign the raw pointer to data from the DataArray<T> object */
 
   ImageGeom::Pointer image = getDataContainerArray()->getPrereqGeometryFromDataContainer<ImageGeom, AbstractFilter>(this, getSelectedArrayPath().getDataContainerName());
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -253,22 +260,19 @@ void FindRelativeMotionBetweenSlices::dataCheck()
   if(image->getXPoints() <= 1 || image->getYPoints() <= 1 || image->getZPoints() <= 1)
   {
     ss = QObject::tr("The Image Geometry is not 3D and cannot be run through this filter. The dimensions are (%1,%2,%3)").arg(image->getXPoints()).arg(image->getYPoints()).arg(image->getZPoints());
-    setErrorCondition(-3000);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-3000, ss);
   }
 
   if(getPSize1() <= 0 || getPSize2() <= 0)
   {
     ss = QObject::tr("The patch dimensions (%1, %2) must both be positive numbers").arg(getPSize1()).arg(getPSize2());
-    setErrorCondition(-3001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-3001, ss);
   }
 
   if(getSSize1() <= 0 || getSSize2() <= 0)
   {
     ss = QObject::tr("The search dimensions (%1, %2) must both be positive numbers").arg(getSSize1()).arg(getSSize2());
-    setErrorCondition(-3002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-3002, ss);
   }
 
   if(getPlane() == 0)
@@ -276,8 +280,7 @@ void FindRelativeMotionBetweenSlices::dataCheck()
     if(getSliceStep() >= static_cast<int64_t>(image->getZPoints()))
     {
       ss = QObject::tr("The Image Geometry extent (%1) is smaller than the supplied slice step (%2)").arg(image->getZPoints()).arg(getSliceStep());
-      setErrorCondition(-3003);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-3003, ss);
     }
   }
 
@@ -286,8 +289,7 @@ void FindRelativeMotionBetweenSlices::dataCheck()
     if(getSliceStep() >= static_cast<int64_t>(image->getYPoints()))
     {
       ss = QObject::tr("The Image Geometry Y extent (%1) is smaller than the supplied slice step (%2)").arg(image->getYPoints()).arg(getSliceStep());
-      setErrorCondition(-3004);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-3004, ss);
     }
   }
 
@@ -296,8 +298,7 @@ void FindRelativeMotionBetweenSlices::dataCheck()
     if(getSliceStep() >= static_cast<int64_t>(image->getXPoints()))
     {
       ss = QObject::tr("The Image Geometry X extent (%1) is smaller than the supplied slice step (%2)").arg(image->getXPoints()).arg(getSliceStep());
-      setErrorCondition(-3005);
-      notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+      setErrorCondition(-3005, ss);
     }
   }
 }
@@ -320,10 +321,10 @@ void FindRelativeMotionBetweenSlices::preflight()
 // -----------------------------------------------------------------------------
 void FindRelativeMotionBetweenSlices::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -344,10 +345,10 @@ void FindRelativeMotionBetweenSlices::execute()
   int32_t buffer1 = (m_PSize1 / 2) + (m_SSize1 / 2);
   int32_t buffer2 = (m_PSize2 / 2) + (m_SSize1 / 2);
 
-  QVector<size_t> cDims(1, 4);
-  Int32ArrayType::Pointer patchPointsPtr = Int32ArrayType::CreateArray((m_PSize1 * m_PSize2), "_INTERNAL_USE_ONLY_patchPoints");
-  Int32ArrayType::Pointer searchPointsPtr = Int32ArrayType::CreateArray((m_SSize1 * m_SSize2), cDims, "_INTERNAL_USE_ONLY_searchPoints");
-  BoolArrayType::Pointer validPointsPtr = BoolArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_validPoints");
+  std::vector<size_t> cDims(1, 4);
+  Int32ArrayType::Pointer patchPointsPtr = Int32ArrayType::CreateArray((m_PSize1 * m_PSize2), "_INTERNAL_USE_ONLY_patchPoints", true);
+  Int32ArrayType::Pointer searchPointsPtr = Int32ArrayType::CreateArray((m_SSize1 * m_SSize2), cDims, "_INTERNAL_USE_ONLY_searchPoints", true);
+  BoolArrayType::Pointer validPointsPtr = BoolArrayType::CreateArray(totalPoints, "_INTERNAL_USE_ONLY_validPoints", true);
   validPointsPtr->initializeWithValue(false);
   int32_t* patchPoints = patchPointsPtr->getPointer(0);
   int32_t* searchPoints = searchPointsPtr->getPointer(0);
@@ -479,8 +480,7 @@ void FindRelativeMotionBetweenSlices::execute()
   if(nullptr == patchPoints || nullptr == searchPoints || nullptr == validPoints)
   {
     QString ss = QObject::tr("Unable to establish search space for supplied parameters");
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
 
@@ -657,22 +657,18 @@ void FindRelativeMotionBetweenSlices::execute()
   else
   {
     QString ss = QObject::tr("Selected array is of unsupported type. The type is %1").arg(m_InDataPtr.lock()->getTypeAsString());
-    setErrorCondition(-3007);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-3007, ss);
     return;
   }
 
   float v[3];
-  float xRes = 0.0f;
-  float yRes = 0.0f;
-  float zRes = 0.0f;
-  std::tie(xRes, yRes, zRes) = m->getGeometryAs<ImageGeom>()->getResolution();
+  FloatVec3Type spacing = m->getGeometryAs<ImageGeom>()->getSpacing();
 
   for(size_t i = 0; i < totalPoints; i++)
   {
-    v[0] = m_MotionDirection[3 * i + 0] * xRes;
-    v[1] = m_MotionDirection[3 * i + 1] * yRes;
-    v[2] = m_MotionDirection[3 * i + 2] * zRes;
+    v[0] = m_MotionDirection[3 * i + 0] * spacing[0];
+    v[1] = m_MotionDirection[3 * i + 1] * spacing[1];
+    v[2] = m_MotionDirection[3 * i + 2] * spacing[2];
     MatrixMath::Normalize3x1(v);
     m_MotionDirection[3 * i + 0] = v[0];
     m_MotionDirection[3 * i + 1] = v[1];
@@ -697,7 +693,7 @@ AbstractFilter::Pointer FindRelativeMotionBetweenSlices::newFilterInstance(bool 
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindRelativeMotionBetweenSlices::getCompiledLibraryName() const
+QString FindRelativeMotionBetweenSlices::getCompiledLibraryName() const
 {
   return ProcessingConstants::ProcessingBaseName;
 }
@@ -705,7 +701,7 @@ const QString FindRelativeMotionBetweenSlices::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindRelativeMotionBetweenSlices::getBrandingString() const
+QString FindRelativeMotionBetweenSlices::getBrandingString() const
 {
   return "Processing";
 }
@@ -713,7 +709,7 @@ const QString FindRelativeMotionBetweenSlices::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindRelativeMotionBetweenSlices::getFilterVersion() const
+QString FindRelativeMotionBetweenSlices::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -724,7 +720,7 @@ const QString FindRelativeMotionBetweenSlices::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindRelativeMotionBetweenSlices::getGroupName() const
+QString FindRelativeMotionBetweenSlices::getGroupName() const
 {
   return SIMPL::FilterGroups::ProcessingFilters;
 }
@@ -732,7 +728,7 @@ const QString FindRelativeMotionBetweenSlices::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindRelativeMotionBetweenSlices::getUuid()
+QUuid FindRelativeMotionBetweenSlices::getUuid() const
 {
   return QUuid("{801008ce-1dcb-5604-8f16-a86526e28cf9}");
 }
@@ -740,7 +736,7 @@ const QUuid FindRelativeMotionBetweenSlices::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindRelativeMotionBetweenSlices::getSubGroupName() const
+QString FindRelativeMotionBetweenSlices::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::ImageFilters;
 }
@@ -748,7 +744,132 @@ const QString FindRelativeMotionBetweenSlices::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindRelativeMotionBetweenSlices::getHumanLabel() const
+QString FindRelativeMotionBetweenSlices::getHumanLabel() const
 {
   return "Find Relative Motion Between Slices";
+}
+
+// -----------------------------------------------------------------------------
+FindRelativeMotionBetweenSlices::Pointer FindRelativeMotionBetweenSlices::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindRelativeMotionBetweenSlices> FindRelativeMotionBetweenSlices::New()
+{
+  struct make_shared_enabler : public FindRelativeMotionBetweenSlices
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindRelativeMotionBetweenSlices::getNameOfClass() const
+{
+  return QString("FindRelativeMotionBetweenSlices");
+}
+
+// -----------------------------------------------------------------------------
+QString FindRelativeMotionBetweenSlices::ClassName()
+{
+  return QString("FindRelativeMotionBetweenSlices");
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setSelectedArrayPath(const DataArrayPath& value)
+{
+  m_SelectedArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindRelativeMotionBetweenSlices::getSelectedArrayPath() const
+{
+  return m_SelectedArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setPlane(unsigned int value)
+{
+  m_Plane = value;
+}
+
+// -----------------------------------------------------------------------------
+unsigned int FindRelativeMotionBetweenSlices::getPlane() const
+{
+  return m_Plane;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setPSize1(int value)
+{
+  m_PSize1 = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindRelativeMotionBetweenSlices::getPSize1() const
+{
+  return m_PSize1;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setPSize2(int value)
+{
+  m_PSize2 = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindRelativeMotionBetweenSlices::getPSize2() const
+{
+  return m_PSize2;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setSSize1(int value)
+{
+  m_SSize1 = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindRelativeMotionBetweenSlices::getSSize1() const
+{
+  return m_SSize1;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setSSize2(int value)
+{
+  m_SSize2 = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindRelativeMotionBetweenSlices::getSSize2() const
+{
+  return m_SSize2;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setSliceStep(int value)
+{
+  m_SliceStep = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindRelativeMotionBetweenSlices::getSliceStep() const
+{
+  return m_SliceStep;
+}
+
+// -----------------------------------------------------------------------------
+void FindRelativeMotionBetweenSlices::setMotionDirectionArrayName(const QString& value)
+{
+  m_MotionDirectionArrayName = value;
+}
+
+// -----------------------------------------------------------------------------
+QString FindRelativeMotionBetweenSlices::getMotionDirectionArrayName() const
+{
+  return m_MotionDirectionArrayName;
 }

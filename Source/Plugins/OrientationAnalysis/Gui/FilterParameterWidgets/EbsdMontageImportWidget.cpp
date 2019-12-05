@@ -42,7 +42,10 @@
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QMenu>
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/Filtering/AbstractFilter.h"
 #include "SIMPLib/Utilities/FilePathGenerator.h"
 #include "SIMPLib/Utilities/SIMPLDataPathValidator.h"
@@ -220,6 +223,7 @@ void EbsdMontageImportWidget::keyPressEvent(QKeyEvent* event)
     m_Ui->inputDir->setText(m_CurrentText);
     m_Ui->inputDir->setStyleSheet("");
     m_Ui->inputDir->setToolTip("");
+    setValidFilePath(m_CurrentText);
   }
 }
 
@@ -274,14 +278,15 @@ void EbsdMontageImportWidget::getGuiParametersFromFilter()
 {
   blockSignals(true);
 
-  EbsdMontageListInfo_t data = getFilter()->property(PROPERTY_NAME_AS_CHAR).value<EbsdMontageListInfo_t>();
+  MontageFileListInfo data = getFilter()->property(PROPERTY_NAME_AS_CHAR).value<MontageFileListInfo>();
 
   m_Ui->inputDir->setText(data.InputPath);
+  setValidFilePath(data.InputPath);
 
   m_Ui->rowStart->setValue(data.RowStart);
-  m_Ui->rowEnd->setValue(data.RowEnd);
+  m_Ui->rowEnd->setValue(data.RowEnd - 1);
   m_Ui->colStart->setValue(data.ColStart);
-  m_Ui->colEnd->setValue(data.ColEnd);
+  m_Ui->colEnd->setValue(data.ColEnd - 1);
   m_Ui->increment->setValue(data.IncrementIndex);
 
   m_Ui->filePrefix->setText(data.FilePrefix);
@@ -304,6 +309,7 @@ void EbsdMontageImportWidget::inputDirBtn_clicked()
   {
     m_Ui->inputDir->blockSignals(true);
     m_Ui->inputDir->setText(QDir::toNativeSeparators(outputFile));
+    setValidFilePath(m_Ui->inputDir->text());
     inputDir_textChanged(m_Ui->inputDir->text());
     SetOpenDialogLastFilePath(outputFile);
     m_Ui->inputDir->blockSignals(false);
@@ -331,7 +337,7 @@ void EbsdMontageImportWidget::inputDir_textChanged(const QString& text)
 
   m_Ui->inputDir->setToolTip("Absolute File Path: " + inputPath);
 
-  if(verifyPathExists(inputPath, m_Ui->inputDir))
+  if(QtSFileUtils::VerifyPathExists(inputPath, m_Ui->inputDir))
   {
     m_ShowFileAction->setEnabled(true);
     QDir dir(inputPath);
@@ -340,6 +346,8 @@ void EbsdMontageImportWidget::inputDir_textChanged(const QString& text)
     updateFileListView();
     m_Ui->inputDir->blockSignals(true);
     m_Ui->inputDir->setText(QDir::toNativeSeparators(m_Ui->inputDir->text()));
+    setValidFilePath(m_Ui->inputDir->text());
+
     m_Ui->inputDir->blockSignals(false);
   }
   else
@@ -429,7 +437,7 @@ void EbsdMontageImportWidget::filterNeedsInputParameters(AbstractFilter* filter)
   SIMPLDataPathValidator* validator = SIMPLDataPathValidator::Instance();
   QString inputPath = validator->convertToAbsolutePath(m_Ui->inputDir->text());
 
-  EbsdMontageListInfo_t data;
+  MontageFileListInfo data;
   data.IncrementIndex = m_Ui->increment->value();
   data.RowStart = m_Ui->rowStart->value();
   data.RowEnd = m_Ui->rowEnd->value() + 1;
@@ -474,6 +482,7 @@ void EbsdMontageImportWidget::afterPreflight()
 void EbsdMontageImportWidget::setInputDirectory(const QString& val)
 {
   m_Ui->inputDir->setText(val);
+  setValidFilePath(val);
 }
 
 // -----------------------------------------------------------------------------

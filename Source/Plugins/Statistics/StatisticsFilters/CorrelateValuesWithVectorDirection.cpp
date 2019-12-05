@@ -33,15 +33,23 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "CorrelateValuesWithVectorDirection.h"
 
+#include <QtCore/QTextStream>
+
+#include <QtCore/QDebug>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
 #include "SIMPLib/Math/GeometryMath.h"
 #include "SIMPLib/Math/MatrixMath.h"
 #include "SIMPLib/Math/SIMPLibMath.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
 
 // -----------------------------------------------------------------------------
 //
@@ -66,7 +74,7 @@ CorrelateValuesWithVectorDirection::~CorrelateValuesWithVectorDirection() = defa
 // -----------------------------------------------------------------------------
 void CorrelateValuesWithVectorDirection::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     DataArraySelectionFilterParameter::RequirementType req;
@@ -106,11 +114,11 @@ void CorrelateValuesWithVectorDirection::initialize()
 // -----------------------------------------------------------------------------
 void CorrelateValuesWithVectorDirection::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   DataArrayPath tempPath;
 
-  QVector<size_t> dims(1, 3);
+  std::vector<size_t> dims(1, 3);
   m_VectorDataPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<float>, AbstractFilter>(this, getVectorDataArrayPath(),
                                                                                                       dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_VectorDataPtr.lock())                                                                      /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -121,8 +129,7 @@ void CorrelateValuesWithVectorDirection::dataCheck()
   if(m_CorrelatedDataArrayPath.isEmpty())
   {
     QString ss = QObject::tr("The correlated data array name is empty. Please select a name for the correlated data array");
-    setErrorCondition(-11000);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11000, ss);
     return;
   }
   IDataArray::Pointer inputData = getDataContainerArray()
@@ -132,8 +139,7 @@ void CorrelateValuesWithVectorDirection::dataCheck()
   if(nullptr == inputData.get())
   {
     QString ss = QObject::tr("Correlated Data array '%1' does not exist in the Voxel Data Container. Was it spelled correctly?").arg(m_CorrelatedDataArrayPath.getDataArrayName());
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
   if(inputData->getNumberOfTuples() != m_VectorDataPtr.lock()->getNumberOfTuples())
@@ -141,8 +147,7 @@ void CorrelateValuesWithVectorDirection::dataCheck()
     QString ss = QObject::tr("Correlated Data array '%1' has a different number of tuples from the Vector Data array '%2'")
                      .arg(m_CorrelatedDataArrayPath.getDataArrayName())
                      .arg(getVectorDataArrayPath().getDataArrayName());
-    setErrorCondition(-11002);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11002, ss);
     return;
   }
 }
@@ -188,7 +193,7 @@ void addToLambert(IDataArray::Pointer correlatedData, size_t bin, size_t point, 
 void CorrelateValuesWithVectorDirection::execute()
 {
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -281,7 +286,7 @@ void CorrelateValuesWithVectorDirection::execute()
   createSterographicProjections(numComps);
   writePFStats(numComps);
 
-  notifyStatusMessage(getHumanLabel(), "Completed");
+  notifyStatusMessage("Completed");
 }
 
 // -----------------------------------------------------------------------------
@@ -289,9 +294,9 @@ void CorrelateValuesWithVectorDirection::execute()
 // -----------------------------------------------------------------------------
 void CorrelateValuesWithVectorDirection::makeLambertProjection(size_t numComps)
 {
-  QVector<size_t> tDims(2, m_Dimension);
-  QVector<size_t> cDims(1, numComps);
-  m_LambertProj = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambertProjection");
+  std::vector<size_t> tDims(2, m_Dimension);
+  std::vector<size_t> cDims(1, numComps);
+  m_LambertProj = DoubleArrayType::CreateArray(tDims, cDims, "ModifiedLambertProjection", true);
   m_LambertProj->initializeWithZeros();
 }
 
@@ -304,7 +309,7 @@ int CorrelateValuesWithVectorDirection::determineSquareCoordsandBin(float xyz[3]
   float adjust = -1.0;
   if(xyz[2] < 0.0)
   {
-    MatrixMath::Multiply3x1withConstant(xyz, -1);
+    MatrixMath::Multiply3x1withConstant(xyz, -1.0f);
   }
   if(xyz[0] == 0 && xyz[1] == 0)
   {
@@ -394,11 +399,11 @@ void CorrelateValuesWithVectorDirection::createSterographicProjections(size_t nu
   float xtmp, ytmp;
   float xyz[3];
 
-  QVector<size_t> tDims(2, 0);
+  std::vector<size_t> tDims(2, 0);
   tDims[0] = xpoints;
   tDims[1] = ypoints;
-  QVector<size_t> cDims(1, numComps);
-  DoubleArrayType::Pointer stereoIntensity = DoubleArrayType::CreateArray(tDims, cDims, "StereoProjection");
+  std::vector<size_t> cDims(1, numComps);
+  DoubleArrayType::Pointer stereoIntensity = DoubleArrayType::CreateArray(tDims, cDims, "StereoProjection", true);
   stereoIntensity->initializeWithValue(-1000.0f);
   double* intensity = stereoIntensity->getPointer(0);
   double* m_LambertProjection = m_LambertProj->getPointer(0);
@@ -436,7 +441,7 @@ void CorrelateValuesWithVectorDirection::createSterographicProjections(size_t nu
   {
 
     QString ss = QObject::tr("Could not open GBCD viz file %1 for writing. Please check access permissions and the path to the output location exists").arg(m_OutputFile);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(getErrorCode(), ss);
     return;
   }
 
@@ -500,11 +505,11 @@ void CorrelateValuesWithVectorDirection::writeLambertProjection(size_t numComps)
   float yres = m_StepSize;
   float zres = (xres + yres) / 2.0;
 
-  QVector<size_t> tDims(2, 0);
+  std::vector<size_t> tDims(2, 0);
   tDims[0] = xpoints;
   tDims[1] = ypoints;
-  QVector<size_t> cDims(1, numComps);
-  DoubleArrayType::Pointer modLamIntensity = DoubleArrayType::CreateArray(tDims, cDims, "ModLamProjection");
+  std::vector<size_t> cDims(1, numComps);
+  DoubleArrayType::Pointer modLamIntensity = DoubleArrayType::CreateArray(tDims, cDims, "ModLamProjection", true);
   modLamIntensity->initializeWithZeros();
   double* intensity = modLamIntensity->getPointer(0);
   double* m_LambertProjection = m_LambertProj->getPointer(0);
@@ -530,7 +535,7 @@ void CorrelateValuesWithVectorDirection::writeLambertProjection(size_t numComps)
   {
 
     QString ss = QObject::tr("Could not open GBCD viz file %1 for writing. Please check access permissions and the path to the output location exists").arg(m_OutputFile);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(getErrorCode(), ss);
     return;
   }
 
@@ -648,7 +653,7 @@ void CorrelateValuesWithVectorDirection::writePFStats(size_t numComps)
   {
 
     QString ss = QObject::tr("Could not open GBCD viz file %1 for writing. Please check access permissions and the path to the output location exists").arg(m_OutputFile);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(getErrorCode(), ss);
     return;
   }
 
@@ -709,7 +714,7 @@ int CorrelateValuesWithVectorDirection::writeCoords(FILE* f, const char* axis, c
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString CorrelateValuesWithVectorDirection::getCompiledLibraryName() const
+QString CorrelateValuesWithVectorDirection::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -717,7 +722,7 @@ const QString CorrelateValuesWithVectorDirection::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString CorrelateValuesWithVectorDirection::getBrandingString() const
+QString CorrelateValuesWithVectorDirection::getBrandingString() const
 {
   return "Statistics";
 }
@@ -725,7 +730,7 @@ const QString CorrelateValuesWithVectorDirection::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString CorrelateValuesWithVectorDirection::getFilterVersion() const
+QString CorrelateValuesWithVectorDirection::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -736,7 +741,7 @@ const QString CorrelateValuesWithVectorDirection::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString CorrelateValuesWithVectorDirection::getGroupName() const
+QString CorrelateValuesWithVectorDirection::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -744,7 +749,7 @@ const QString CorrelateValuesWithVectorDirection::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid CorrelateValuesWithVectorDirection::getUuid()
+QUuid CorrelateValuesWithVectorDirection::getUuid() const
 {
   return QUuid("{6c8b16f1-3688-5b29-9e57-d2fd56d9e3da}");
 }
@@ -752,7 +757,7 @@ const QUuid CorrelateValuesWithVectorDirection::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString CorrelateValuesWithVectorDirection::getSubGroupName() const
+QString CorrelateValuesWithVectorDirection::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::CrystallographyFilters;
 }
@@ -760,7 +765,72 @@ const QString CorrelateValuesWithVectorDirection::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString CorrelateValuesWithVectorDirection::getHumanLabel() const
+QString CorrelateValuesWithVectorDirection::getHumanLabel() const
 {
   return "Correlate Values with Vector Direction";
+}
+
+// -----------------------------------------------------------------------------
+CorrelateValuesWithVectorDirection::Pointer CorrelateValuesWithVectorDirection::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<CorrelateValuesWithVectorDirection> CorrelateValuesWithVectorDirection::New()
+{
+  struct make_shared_enabler : public CorrelateValuesWithVectorDirection
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString CorrelateValuesWithVectorDirection::getNameOfClass() const
+{
+  return QString("CorrelateValuesWithVectorDirection");
+}
+
+// -----------------------------------------------------------------------------
+QString CorrelateValuesWithVectorDirection::ClassName()
+{
+  return QString("CorrelateValuesWithVectorDirection");
+}
+
+// -----------------------------------------------------------------------------
+void CorrelateValuesWithVectorDirection::setCorrelatedDataArrayPath(const DataArrayPath& value)
+{
+  m_CorrelatedDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath CorrelateValuesWithVectorDirection::getCorrelatedDataArrayPath() const
+{
+  return m_CorrelatedDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void CorrelateValuesWithVectorDirection::setVectorDataArrayPath(const DataArrayPath& value)
+{
+  m_VectorDataArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath CorrelateValuesWithVectorDirection::getVectorDataArrayPath() const
+{
+  return m_VectorDataArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void CorrelateValuesWithVectorDirection::setLogfile(const QString& value)
+{
+  m_Logfile = value;
+}
+
+// -----------------------------------------------------------------------------
+QString CorrelateValuesWithVectorDirection::getLogfile() const
+{
+  return m_Logfile;
 }

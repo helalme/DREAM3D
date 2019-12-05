@@ -33,15 +33,22 @@
 *
 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
+#include <memory>
+
 #include "FindFeatureHistogram.h"
 
+#include <QtCore/QTextStream>
+
 #include "SIMPLib/Common/Constants.h"
+
 #include "SIMPLib/FilterParameters/AbstractFilterParametersReader.h"
 #include "SIMPLib/FilterParameters/ChoiceFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArrayCreationFilterParameter.h"
 #include "SIMPLib/FilterParameters/DataArraySelectionFilterParameter.h"
 #include "SIMPLib/FilterParameters/LinkedBooleanFilterParameter.h"
 #include "SIMPLib/FilterParameters/SeparatorFilterParameter.h"
+#include "SIMPLib/DataContainers/DataContainerArray.h"
+#include "SIMPLib/DataContainers/DataContainer.h"
 
 #include "Statistics/DistributionAnalysisOps/BetaOps.h"
 #include "Statistics/DistributionAnalysisOps/LogNormalOps.h"
@@ -70,7 +77,7 @@ FindFeatureHistogram::~FindFeatureHistogram() = default;
 // -----------------------------------------------------------------------------
 void FindFeatureHistogram::setupFilterParameters()
 {
-  FilterParameterVector parameters;
+  FilterParameterVectorType parameters;
 
   {
     ChoiceFilterParameter::Pointer parameter = ChoiceFilterParameter::New();
@@ -131,10 +138,10 @@ void FindFeatureHistogram::initialize()
 // -----------------------------------------------------------------------------
 void FindFeatureHistogram::dataCheck()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
 
-  QVector<size_t> dims(1, 1);
+  std::vector<size_t> dims(1, 1);
   m_FeaturePhasesPtr = getDataContainerArray()->getPrereqArrayFromPath<DataArray<int32_t>, AbstractFilter>(this, getFeaturePhasesArrayPath(),
                                                                                                            dims); /* Assigns the shared_ptr<> to an instance variable that is a weak_ptr<> */
   if(nullptr != m_FeaturePhasesPtr.lock())                                                                        /* Validate the Weak Pointer wraps a non-nullptr pointer to a DataArray<T> object */
@@ -144,8 +151,7 @@ void FindFeatureHistogram::dataCheck()
 
   if(m_SelectedFeatureArrayPath.isEmpty())
   {
-    setErrorCondition(-11000);
-    notifyErrorMessage(getHumanLabel(), "An array from the Volume DataContainer must be selected.", getErrorCondition());
+    setErrorCondition(-11000, "An array from the Volume DataContainer must be selected.");
   }
 
   int numComp = m_NumberOfBins;
@@ -236,10 +242,10 @@ template <typename T> void findHistogram(IDataArray::Pointer inputData, int32_t*
 // -----------------------------------------------------------------------------
 void FindFeatureHistogram::execute()
 {
-  setErrorCondition(0);
-  setWarningCondition(0);
+  clearErrorCode();
+  clearWarningCode();
   dataCheck();
-  if(getErrorCondition() < 0)
+  if(getErrorCode() < 0)
   {
     return;
   }
@@ -252,8 +258,7 @@ void FindFeatureHistogram::execute()
   if(nullptr == inputData.get())
   {
     ss = QObject::tr("Selected array '%1' does not exist in the Voxel Data Container. Was it spelled correctly?").arg(m_SelectedFeatureArrayPath.getDataArrayName());
-    setErrorCondition(-11001);
-    notifyErrorMessage(getHumanLabel(), ss, getErrorCondition());
+    setErrorCondition(-11001, ss);
     return;
   }
 
@@ -322,7 +327,7 @@ AbstractFilter::Pointer FindFeatureHistogram::newFilterInstance(bool copyFilterP
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureHistogram::getCompiledLibraryName() const
+QString FindFeatureHistogram::getCompiledLibraryName() const
 {
   return StatisticsConstants::StatisticsBaseName;
 }
@@ -330,7 +335,7 @@ const QString FindFeatureHistogram::getCompiledLibraryName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureHistogram::getBrandingString() const
+QString FindFeatureHistogram::getBrandingString() const
 {
   return "Statistics";
 }
@@ -338,7 +343,7 @@ const QString FindFeatureHistogram::getBrandingString() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureHistogram::getFilterVersion() const
+QString FindFeatureHistogram::getFilterVersion() const
 {
   QString version;
   QTextStream vStream(&version);
@@ -349,7 +354,7 @@ const QString FindFeatureHistogram::getFilterVersion() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureHistogram::getGroupName() const
+QString FindFeatureHistogram::getGroupName() const
 {
   return SIMPL::FilterGroups::StatisticsFilters;
 }
@@ -357,7 +362,7 @@ const QString FindFeatureHistogram::getGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QUuid FindFeatureHistogram::getUuid()
+QUuid FindFeatureHistogram::getUuid() const
 {
   return QUuid("{f1b8354c-0aa7-517e-98c2-5e75ad2b828e}");
 }
@@ -365,7 +370,7 @@ const QUuid FindFeatureHistogram::getUuid()
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureHistogram::getSubGroupName() const
+QString FindFeatureHistogram::getSubGroupName() const
 {
   return SIMPL::FilterSubGroups::EnsembleStatsFilters;
 }
@@ -373,7 +378,108 @@ const QString FindFeatureHistogram::getSubGroupName() const
 // -----------------------------------------------------------------------------
 //
 // -----------------------------------------------------------------------------
-const QString FindFeatureHistogram::getHumanLabel() const
+QString FindFeatureHistogram::getHumanLabel() const
 {
   return "Find Feature Histogram";
+}
+
+// -----------------------------------------------------------------------------
+FindFeatureHistogram::Pointer FindFeatureHistogram::NullPointer()
+{
+  return Pointer(static_cast<Self*>(nullptr));
+}
+
+// -----------------------------------------------------------------------------
+std::shared_ptr<FindFeatureHistogram> FindFeatureHistogram::New()
+{
+  struct make_shared_enabler : public FindFeatureHistogram
+  {
+  };
+  std::shared_ptr<make_shared_enabler> val = std::make_shared<make_shared_enabler>();
+  val->setupFilterParameters();
+  return val;
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureHistogram::getNameOfClass() const
+{
+  return QString("FindFeatureHistogram");
+}
+
+// -----------------------------------------------------------------------------
+QString FindFeatureHistogram::ClassName()
+{
+  return QString("FindFeatureHistogram");
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureHistogram::setSelectedFeatureArrayPath(const DataArrayPath& value)
+{
+  m_SelectedFeatureArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureHistogram::getSelectedFeatureArrayPath() const
+{
+  return m_SelectedFeatureArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureHistogram::setNumberOfBins(int value)
+{
+  m_NumberOfBins = value;
+}
+
+// -----------------------------------------------------------------------------
+int FindFeatureHistogram::getNumberOfBins() const
+{
+  return m_NumberOfBins;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureHistogram::setRemoveBiasedFeatures(bool value)
+{
+  m_RemoveBiasedFeatures = value;
+}
+
+// -----------------------------------------------------------------------------
+bool FindFeatureHistogram::getRemoveBiasedFeatures() const
+{
+  return m_RemoveBiasedFeatures;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureHistogram::setFeaturePhasesArrayPath(const DataArrayPath& value)
+{
+  m_FeaturePhasesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureHistogram::getFeaturePhasesArrayPath() const
+{
+  return m_FeaturePhasesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureHistogram::setBiasedFeaturesArrayPath(const DataArrayPath& value)
+{
+  m_BiasedFeaturesArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureHistogram::getBiasedFeaturesArrayPath() const
+{
+  return m_BiasedFeaturesArrayPath;
+}
+
+// -----------------------------------------------------------------------------
+void FindFeatureHistogram::setNewEnsembleArrayArrayPath(const DataArrayPath& value)
+{
+  m_NewEnsembleArrayArrayPath = value;
+}
+
+// -----------------------------------------------------------------------------
+DataArrayPath FindFeatureHistogram::getNewEnsembleArrayArrayPath() const
+{
+  return m_NewEnsembleArrayArrayPath;
 }
